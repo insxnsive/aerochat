@@ -1,3 +1,7 @@
+# Archival Warning
+
+Aerochat has been archived as of 14/07/2026. There have been numerous reports of accounts being temporarily disabled for using it; login at your own risk.
+
 # Aerochat
 
 A custom client for Discord that resembles Windows Live Messenger 2009.
