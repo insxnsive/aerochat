@@ -100,6 +100,9 @@ public sealed class PresentationState : ObservableObject
         if (!conversation.Messages.Contains(message))
             return;
 
+        if (conversation.TargetMode == MessageTargetMode.Edit)
+            conversation.Draft = "";
+
         conversation.TargetMessage = message;
         conversation.TargetMode = MessageTargetMode.Reply;
     }
