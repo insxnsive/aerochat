@@ -7,6 +7,7 @@ using System.Reflection;
 using System.Threading;
 using System.Windows;
 using System.Windows.Controls;
+using System.Windows.Documents;
 using System.Windows.Input;
 using System.Windows.Media.Imaging;
 
@@ -32,6 +33,26 @@ public sealed class PresentationControlTests
         public NamedStatus(string name) => _name = name;
 
         public override string ToString() => _name;
+    }
+
+    private sealed class MessageModel
+    {
+        public MessageModel(string content, params TestChannel[] mentionedChannels)
+        {
+            Content = content;
+            MentionedChannels = mentionedChannels;
+        }
+
+        public string Content { get; }
+
+        public IReadOnlyList<TestChannel> MentionedChannels { get; }
+    }
+
+    private sealed class TestChannel
+    {
+        public ulong Id { get; init; }
+
+        public string Name { get; init; } = string.Empty;
     }
 
     [TestCase(PresenceStatus.Online, ProfileFrameSize.Large, "LargeFrameActiveAnimation.png")]
@@ -221,6 +242,75 @@ public sealed class PresentationControlTests
         Assert.That(((MenuItem)menu.Items[1]).Header, Is.EqualTo("Command"));
     }
 
+    [Test, Apartment(ApartmentState.STA)]
+    public void Unresolved_channel_mention_is_visible_text_without_hyperlink_event()
+    {
+        EnsureWpfApplication();
+        var parser = new MessageParser();
+        int eventCount = 0;
+        parser.HyperlinkClicked += (_, _) => eventCount++;
+
+        parser.Message = new MessageModel("before <#999999> after");
+
+        TextBlock textBlock = RenderedText(parser);
+        Assert.That(textBlock.Inlines.OfType<Hyperlink>(), Is.Empty);
+        Assert.That(string.Concat(textBlock.Inlines.OfType<Run>().Select(run => run.Text)),
+            Does.Contain("<#999999>"));
+        Assert.That(eventCount, Is.Zero);
+    }
+
+    [Test, Apartment(ApartmentState.STA)]
+    public void Resolved_channel_mention_raises_presentation_event_with_channel_object()
+    {
+        EnsureWpfApplication();
+        var channel = new TestChannel { Id = 42, Name = "general" };
+        var parser = new MessageParser
+        {
+            Message = new MessageModel("go to <#42>", channel),
+        };
+        HyperlinkClickedEventArgs? clicked = null;
+        parser.HyperlinkClicked += (_, args) => clicked = args;
+
+        Hyperlink link = RenderedText(parser).Inlines.OfType<Hyperlink>().Single();
+        link.RaiseEvent(new RoutedEventArgs(Hyperlink.ClickEvent));
+
+        Assert.That(clicked, Is.Not.Null);
+        Assert.That(clicked!.Type, Is.EqualTo(HyperlinkType.Channel));
+        Assert.That(clicked.AssociatedObject, Is.SameAs(channel));
+    }
+
+    [Test, Apartment(ApartmentState.STA)]
+    public void Unicode_emoji_uses_matching_packaged_wlm_asset()
+    {
+        EnsureWpfApplication();
+        var parser = new MessageParser
+        {
+            Message = new MessageModel("hello 😀"),
+        };
+
+        Image image = RenderedText(parser).Inlines.OfType<InlineUIContainer>()
+            .Select(container => container.Child).OfType<Image>().Single();
+        var source = (BitmapImage)image.Source!;
+
+        Assert.That(source.UriSource.AbsoluteUri, Does.EndWith("/Smile.png"));
+        Assert.That(image.ToolTip, Is.EqualTo("😀"));
+    }
+
+    [Test, Apartment(ApartmentState.STA)]
+    public void Unknown_unicode_emoji_remains_visible_text()
+    {
+        EnsureWpfApplication();
+        var parser = new MessageParser
+        {
+            Message = new MessageModel("hello 🦄"),
+        };
+
+        TextBlock textBlock = RenderedText(parser);
+        Assert.That(textBlock.Inlines.OfType<InlineUIContainer>(), Is.Empty);
+        Assert.That(string.Concat(textBlock.Inlines.OfType<Run>().Select(run => run.Text)),
+            Does.Contain("🦄"));
+    }
+
     [Test]
     public void Shared_controls_do_not_reference_backend_or_native_packages()
     {
@@ -245,6 +335,11 @@ public sealed class PresentationControlTests
         {
             _ = new Application();
         }
+    }
+
+    private static TextBlock RenderedText(MessageParser parser)
+    {
+        return (TextBlock)parser.MainPanel.Children.Cast<UIElement>().Single();
     }
 
     private static void RaiseMouseUp(UIElement owner, MouseButton button)

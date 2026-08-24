@@ -18,6 +18,25 @@ namespace Aerochat.Controls
     /// </summary>
     public class MessageParser : UserControl
     {
+        private static readonly IReadOnlyDictionary<string, string> UnicodeEmojiMap =
+            new Dictionary<string, string>(StringComparer.Ordinal)
+            {
+                ["😀"] = "Smile.png",
+                ["😄"] = "Grin.png",
+                ["😉"] = "Wink.png",
+                ["😮"] = "Surprise.png",
+                ["😛"] = "Tongue.png",
+                ["😎"] = "Sunglasses.png",
+                ["😡"] = "Anger.png",
+                ["😭"] = "Sob.png",
+                ["😕"] = "Confused.png",
+                ["🙏"] = "HighFive.png",
+                ["🤔"] = "Thinking.png",
+                ["👍"] = "ThumbsUp.png",
+                ["👎"] = "ThumbsDown.png",
+                ["❤️"] = "Heart.png",
+            };
+
         public static readonly DependencyProperty MessageProperty =
             DependencyProperty.Register(nameof(Message), typeof(object), typeof(MessageParser), new PropertyMetadata(null, OnMessageChanged));
 
@@ -141,6 +160,9 @@ namespace Aerochat.Controls
                 return false;
 
             object? associatedObject = FindEntity(message, collectionName, id);
+            if (type == HyperlinkType.Channel && associatedObject is null)
+                return false;
+
             string? name = ReadString(associatedObject, type == HyperlinkType.User ? "DisplayName" : "Name");
             if (string.IsNullOrWhiteSpace(name))
                 name = ReadString(associatedObject, "Username");
@@ -231,6 +253,12 @@ namespace Aerochat.Controls
         private static bool TryGetPackagedEmoji(string text, out string? fileName)
         {
             fileName = null;
+            if (UnicodeEmojiMap.TryGetValue(text, out string? unicodeFile))
+            {
+                fileName = unicodeFile;
+                return true;
+            }
+
             if (text.Length < 3 || text[0] != ':' || text[^1] != ':')
                 return false;
 
@@ -244,7 +272,7 @@ namespace Aerochat.Controls
 
         private static InlineUIContainer CreatePackagedEmoji(string fileName, string toolTip)
         {
-            var source = new BitmapImage(new Uri($"pack://application:,,,/Resources/Emoji/{fileName}"));
+            var source = new BitmapImage(new Uri($"pack://application:,,,/Aerochat;component/Resources/Emoji/{fileName}"));
             source.Freeze();
 
             var image = new Image
