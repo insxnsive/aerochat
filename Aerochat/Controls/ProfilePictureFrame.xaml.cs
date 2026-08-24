@@ -6,6 +6,7 @@ using System.Windows.Controls;
 using System.Windows.Media;
 using System.Windows.Media.Animation;
 using System.Windows.Media.Imaging;
+using System.Windows.Navigation;
 using Timer = System.Timers.Timer;
 
 namespace Aerochat.Controls
@@ -41,11 +42,31 @@ namespace Aerochat.Controls
                 _ => throw new ArgumentOutOfRangeException(nameof(status))
             };
             string animation = statusName == "Offline" || sizeName == "XS" ? "" : "Animation";
-            return new Uri($"pack://application/Aerochat;component/Resources/Frames/{sizeName}Frame{statusName}{animation}.png", UriKind.Absolute);
+            _ = BaseUriHelper.BaseUriProperty;
+            return new Uri(
+                $"pack://application:,,,/Aerochat;component/Resources/Frames/{sizeName}Frame{statusName}{animation}.png",
+                UriKind.Absolute);
+        }
+
+        public static PresenceStatus NormalizeStatus(object? status)
+        {
+            if (status is PresenceStatus presence)
+            {
+                return presence;
+            }
+
+            return status?.ToString()?.Trim() switch
+            {
+                "Online" => PresenceStatus.Online,
+                "Idle" or "Away" => PresenceStatus.Away,
+                "DoNotDisturb" or "Busy" => PresenceStatus.Busy,
+                "Invisible" or "Offline" => PresenceStatus.Offline,
+                _ => PresenceStatus.Offline,
+            };
         }
 
         public static readonly DependencyProperty FrameSizeProperty = DependencyProperty.Register("FrameSize", typeof(ProfileFrameSize), typeof(ProfilePictureFrame), new PropertyMetadata(ProfileFrameSize.Unknown, OnFrameSizeChange));
-        public static readonly DependencyProperty UserStatusProperty = DependencyProperty.Register("UserStatus", typeof(PresenceStatus), typeof(ProfilePictureFrame), new PropertyMetadata(PresenceStatus.Offline, OnStatusChange));
+        public static readonly DependencyProperty UserStatusProperty = DependencyProperty.Register("UserStatus", typeof(object), typeof(ProfilePictureFrame), new PropertyMetadata(PresenceStatus.Offline, OnStatusChange));
         public static readonly DependencyProperty ProfilePictureProperty = DependencyProperty.Register("ProfilePicture", typeof(BitmapSource), typeof(ProfilePictureFrame), new PropertyMetadata(null, OnProfilePictureChange));
         public static readonly DependencyProperty EnableAnimationProperty = DependencyProperty.Register("EnableAnimation", typeof(bool), typeof(ProfilePictureFrame), new PropertyMetadata(true));
 
@@ -55,9 +76,9 @@ namespace Aerochat.Controls
             set => SetValue(FrameSizeProperty, value);
         }
 
-        public PresenceStatus UserStatus
+        public object? UserStatus
         {
-            get => (PresenceStatus)GetValue(UserStatusProperty);
+            get => GetValue(UserStatusProperty);
             set => SetValue(UserStatusProperty, value);
         }
 
@@ -98,7 +119,7 @@ namespace Aerochat.Controls
         {
             if (_initial || !EnableAnimation)
             {
-                var status = (PresenceStatus)e.NewValue;
+                var status = NormalizeStatus(e.NewValue);
                 var source = FrameToSource(status, FrameSize);
                 if (source is null) return;
                 ForegroundTileImage.Image = source;
@@ -112,8 +133,8 @@ namespace Aerochat.Controls
                 _initial = false;
                 return;
             }
-            var oldStatus = (PresenceStatus)e.OldValue;
-            var newStatus = (PresenceStatus)e.NewValue;
+            var oldStatus = NormalizeStatus(e.OldValue);
+            var newStatus = NormalizeStatus(e.NewValue);
             if (oldStatus == newStatus) return;
             var oldSource = FrameToSource(oldStatus, FrameSize);
             var newSource = FrameToSource(newStatus, FrameSize);
@@ -173,7 +194,7 @@ namespace Aerochat.Controls
             ForegroundTileImage.FrameHeight = size;
             BackgroundTileImage.FrameWidth = size;
             BackgroundTileImage.FrameHeight = size;
-            BackgroundTileImage.Image = FrameToSource(UserStatus, newSize);
+            BackgroundTileImage.Image = FrameToSource(NormalizeStatus(UserStatus), newSize);
             ForegroundTileImage.Image = BackgroundTileImage.Image;
             var pfpSize = FrameSizeToProfilePictureSize(newSize);
             var pfpMargin = FrameSizeToProfilePictureMargin(newSize);
