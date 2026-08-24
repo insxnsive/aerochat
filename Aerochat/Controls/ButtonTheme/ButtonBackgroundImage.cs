@@ -1,15 +1,17 @@
-﻿using DSharpPlus.Entities;
-using System;
-using System.Collections.Generic;
-using System.Linq;
-using System.Text;
-using System.Threading.Tasks;
+﻿using System;
 using System.Windows;
 using System.Windows.Controls;
-using System.Windows.Media.Imaging;
 
 namespace Aerochat.Controls.ButtonTheme
 {
+    public enum ButtonVisualState
+    {
+        Normal,
+        Hover,
+        Pressed,
+        Disabled
+    }
+
     /// <summary>
     /// Provides the button background image.
     /// </summary>
@@ -18,6 +20,8 @@ namespace Aerochat.Controls.ButtonTheme
     /// </remarks>
     public class ButtonBackgroundImage : NineSlice
     {
+        public ButtonVisualState VisualState { get; set; } = ButtonVisualState.Normal;
+
         // EVIL HACK TO GET THE CONTENT ELEMENT
         // Basically, we just extend the NineSlice control and copy the sizing overrides from
         // Aero.NormalColor, but Microsoft's implementation used a Decorator. Since I wanted

@@ -1,22 +1,11 @@
-﻿using Aerochat.Hoarder;
-using Aerochat.Presentation;
-using DSharpPlus.Entities;
+﻿using Aerochat.Presentation;
 using System;
-using System.Collections.Generic;
-using System.Diagnostics;
-using System.Linq;
-using System.Text;
 using System.Timers;
 using System.Windows;
 using System.Windows.Controls;
-using System.Windows.Data;
-using System.Windows.Documents;
-using System.Windows.Input;
 using System.Windows.Media;
 using System.Windows.Media.Animation;
 using System.Windows.Media.Imaging;
-using System.Windows.Navigation;
-using System.Windows.Shapes;
 using Timer = System.Timers.Timer;
 
 namespace Aerochat.Controls
@@ -52,12 +41,11 @@ namespace Aerochat.Controls
                 _ => throw new ArgumentOutOfRangeException(nameof(status))
             };
             string animation = statusName == "Offline" || sizeName == "XS" ? "" : "Animation";
-            // Use the URI authority form that remains valid after WPF pack resources initialize.
             return new Uri($"pack://application/Aerochat;component/Resources/Frames/{sizeName}Frame{statusName}{animation}.png", UriKind.Absolute);
         }
 
         public static readonly DependencyProperty FrameSizeProperty = DependencyProperty.Register("FrameSize", typeof(ProfileFrameSize), typeof(ProfilePictureFrame), new PropertyMetadata(ProfileFrameSize.Unknown, OnFrameSizeChange));
-        public static readonly DependencyProperty UserStatusProperty = DependencyProperty.Register("UserStatus", typeof(UserStatus), typeof(ProfilePictureFrame), new PropertyMetadata(UserStatus.Offline, OnStatusChange));
+        public static readonly DependencyProperty UserStatusProperty = DependencyProperty.Register("UserStatus", typeof(PresenceStatus), typeof(ProfilePictureFrame), new PropertyMetadata(PresenceStatus.Offline, OnStatusChange));
         public static readonly DependencyProperty ProfilePictureProperty = DependencyProperty.Register("ProfilePicture", typeof(BitmapSource), typeof(ProfilePictureFrame), new PropertyMetadata(null, OnProfilePictureChange));
         public static readonly DependencyProperty EnableAnimationProperty = DependencyProperty.Register("EnableAnimation", typeof(bool), typeof(ProfilePictureFrame), new PropertyMetadata(true));
 
@@ -67,9 +55,9 @@ namespace Aerochat.Controls
             set => SetValue(FrameSizeProperty, value);
         }
 
-        public UserStatus UserStatus
+        public PresenceStatus UserStatus
         {
-            get => (UserStatus)GetValue(UserStatusProperty);
+            get => (PresenceStatus)GetValue(UserStatusProperty);
             set => SetValue(UserStatusProperty, value);
         }
 
@@ -110,7 +98,7 @@ namespace Aerochat.Controls
         {
             if (_initial || !EnableAnimation)
             {
-                var status = (UserStatus)e.NewValue;
+                var status = (PresenceStatus)e.NewValue;
                 var source = FrameToSource(status, FrameSize);
                 if (source is null) return;
                 ForegroundTileImage.Image = source;
@@ -124,8 +112,8 @@ namespace Aerochat.Controls
                 _initial = false;
                 return;
             }
-            var oldStatus = (UserStatus)e.OldValue;
-            var newStatus = (UserStatus)e.NewValue;
+            var oldStatus = (PresenceStatus)e.OldValue;
+            var newStatus = (PresenceStatus)e.NewValue;
             if (oldStatus == newStatus) return;
             var oldSource = FrameToSource(oldStatus, FrameSize);
             var newSource = FrameToSource(newStatus, FrameSize);
@@ -146,7 +134,7 @@ namespace Aerochat.Controls
             var totalFrames = newSource.Width / BackgroundTileImage.FrameWidth;
             var halfTime = totalFrames * ForegroundTileImage.FrameDuration / 2;
 
-            double timerDuration = oldStatus == UserStatus.Invisible || oldStatus == UserStatus.Offline ? halfTime / 2 : halfTime;
+            double timerDuration = oldStatus == PresenceStatus.Offline ? halfTime / 2 : halfTime;
 
             // in halfTime milliseconds, fade out the old frame and fade in the new frame
             var timer = new Timer(timerDuration);
@@ -173,8 +161,6 @@ namespace Aerochat.Controls
                 frame.UpdateFrameSize(e);
             }
         }
-
-        private bool _frameSizeInitial = true;
 
         private void UpdateFrameSize(DependencyPropertyChangedEventArgs e)
         {
@@ -222,27 +208,11 @@ namespace Aerochat.Controls
             };
         }
 
-        private BitmapImage? FrameToSource(UserStatus status, ProfileFrameSize size)
+        private BitmapImage FrameToSource(PresenceStatus status, ProfileFrameSize size)
         {
-            string sizeString = size switch
-            {
-                ProfileFrameSize.ExtraSmall => "XS",
-                ProfileFrameSize.ExtraLarge => "XL",
-                _ => size.ToString(),
-            };
+            var source = new BitmapImage(GetFrameUri(status, size));
 
-            string statusString = status switch
-            {
-                UserStatus.Online => "Active",
-                UserStatus.Idle => "Idle",
-                UserStatus.DoNotDisturb => "Dnd",
-                _ => "Offline",
-            };
-
-            string path = $"pack://application:,,,/Aerochat;component/Resources/Frames/{sizeString}Frame{statusString}{(statusString == "Offline" || sizeString == "XS" ? "" : "Animation")}.png";
-            var source = Discord.ProfileFrames.FirstOrDefault(x => x.UriSource.AbsoluteUri == path);
-
-            var targetOpacity = statusString == "Offline" ? 0.5 : 1;
+            var targetOpacity = status == PresenceStatus.Offline ? 0.5 : 1;
             if (_initial)
             {
                 Opacity = targetOpacity;
@@ -257,7 +227,6 @@ namespace Aerochat.Controls
                 }; BeginAnimation(ProfilePictureFrame.OpacityProperty, opacityAnimation);
             }
 
-            if (source is null) throw new ArgumentException("Invalid frame size or status.");
             return source;
         }
 
