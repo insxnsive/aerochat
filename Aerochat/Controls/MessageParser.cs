@@ -1,310 +1,262 @@
-using Aerochat.Hoarder;
-using DSharpPlus.Entities;
+using System.Collections;
 using System.Globalization;
-using System.Linq;
+using System.Reflection;
 using System.Text;
 using System.Text.RegularExpressions;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Documents;
-using System.Windows.Input;
 using System.Windows.Media;
 using System.Windows.Media.Imaging;
-using Vanara.Extensions.Reflection;
 
 namespace Aerochat.Controls
 {
+    /// <summary>
+    /// Renders message-shaped data without owning message services or navigation.
+    /// The bound value is intentionally object-shaped so existing bindings can pass
+    /// their message model while this control only reads presentation properties.
+    /// </summary>
     public class MessageParser : UserControl
     {
-        public static Dictionary<string, BitmapSource> EmojiCache = new();
-
         public static readonly DependencyProperty MessageProperty =
-            DependencyProperty.Register(nameof(Message), typeof(DiscordMessage), typeof(MessageParser), new PropertyMetadata(null, OnMessageChanged));
+            DependencyProperty.Register(nameof(Message), typeof(object), typeof(MessageParser), new PropertyMetadata(null, OnMessageChanged));
 
-        public DiscordMessage Message
+        public object? Message
         {
-            get { return (DiscordMessage)GetValue(MessageProperty); }
-            set { SetValue(MessageProperty, value); }
+            get => GetValue(MessageProperty);
+            set => SetValue(MessageProperty, value);
         }
 
-        public event EventHandler<HyperlinkClickedEventArgs> HyperlinkClicked;
-        public event EventHandler<ContextMenuEventArgs> TextBlockContextMenuOpening;
+        public event EventHandler<HyperlinkClickedEventArgs>? HyperlinkClicked;
+        public event EventHandler<ContextMenuEventArgs>? TextBlockContextMenuOpening;
+
+        public WrapPanel MainPanel { get; set; }
+
+        public MessageParser()
+        {
+            MainPanel = new WrapPanel();
+            Content = MainPanel;
+        }
 
         private static void OnMessageChanged(DependencyObject d, DependencyPropertyChangedEventArgs e)
         {
-            var control = (MessageParser)d;
-            control.RenderMessage();
+            ((MessageParser)d).RenderMessage();
         }
 
         private void RenderMessage()
         {
             MainPanel.Children.Clear();
-            // dispose of all emoji images
-            foreach (var image in EmojiCache.Values)
-            {
-                image.Freeze();
-            }
-            EmojiCache.Clear();
-            if (Message == null)
-            {
+
+            if (Message is null)
                 return;
-            }
 
 #if FEATURE_SELECTABLE_MESSAGE_TEXT
             var textBlock = new SelectableTextBlock();
 #else
             var textBlock = new TextBlock();
 #endif
+            textBlock.TextWrapping = TextWrapping.Wrap;
 
-            //// Prevent the usual context menu from showing up:
-            //textBlock.ContextMenu = null;
-
-            //Throwing this in bcos i can :3 (messy nullcheck sawry :()
-            if (Message.MentionedUsers != null)
-            {
-                if (Message.MentionedUsers.Contains(Discord.Client.CurrentUser) && Settings.SettingsManager.Instance.HighlightMentions)
-                {
-                    textBlock.Foreground = new SolidColorBrush(Color.FromRgb(73, 164, 218));
-                }
-            }
-            var words = Message.Content.Split(' ');
-            foreach (var word in words)
-            {
-                string text = word;
-
-                if (text.StartsWith("<") && text.EndsWith(">"))
-                {
-                    string id = text.Replace("<", "").Replace(">", "");
-                    var link = new Hyperlink();
-                    HyperlinkType? type = null;
-                    object associatedObject = null;
-
-                    // if there's no element at 0, continue
-                    if (id.Length != 0)
-                    {
-                        switch (id.ElementAt(0))
-                        {
-                            case '@':
-                                id = id.Replace("@", "");
-                                if (id.Length == 0) break;
-                                switch (id.ElementAt(0))
-                                {
-                                    case '&':
-                                        {
-                                            id = id.Replace("&", "");
-                                            if (!ulong.TryParse(id, out ulong parsedId)) break;
-                                            var role = Message.MentionedRoles?.FirstOrDefault(x => x?.Id == parsedId);
-                                            if (role == null)
-                                            {
-                                                text = "@unknown-role";
-                                                break;
-                                            }
-                                            link.Inlines.Add($"@{role.Name} ");
-                                            type = HyperlinkType.Role;
-                                            associatedObject = role;
-                                            break;
-                                        }
-                                    default:
-                                        {
-                                            if (!ulong.TryParse(id, out ulong parsedId)) break;
-                                            var user = Message.MentionedUsers?.FirstOrDefault(x => x?.Id == parsedId);
-                                            if (user == null)
-                                            {
-                                                text = "@unknown-user";
-                                                break;
-                                            }
-                                            link.Inlines.Add($"@{user.DisplayName} ");
-                                            type = HyperlinkType.User;
-                                            associatedObject = user;
-                                            break;
-                                        }
-                                }
-                                break;
-                            case '#':
-                                {
-                                    id = id.Replace("#", "");
-                                    if (!ulong.TryParse(id, out ulong parsedId)) break;
-                                    var channel = Message.MentionedChannels?.FirstOrDefault(x => x?.Id == parsedId);
-                                    if (channel == null)
-                                    {
-                                        text = "#unknown-channel";
-                                        break;
-                                    }
-                                    link.Inlines.Add($"#{channel.Name} ");
-                                    type = HyperlinkType.Channel;
-                                    associatedObject = channel;
-                                    break;
-                                }
-                            case ':':
-                                {
-                                    string[] emojiParts = id.Split(":");
-
-                                    if (emojiParts.Length != 3)
-                                    {
-                                        break;
-                                    }
-
-                                    string emojiName = emojiParts[1];
-                                    string emojiIdStr = emojiParts[2];
-
-                                    if (!ulong.TryParse(emojiIdStr, out ulong emojiId))
-                                    {
-                                        break;
-                                    }
-
-                                    var emojiDefinition = Message?.Channel?.Guild?.Emojis?.FirstOrDefault(x => x.Key == emojiId);
-
-                                    if (emojiDefinition?.Value?.Url == null)
-                                    {
-                                        break;
-                                    }
-
-                                    InlineUIContainer inlineContainer = new();
-                                    Image emojiImage = new();
-                                    emojiImage.Source = new BitmapImage(new Uri(emojiDefinition.Value.Value.Url));
-                                    emojiImage.Width = 19;
-                                    emojiImage.Height = 19;
-                                    emojiImage.VerticalAlignment = VerticalAlignment.Center;
-                                    emojiImage.ToolTip = $":{emojiName}:";
-                                    inlineContainer.Child = emojiImage;
-
-                                    textBlock.Inlines.Add(inlineContainer);
-                                    textBlock.Inlines.Add(new Run(" "));
-                                    textBlock.TextWrapping = TextWrapping.Wrap;
-
-                                    // Make the below loop continue:
-                                    type = HyperlinkType.ServerEmoji;
-
-                                    break;
-                                }
-                        }
-
-                        if (link.Inlines.Count > 0 && type != null)
-                        {
-                            link.Click += (s, e) => OnHyperlinkClicked(type.Value, associatedObject);
-                            // When the mentioned user is the client give light blue background so it stands out
-                            if (type == HyperlinkType.User && associatedObject is DiscordUser mentionedUser
-                                && mentionedUser.Id == Discord.Client.CurrentUser?.Id
-                                && Settings.SettingsManager.Instance.HighlightMentions)
-                            {
-                                link.Foreground = new SolidColorBrush(Color.FromRgb(73, 164, 218));
-                                var span = new Span(link)
-                                {
-                                    Background = new SolidColorBrush(Color.FromArgb(0x50, 73, 164, 218))
-                                };
-                                textBlock.Inlines.Add(span);
-                            }
-                            else
-                            {
-                                textBlock.Inlines.Add(link);
-                            }
-                            continue;
-                        }
-                        else if (type == HyperlinkType.ServerEmoji)
-                        {
-                            continue;
-                        }
-                    }
-                }
-                else if (text.StartsWith("http://") || text.StartsWith("https://") || text.StartsWith("ftp://") || text.StartsWith("gopher://"))
-                {
-                    // This is a link. Links cannot contain spaces, so we can easily just consider the
-                    // whole part a link (in the case of standard links). Of course, we try to parse an
-                    // actual URI here, and if we cannot deduce one, then we disregard the part.
-                    if (Uri.IsWellFormedUriString(text, UriKind.Absolute))
-                    {
-                        Hyperlink link = new();
-                        Uri uriSanitised = new(text);
-
-                        link.Click += (s, e) => OnHyperlinkClicked(HyperlinkType.WebLink, uriSanitised.ToString());
-                        link.Inlines.Add(uriSanitised.ToString());
-                        textBlock.Inlines.Add(link);
-                        textBlock.Inlines.Add(" ");
-                        continue;
-                    }
-                }
-
-                List<Inline> inlines = new();
-                Run currentRun = new Run();
-
-                if (ContainsEmoji(text)) // stops the iteration if the text can't possibly contain emoji
-                {
-                    DiscordEmoji? emoji = null;
-                    StringInfo info = new(text);
-                    int loopCount = info.LengthInTextElements;
-                    for (int i = 0; i < loopCount; i++)
-                    {
-                        string c = info.SubstringByTextElements(i, 1);
-
-                        if (text.StartsWith(":") && text.EndsWith(":"))
-                        {
-                            try
-                            {
-                                emoji = DiscordEmoji.FromName(Discord.Client, text);
-                                loopCount = 1;
-                            }
-                            catch { }
-                        }
-
-                        else
-                        {
-                            DiscordEmoji.TryFromUnicode(c, out emoji);
-                        }
-
-                        if (emoji == null)
-                        {
-                            // just add the character to the current run
-                            currentRun.Text += c;
-                            continue;
-                        }
-
-                        // emoji is not null; add the current run to the inlines list
-                        inlines.Add(currentRun);
-                        currentRun = new Run();
-                        if (!EmojiDictionary.Map.TryGetValue(emoji.SearchName.Replace(":", ""), out var emojiName))
-                            emojiName = null; // fallback
-
-                        if (emojiName is null)
-                        {
-                            inlines.Add(new Run(emoji.Name));
-                        }
-                        else
-                        {
-                            InlineUIContainer inline = new();
-                            Image image = new();
-                            //image.Source = new BitmapImage(new Uri($"pack://application:,,,/Resources/Emoji/{emojiName}"));
-                            // see if its in the cache
-                            if (!EmojiCache.TryGetValue(emojiName, out BitmapSource? value))
-                            {
-                                value = new BitmapImage(new Uri($"pack://application:,,,/Resources/Emoji/{emojiName}"));
-                                value.Freeze();
-                                EmojiCache[emojiName] = value;
-                            }
-                            image.Source = value;
-                            image.Width = 19;
-                            image.Height = 19;
-                            inline.Child = image;
-                            inlines.Add(inline);
-                        }
-                    }
-                }
-
-                else
-                {
-                    currentRun.Text = text;
-                }
-
-                if (inlines.Count == 0) inlines.Add(currentRun);
-
-                foreach (var inline in inlines)
-                {
-                    textBlock.Inlines.Add(inline);
-                }
-                // add a space
-                textBlock.Inlines.Add(new Run(" "));
-                textBlock.TextWrapping = TextWrapping.Wrap;
-            }
+            string content = ReadString(Message, "Content") ?? Message as string ?? string.Empty;
+            AppendContent(textBlock, content, Message);
             MainPanel.Children.Add(FormatFullText(textBlock));
+        }
+
+        private void AppendContent(TextBlock textBlock, string content, object message)
+        {
+            foreach (Match tokenMatch in Regex.Matches(content, @"\s+|\S+"))
+            {
+                string token = tokenMatch.Value;
+
+                if (string.IsNullOrWhiteSpace(token))
+                {
+                    textBlock.Inlines.Add(new Run(token));
+                    continue;
+                }
+
+                if (TryCreateMention(token, message, out Hyperlink? mention))
+                {
+                    textBlock.Inlines.Add(mention);
+                    continue;
+                }
+
+                if (TryCreatePackagedEmoji(token, out InlineUIContainer? customEmoji))
+                {
+                    textBlock.Inlines.Add(customEmoji);
+                    continue;
+                }
+
+                if (TryCreateWebLink(token, out Hyperlink? webLink))
+                {
+                    textBlock.Inlines.Add(webLink);
+                    continue;
+                }
+
+                AppendLocalText(textBlock, token);
+            }
+        }
+
+        private bool TryCreateMention(string token, object message, out Hyperlink? link)
+        {
+            link = null;
+            if (token.Length < 4 || token[0] != '<' || token[^1] != '>')
+                return false;
+
+            string mention = token[1..^1];
+            HyperlinkType type;
+            string prefix;
+            string collectionName;
+            string unknownText;
+
+            if (mention.StartsWith("@&", StringComparison.Ordinal))
+            {
+                type = HyperlinkType.Role;
+                prefix = "@";
+                collectionName = "MentionedRoles";
+                unknownText = "@unknown-role";
+                mention = mention[2..];
+            }
+            else if (mention.StartsWith("@", StringComparison.Ordinal))
+            {
+                type = HyperlinkType.User;
+                prefix = "@";
+                collectionName = "MentionedUsers";
+                unknownText = "@unknown-user";
+                mention = mention[1..];
+            }
+            else if (mention.StartsWith("#", StringComparison.Ordinal))
+            {
+                type = HyperlinkType.Channel;
+                prefix = "#";
+                collectionName = "MentionedChannels";
+                unknownText = "#unknown-channel";
+                mention = mention[1..];
+            }
+            else
+            {
+                return false;
+            }
+
+            if (!ulong.TryParse(mention, NumberStyles.None, CultureInfo.InvariantCulture, out ulong id))
+                return false;
+
+            object? associatedObject = FindEntity(message, collectionName, id);
+            string? name = ReadString(associatedObject, type == HyperlinkType.User ? "DisplayName" : "Name");
+            if (string.IsNullOrWhiteSpace(name))
+                name = ReadString(associatedObject, "Username");
+
+            string label = name is null ? unknownText : prefix + name;
+            link = new Hyperlink(new Run(label));
+            object payload = associatedObject ?? token;
+            link.Click += (_, _) => OnHyperlinkClicked(type, payload);
+            return true;
+        }
+
+        private static object? FindEntity(object message, string collectionName, ulong id)
+        {
+            object? collection = ReadProperty(message, collectionName);
+            if (collection is not IEnumerable items)
+                return null;
+
+            foreach (object? item in items)
+            {
+                if (item is not null && ReadUInt64(item, "Id") == id)
+                    return item;
+            }
+
+            return null;
+        }
+
+        private bool TryCreateWebLink(string token, out Hyperlink? link)
+        {
+            link = null;
+            if (!token.StartsWith("http://", StringComparison.OrdinalIgnoreCase)
+                && !token.StartsWith("https://", StringComparison.OrdinalIgnoreCase)
+                && !token.StartsWith("ftp://", StringComparison.OrdinalIgnoreCase)
+                && !token.StartsWith("gopher://", StringComparison.OrdinalIgnoreCase))
+            {
+                return false;
+            }
+
+            if (!Uri.TryCreate(token, UriKind.Absolute, out Uri? uri))
+                return false;
+
+            string value = uri.ToString();
+            link = new Hyperlink(new Run(value));
+            link.Click += (_, _) => OnHyperlinkClicked(HyperlinkType.WebLink, value);
+            return true;
+        }
+
+        private static void AppendLocalText(TextBlock textBlock, string text)
+        {
+            StringInfo info = new(text);
+            var currentRun = new Run();
+            var inlines = new List<Inline>();
+
+            for (int i = 0; i < info.LengthInTextElements; i++)
+            {
+                string element = info.SubstringByTextElements(i, 1);
+                if (!TryGetPackagedEmoji(element, out string? fileName))
+                {
+                    currentRun.Text += element;
+                    continue;
+                }
+
+                if (currentRun.Text.Length > 0)
+                {
+                    inlines.Add(currentRun);
+                    currentRun = new Run();
+                }
+
+                inlines.Add(CreatePackagedEmoji(fileName!, element));
+            }
+
+            if (currentRun.Text.Length > 0 || inlines.Count == 0)
+                inlines.Add(currentRun);
+
+            foreach (Inline inline in inlines)
+                textBlock.Inlines.Add(inline);
+        }
+
+        private static bool TryCreatePackagedEmoji(string token, out InlineUIContainer? emoji)
+        {
+            emoji = null;
+            if (!TryGetPackagedEmoji(token, out string? fileName))
+                return false;
+
+            emoji = CreatePackagedEmoji(fileName!, token);
+            return true;
+        }
+
+        private static bool TryGetPackagedEmoji(string text, out string? fileName)
+        {
+            fileName = null;
+            if (text.Length < 3 || text[0] != ':' || text[^1] != ':')
+                return false;
+
+            string name = text[1..^1];
+            if (!EmojiDictionary.Map.TryGetValue(name, out string? mappedFile))
+                return false;
+
+            fileName = mappedFile;
+            return true;
+        }
+
+        private static InlineUIContainer CreatePackagedEmoji(string fileName, string toolTip)
+        {
+            var source = new BitmapImage(new Uri($"pack://application:,,,/Resources/Emoji/{fileName}"));
+            source.Freeze();
+
+            var image = new Image
+            {
+                Source = source,
+                Width = 19,
+                Height = 19,
+                VerticalAlignment = VerticalAlignment.Center,
+                ToolTip = toolTip
+            };
+
+            return new InlineUIContainer(image);
         }
 
         public TextBlock FormatFullText(TextBlock sourceTextBlock)
@@ -322,117 +274,120 @@ namespace Aerochat.Controls
 
             var inlinesCopy = sourceTextBlock.Inlines.ToList();
             sourceTextBlock.Inlines.Clear();
+            newTextBlock.ContextMenuOpening += TextBlock_ContextMenuOpening;
 
             for (int i = 0; i < inlinesCopy.Count; i++)
             {
-                var inline = inlinesCopy[i];
-
-                if (inline is Run currentRun)
-                {
-                    var combinedText = new StringBuilder(currentRun.Text);
-
-                    int nextIndex = i + 1;
-                    while (nextIndex < inlinesCopy.Count && inlinesCopy[nextIndex] is Run nextRun)
-                    {
-                        combinedText.Append(nextRun.Text);
-                        i = nextIndex;
-                        nextIndex++;
-                    }
-
-                    var inlines = new List<Inline>();
-                    int pos = 0;
-                    string input = combinedText.ToString();
-
-                    string pattern = @"(\*\*)(.+?)\1|(__)(.+?)\3|(\*|_)(.+?)\5|~~(.+?)~~|(?m)^(?:\*|-)\s+(.+)|(?m)^>\s+(.+)|(?m)^(#{1,6})\s+(.+)";
-
-                    foreach (Match m in Regex.Matches(input, pattern))
-                    {
-                        if (m.Index > pos)
-                            inlines.Add(new Run(input.Substring(pos, m.Index - pos)));
-
-                        if (m.Groups[1].Success) // bold 
-                        {
-                            var run = new Run(m.Groups[2].Value);
-                            run.FontWeight = FontWeights.Bold;
-                            inlines.Add(run);
-                        }
-                        else if (m.Groups[3].Success) // underline 
-                        { 
-                            var run = new Run(m.Groups[4].Value);
-                            run.TextDecorations = TextDecorations.Underline;
-                            inlines.Add(run);
-                        }
-                        else if (m.Groups[5].Success) // italic 
-                        {
-                            var run = new Run(m.Groups[6].Value);
-                            run.FontStyle = FontStyles.Italic;
-                            inlines.Add(run);
-                        }
-                        else if (m.Groups[7].Success) // strikethrough
-                        {
-                            var span = new Span(new Run(m.Groups[7].Value));
-                            span.TextDecorations = TextDecorations.Strikethrough;
-                            inlines.Add(span);
-                        }
-                        else if (m.Groups[8].Success) // list
-                        {
-                            var run = new Run(" " + m.Groups[8].Value);
-                            inlines.Add(run);
-                        }
-                        else if (m.Groups[9].Success) // quote
-                        {
-                            var run = new Run("" + m.Groups[9].Value.Trim() + "");
-                            run.FontStyle = FontStyles.Italic;
-                            run.Foreground = Brushes.DimGray;
-                            inlines.Add(run);
-                        }
-
-                        else if (m.Groups[10].Success) // header
-                        {
-                            var headerText = m.Groups[11].Value.Trim();
-                            var run = new Run(headerText);
-                            switch (m.Groups[10].Value.Length) // number of # 
-                            {
-                                case 1: run.FontSize = 24; break; // H1
-                                case 2: run.FontSize = 20; break; // H2
-                                case 3: run.FontSize = 18; break; // H3
-                                default: run.FontSize = 16; break; // H4-H6
-                            }
-                            run.FontWeight = FontWeights.Bold;
-                            inlines.Add(run);
-                            inlines.Add(new LineBreak());
-                        }
-
-                        pos = m.Index + m.Length;
-                    }
-
-                    if (pos < input.Length)
-                        inlines.Add(new Run(input.Substring(pos)));
-
-                    foreach (Inline mdInline in inlines)
-                        newTextBlock.Inlines.Add(mdInline);
-                }
-                else
+                Inline inline = inlinesCopy[i];
+                if (inline is not Run currentRun)
                 {
                     newTextBlock.Inlines.Add(inline);
+                    continue;
                 }
+
+                var combinedText = new StringBuilder(currentRun.Text);
+                int nextIndex = i + 1;
+                while (nextIndex < inlinesCopy.Count && inlinesCopy[nextIndex] is Run nextRun)
+                {
+                    combinedText.Append(nextRun.Text);
+                    i = nextIndex;
+                    nextIndex++;
+                }
+
+                AppendFormattedRuns(newTextBlock, combinedText.ToString());
             }
 
             return newTextBlock;
         }
 
-        private bool ContainsEmoji(string text)
+        private static void AppendFormattedRuns(TextBlock target, string input)
         {
-            if (text.Contains(':') && text.IndexOf(':') != text.LastIndexOf(':'))
-                return true;
+            const string pattern =
+                @"(?<bold>\*\*(?<boldText>.+?)\*\*|\[b\](?<boldBb>.+?)\[/b\])"
+                + @"|(?<underline>__(?<underlineText>.+?)__|\[u\](?<underlineBb>.+?)\[/u\])"
+                + @"|(?<italic>(?:\*|_)(?<italicText>.+?)(?:\*|_)|\[i\](?<italicBb>.+?)\[/i\])"
+                + @"|(?<strike>~~(?<strikeText>.+?)~~|\[s\](?<strikeBb>.+?)\[/s\])"
+                + @"|(?m)^(?:\*|-)\s+(?<list>.+)"
+                + @"|(?m)^>\s+(?<quote>.+)"
+                + @"|(?m)^(?<header>#{1,6})\s+(?<headerText>.+)";
 
-            foreach (char c in text)
+            var inlines = new List<Inline>();
+            int position = 0;
+            foreach (Match match in Regex.Matches(input, pattern))
             {
-                if (char.IsSurrogate(c) || char.GetUnicodeCategory(c) == System.Globalization.UnicodeCategory.OtherSymbol)
-                    return true;
+                if (match.Index > position)
+                    inlines.Add(new Run(input.Substring(position, match.Index - position)));
+
+                if (match.Groups["bold"].Success)
+                {
+                    string value = match.Groups["boldText"].Success
+                        ? match.Groups["boldText"].Value
+                        : match.Groups["boldBb"].Value;
+                    var run = new Run(value) { FontWeight = FontWeights.Bold };
+                    inlines.Add(run);
+                }
+                else if (match.Groups["underline"].Success)
+                {
+                    string value = match.Groups["underlineText"].Success
+                        ? match.Groups["underlineText"].Value
+                        : match.Groups["underlineBb"].Value;
+                    var run = new Run(value) { TextDecorations = TextDecorations.Underline };
+                    inlines.Add(run);
+                }
+                else if (match.Groups["italic"].Success)
+                {
+                    string value = match.Groups["italicText"].Success
+                        ? match.Groups["italicText"].Value
+                        : match.Groups["italicBb"].Value;
+                    var run = new Run(value) { FontStyle = FontStyles.Italic };
+                    inlines.Add(run);
+                }
+                else if (match.Groups["strike"].Success)
+                {
+                    string value = match.Groups["strikeText"].Success
+                        ? match.Groups["strikeText"].Value
+                        : match.Groups["strikeBb"].Value;
+                    var span = new Span(new Run(value)) { TextDecorations = TextDecorations.Strikethrough };
+                    inlines.Add(span);
+                }
+                else if (match.Groups["list"].Success)
+                {
+                    inlines.Add(new Run("• " + match.Groups["list"].Value));
+                }
+                else if (match.Groups["quote"].Success)
+                {
+                    var run = new Run("“" + match.Groups["quote"].Value.Trim() + "”")
+                    {
+                        FontStyle = FontStyles.Italic,
+                        Foreground = Brushes.DimGray
+                    };
+                    inlines.Add(run);
+                }
+                else if (match.Groups["header"].Success)
+                {
+                    var run = new Run(match.Groups["headerText"].Value.Trim())
+                    {
+                        FontSize = match.Groups["header"].Value.Length switch
+                        {
+                            1 => 24,
+                            2 => 20,
+                            3 => 18,
+                            _ => 16
+                        },
+                        FontWeight = FontWeights.Bold
+                    };
+                    inlines.Add(run);
+                    inlines.Add(new LineBreak());
+                }
+
+                position = match.Index + match.Length;
             }
 
-            return false;
+            if (position < input.Length)
+                inlines.Add(new Run(input[position..]));
+
+            foreach (Inline inline in inlines)
+                target.Inlines.Add(inline);
         }
 
         private void TextBlock_ContextMenuOpening(object sender, ContextMenuEventArgs e)
@@ -445,16 +400,27 @@ namespace Aerochat.Controls
             HyperlinkClicked?.Invoke(this, new HyperlinkClickedEventArgs(type, associatedObject));
         }
 
-        public WrapPanel MainPanel { get; set; }
-
-        public MessageParser()
+        private static object? ReadProperty(object? instance, string name)
         {
-            MainPanel = new WrapPanel();
-            Content = MainPanel;
-            Loaded += (_, _) => Window.GetWindow(this).Closing += (s, e) =>
-            {
+            if (instance is null)
+                return null;
 
-            };
+            PropertyInfo? property = instance.GetType().GetProperty(name, BindingFlags.Instance | BindingFlags.Public);
+            return property?.GetValue(instance);
+        }
+
+        private static string? ReadString(object? instance, string name)
+        {
+            return ReadProperty(instance, name) as string;
+        }
+
+        private static ulong ReadUInt64(object instance, string name)
+        {
+            object? value = ReadProperty(instance, name);
+            return value is null
+                ? 0
+                : ulong.TryParse(Convert.ToString(value, CultureInfo.InvariantCulture), NumberStyles.None,
+                    CultureInfo.InvariantCulture, out ulong result) ? result : 0;
         }
     }
 
@@ -464,7 +430,7 @@ namespace Aerochat.Controls
         Role,
         User,
         WebLink,
-        ServerEmoji, // Internal parsing purposes only.
+        ServerEmoji,
     }
 
     public class HyperlinkClickedEventArgs : EventArgs
