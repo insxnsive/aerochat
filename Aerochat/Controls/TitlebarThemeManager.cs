@@ -1,47 +1,47 @@
-﻿using Aerochat.Settings;
-using System;
-using System.Collections.Generic;
-using System.ComponentModel;
-using System.Linq;
-using System.Text;
-using System.Threading.Tasks;
+﻿using System;
 using System.Windows;
 using System.Windows.Media.Imaging;
 
 namespace Aerochat.Controls
 {
     /// <summary>
-    /// Manages the titlebar theme (Vista or XP)
+    /// Provides packaged titlebar button images for the presentation layer.
     /// </summary>
-    class TitlebarThemeManager : DependencyObject
+    public class TitlebarThemeManager : DependencyObject
     {
-        public static TitlebarThemeManager Instance { get; private set; }
-
-        static TitlebarThemeManager()
-        {
-            Instance = new();
-        }
+        public static TitlebarThemeManager Instance { get; } = new();
 
         public TitlebarThemeManager()
         {
             ReloadTheme();
-
-            SettingsManager.Instance.PropertyChanged += OnSettingsChange;
         }
 
-        private void OnSettingsChange(object? sender, PropertyChangedEventArgs args)
+        /// <summary>
+        /// Selects the packaged XP caption-button images when true. This is a
+        /// process-local dependency property so callers can bind presentation state
+        /// without coupling the control to settings or backend services.
+        /// </summary>
+        public bool XPCaptionButtons
         {
-            if (args.PropertyName == "XPCaptionButtons")
-            {
-                // This needs to run on the UI thread or it will throw an exception
-                // and silently break the program otherwise.
-                Application.Current.Dispatcher.BeginInvoke(ReloadTheme);
-            }
+            get => (bool)GetValue(XPCaptionButtonsProperty);
+            set => SetValue(XPCaptionButtonsProperty, value);
+        }
+
+        public static readonly DependencyProperty XPCaptionButtonsProperty =
+            DependencyProperty.Register(
+                nameof(XPCaptionButtons),
+                typeof(bool),
+                typeof(TitlebarThemeManager),
+                new FrameworkPropertyMetadata(false, OnXPCaptionButtonsChanged));
+
+        private static void OnXPCaptionButtonsChanged(DependencyObject d, DependencyPropertyChangedEventArgs e)
+        {
+            ((TitlebarThemeManager)d).ReloadTheme();
         }
 
         public void ReloadTheme()
         {
-            if (SettingsManager.Instance.XPCaptionButtons)
+            if (XPCaptionButtons)
             {
                 LoadXPTheme();
             }
@@ -53,9 +53,6 @@ namespace Aerochat.Controls
             FreezeThemeResources();
         }
 
-        /// <summary>
-        /// Freezes theme resources for optimisation.
-        /// </summary>
         private void FreezeThemeResources()
         {
             CloseImagePath.Freeze();
@@ -76,38 +73,37 @@ namespace Aerochat.Controls
 
         private void LoadXPTheme()
         {
-            CloseImagePath = new BitmapImage(new Uri("pack://application:,,,/Aerochat;component/Resources/Titlebar/XP/Close.png"));
-            CloseHoverImagePath = new BitmapImage(new Uri("pack://application:,,,/Aerochat;component/Resources/Titlebar/XP/CloseHover.png"));
-            CloseActiveImagePath = new BitmapImage(new Uri("pack://application:,,,/Aerochat;component/Resources/Titlebar/XP/CloseActive.png"));
-            CloseInactiveImagePath = new BitmapImage(new Uri("pack://application:,,,/Aerochat;component/Resources/Titlebar/XP/CloseInactive.png"));
-
-            MaximizeImagePath = new BitmapImage(new Uri("pack://application:,,,/Aerochat;component/Resources/Titlebar/XP/Maximize.png"));
-            MaximizeHoverImagePath = new BitmapImage(new Uri("pack://application:,,,/Aerochat;component/Resources/Titlebar/XP/MaximizeHover.png"));
-            MaximizeActiveImagePath = new BitmapImage(new Uri("pack://application:,,,/Aerochat;component/Resources/Titlebar/XP/MaximizeActive.png"));
-            MaximizeInactiveImagePath = new BitmapImage(new Uri("pack://application:,,,/Aerochat;component/Resources/Titlebar/XP/MaximizeInactive.png"));
-
-            MinimizeImagePath = new BitmapImage(new Uri("pack://application:,,,/Aerochat;component/Resources/Titlebar/XP/Minimize.png"));
-            MinimizeHoverImagePath = new BitmapImage(new Uri("pack://application:,,,/Aerochat;component/Resources/Titlebar/XP/MinimizeHover.png"));
-            MinimizeActiveImagePath = new BitmapImage(new Uri("pack://application:,,,/Aerochat;component/Resources/Titlebar/XP/MinimizeActive.png"));
-            MinimizeInactiveImagePath = new BitmapImage(new Uri("pack://application:,,,/Aerochat;component/Resources/Titlebar/XP/MinimizeInactive.png"));
+            LoadTheme("XP");
         }
 
         private void LoadVistaTheme()
         {
-            CloseImagePath = new BitmapImage(new Uri("pack://application:,,,/Aerochat;component/Resources/Titlebar/Vista/Close.png"));
-            CloseHoverImagePath = new BitmapImage(new Uri("pack://application:,,,/Aerochat;component/Resources/Titlebar/Vista/CloseHover.png"));
-            CloseActiveImagePath = new BitmapImage(new Uri("pack://application:,,,/Aerochat;component/Resources/Titlebar/Vista/CloseActive.png"));
-            CloseInactiveImagePath = new BitmapImage(new Uri("pack://application:,,,/Aerochat;component/Resources/Titlebar/Vista/CloseInactive.png"));
+            LoadTheme("Vista");
+        }
 
-            MaximizeImagePath = new BitmapImage(new Uri("pack://application:,,,/Aerochat;component/Resources/Titlebar/Vista/Maximize.png"));
-            MaximizeHoverImagePath = new BitmapImage(new Uri("pack://application:,,,/Aerochat;component/Resources/Titlebar/Vista/MaximizeHover.png"));
-            MaximizeActiveImagePath = new BitmapImage(new Uri("pack://application:,,,/Aerochat;component/Resources/Titlebar/Vista/MaximizeActive.png"));
-            MaximizeInactiveImagePath = new BitmapImage(new Uri("pack://application:,,,/Aerochat;component/Resources/Titlebar/Vista/MaximizeInactive.png"));
+        private void LoadTheme(string themeName)
+        {
+            CloseImagePath = LoadImage(themeName, "Close");
+            CloseHoverImagePath = LoadImage(themeName, "CloseHover");
+            CloseActiveImagePath = LoadImage(themeName, "CloseActive");
+            CloseInactiveImagePath = LoadImage(themeName, "CloseInactive");
 
-            MinimizeImagePath = new BitmapImage(new Uri("pack://application:,,,/Aerochat;component/Resources/Titlebar/Vista/Minimize.png"));
-            MinimizeHoverImagePath = new BitmapImage(new Uri("pack://application:,,,/Aerochat;component/Resources/Titlebar/Vista/MinimizeHover.png"));
-            MinimizeActiveImagePath = new BitmapImage(new Uri("pack://application:,,,/Aerochat;component/Resources/Titlebar/Vista/MinimizeActive.png"));
-            MinimizeInactiveImagePath = new BitmapImage(new Uri("pack://application:,,,/Aerochat;component/Resources/Titlebar/Vista/MinimizeInactive.png"));
+            MaximizeImagePath = LoadImage(themeName, "Maximize");
+            MaximizeHoverImagePath = LoadImage(themeName, "MaximizeHover");
+            MaximizeActiveImagePath = LoadImage(themeName, "MaximizeActive");
+            MaximizeInactiveImagePath = LoadImage(themeName, "MaximizeInactive");
+
+            MinimizeImagePath = LoadImage(themeName, "Minimize");
+            MinimizeHoverImagePath = LoadImage(themeName, "MinimizeHover");
+            MinimizeActiveImagePath = LoadImage(themeName, "MinimizeActive");
+            MinimizeInactiveImagePath = LoadImage(themeName, "MinimizeInactive");
+        }
+
+        private static BitmapImage LoadImage(string themeName, string imageName)
+        {
+            return new BitmapImage(new Uri(
+                $"pack://application:,,,/Aerochat;component/Resources/Titlebar/{themeName}/{imageName}.png",
+                UriKind.Absolute));
         }
 
         #region Property boilerplate
@@ -120,11 +116,10 @@ namespace Aerochat.Controls
 
         public static readonly DependencyProperty CloseImagePathProperty =
             DependencyProperty.Register(
-                "CloseImagePath",
+                nameof(CloseImagePath),
                 typeof(BitmapImage),
                 typeof(TitlebarThemeManager),
-                new FrameworkPropertyMetadata(null)
-            );
+                new FrameworkPropertyMetadata(null));
 
         public BitmapImage CloseHoverImagePath
         {
@@ -134,11 +129,10 @@ namespace Aerochat.Controls
 
         public static readonly DependencyProperty CloseHoverImagePathProperty =
             DependencyProperty.Register(
-                "CloseHoverImagePath",
+                nameof(CloseHoverImagePath),
                 typeof(BitmapImage),
                 typeof(TitlebarThemeManager),
-                new FrameworkPropertyMetadata(null)
-            );
+                new FrameworkPropertyMetadata(null));
 
         public BitmapImage CloseActiveImagePath
         {
@@ -148,11 +142,10 @@ namespace Aerochat.Controls
 
         public static readonly DependencyProperty CloseActiveImagePathProperty =
             DependencyProperty.Register(
-                "CloseActiveImagePath",
+                nameof(CloseActiveImagePath),
                 typeof(BitmapImage),
                 typeof(TitlebarThemeManager),
-                new FrameworkPropertyMetadata(null)
-            );
+                new FrameworkPropertyMetadata(null));
 
         public BitmapImage CloseInactiveImagePath
         {
@@ -162,11 +155,10 @@ namespace Aerochat.Controls
 
         public static readonly DependencyProperty CloseInactiveImagePathProperty =
             DependencyProperty.Register(
-                "CloseInactiveImagePath",
+                nameof(CloseInactiveImagePath),
                 typeof(BitmapImage),
                 typeof(TitlebarThemeManager),
-                new FrameworkPropertyMetadata(null)
-            );
+                new FrameworkPropertyMetadata(null));
 
         public BitmapImage MaximizeImagePath
         {
@@ -176,11 +168,10 @@ namespace Aerochat.Controls
 
         public static readonly DependencyProperty MaximizeImagePathProperty =
             DependencyProperty.Register(
-                "MaximizeImagePath",
+                nameof(MaximizeImagePath),
                 typeof(BitmapImage),
                 typeof(TitlebarThemeManager),
-                new FrameworkPropertyMetadata(null)
-            );
+                new FrameworkPropertyMetadata(null));
 
         public BitmapImage MaximizeHoverImagePath
         {
@@ -190,11 +181,10 @@ namespace Aerochat.Controls
 
         public static readonly DependencyProperty MaximizeHoverImagePathProperty =
             DependencyProperty.Register(
-                "MaximizeHoverImagePath",
+                nameof(MaximizeHoverImagePath),
                 typeof(BitmapImage),
                 typeof(TitlebarThemeManager),
-                new FrameworkPropertyMetadata(null)
-            );
+                new FrameworkPropertyMetadata(null));
 
         public BitmapImage MaximizeActiveImagePath
         {
@@ -204,11 +194,10 @@ namespace Aerochat.Controls
 
         public static readonly DependencyProperty MaximizeActiveImagePathProperty =
             DependencyProperty.Register(
-                "MaximizeActiveImagePath",
+                nameof(MaximizeActiveImagePath),
                 typeof(BitmapImage),
                 typeof(TitlebarThemeManager),
-                new FrameworkPropertyMetadata(null)
-            );
+                new FrameworkPropertyMetadata(null));
 
         public BitmapImage MaximizeInactiveImagePath
         {
@@ -218,11 +207,10 @@ namespace Aerochat.Controls
 
         public static readonly DependencyProperty MaximizeInactiveImagePathProperty =
             DependencyProperty.Register(
-                "MaximizeInactiveImagePath",
+                nameof(MaximizeInactiveImagePath),
                 typeof(BitmapImage),
                 typeof(TitlebarThemeManager),
-                new FrameworkPropertyMetadata(null)
-            );
+                new FrameworkPropertyMetadata(null));
 
         public BitmapImage MinimizeImagePath
         {
@@ -232,11 +220,10 @@ namespace Aerochat.Controls
 
         public static readonly DependencyProperty MinimizeImagePathProperty =
             DependencyProperty.Register(
-                "MinimizeImagePath",
+                nameof(MinimizeImagePath),
                 typeof(BitmapImage),
                 typeof(TitlebarThemeManager),
-                new FrameworkPropertyMetadata(null)
-            );
+                new FrameworkPropertyMetadata(null));
 
         public BitmapImage MinimizeHoverImagePath
         {
@@ -246,11 +233,10 @@ namespace Aerochat.Controls
 
         public static readonly DependencyProperty MinimizeHoverImagePathProperty =
             DependencyProperty.Register(
-                "MinimizeHoverImagePath",
+                nameof(MinimizeHoverImagePath),
                 typeof(BitmapImage),
                 typeof(TitlebarThemeManager),
-                new FrameworkPropertyMetadata(null)
-            );
+                new FrameworkPropertyMetadata(null));
 
         public BitmapImage MinimizeActiveImagePath
         {
@@ -260,11 +246,10 @@ namespace Aerochat.Controls
 
         public static readonly DependencyProperty MinimizeActiveImagePathProperty =
             DependencyProperty.Register(
-                "MinimizeActiveImagePath",
+                nameof(MinimizeActiveImagePath),
                 typeof(BitmapImage),
                 typeof(TitlebarThemeManager),
-                new FrameworkPropertyMetadata(null)
-            );
+                new FrameworkPropertyMetadata(null));
 
         public BitmapImage MinimizeInactiveImagePath
         {
@@ -274,11 +259,10 @@ namespace Aerochat.Controls
 
         public static readonly DependencyProperty MinimizeInactiveImagePathProperty =
             DependencyProperty.Register(
-                "MinimizeInactiveImagePath",
+                nameof(MinimizeInactiveImagePath),
                 typeof(BitmapImage),
                 typeof(TitlebarThemeManager),
-                new FrameworkPropertyMetadata(null)
-            );
+                new FrameworkPropertyMetadata(null));
 
         #endregion
     }

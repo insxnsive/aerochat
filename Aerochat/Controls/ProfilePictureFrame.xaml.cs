@@ -1,4 +1,5 @@
 ﻿using Aerochat.Hoarder;
+using Aerochat.Presentation;
 using DSharpPlus.Entities;
 using System;
 using System.Collections.Generic;
@@ -31,6 +32,30 @@ namespace Aerochat.Controls
     }
     public partial class ProfilePictureFrame : UserControl
     {
+        public static Uri GetFrameUri(PresenceStatus status, ProfileFrameSize size)
+        {
+            string sizeName = size switch
+            {
+                ProfileFrameSize.ExtraSmall => "XS",
+                ProfileFrameSize.ExtraLarge => "XL",
+                ProfileFrameSize.Small => "Small",
+                ProfileFrameSize.Medium => "Medium",
+                ProfileFrameSize.Large => "Large",
+                _ => throw new ArgumentOutOfRangeException(nameof(size))
+            };
+            string statusName = status switch
+            {
+                PresenceStatus.Online => "Active",
+                PresenceStatus.Busy => "Dnd",
+                PresenceStatus.Away => "Idle",
+                PresenceStatus.Offline => "Offline",
+                _ => throw new ArgumentOutOfRangeException(nameof(status))
+            };
+            string animation = statusName == "Offline" || sizeName == "XS" ? "" : "Animation";
+            // Use the URI authority form that remains valid after WPF pack resources initialize.
+            return new Uri($"pack://application/Aerochat;component/Resources/Frames/{sizeName}Frame{statusName}{animation}.png", UriKind.Absolute);
+        }
+
         public static readonly DependencyProperty FrameSizeProperty = DependencyProperty.Register("FrameSize", typeof(ProfileFrameSize), typeof(ProfilePictureFrame), new PropertyMetadata(ProfileFrameSize.Unknown, OnFrameSizeChange));
         public static readonly DependencyProperty UserStatusProperty = DependencyProperty.Register("UserStatus", typeof(UserStatus), typeof(ProfilePictureFrame), new PropertyMetadata(UserStatus.Offline, OnStatusChange));
         public static readonly DependencyProperty ProfilePictureProperty = DependencyProperty.Register("ProfilePicture", typeof(BitmapSource), typeof(ProfilePictureFrame), new PropertyMetadata(null, OnProfilePictureChange));

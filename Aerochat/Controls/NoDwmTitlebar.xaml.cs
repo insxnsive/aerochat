@@ -1,52 +1,97 @@
 ﻿using Aerochat.ViewModels;
 using System;
-using System.Collections.Generic;
-using System.Linq;
-using System.Text;
-using System.Threading.Tasks;
 using System.Windows;
 using System.Windows.Controls;
-using System.Windows.Data;
-using System.Windows.Documents;
 using System.Windows.Input;
 using System.Windows.Media;
-using System.Windows.Media.Imaging;
-using System.Windows.Navigation;
-using System.Windows.Shapes;
+using System.Windows.Shell;
 
 namespace Aerochat.Controls
 {
     public partial class NoDwmTitlebar : UserControl
     {
         public BasicTitlebarViewModel ViewModel = new();
+
         public NoDwmTitlebar()
         {
             InitializeComponent();
             DataContext = ViewModel;
+            PreviewMouseLeftButtonDown += Caption_PreviewMouseLeftButtonDown;
+        }
+
+        private void Caption_PreviewMouseLeftButtonDown(object sender, MouseButtonEventArgs e)
+        {
+            if (e.ChangedButton != MouseButton.Left || IsButtonSource(e.OriginalSource))
+            {
+                return;
+            }
+
+            if (Window.GetWindow(this) is not Window window)
+            {
+                return;
+            }
+
+            if (e.ClickCount == 2)
+            {
+                ToggleMaximize(window);
+                e.Handled = true;
+                return;
+            }
+
+            window.DragMove();
+            e.Handled = true;
+        }
+
+        private static bool IsButtonSource(object source)
+        {
+            DependencyObject? current = source as DependencyObject;
+            while (current is not null)
+            {
+                if (current is Button)
+                {
+                    return true;
+                }
+
+                current = VisualTreeHelper.GetParent(current);
+            }
+
+            return false;
+        }
+
+        private static void ToggleMaximize(Window window)
+        {
+            if (window.WindowState == WindowState.Maximized)
+            {
+                SystemCommands.RestoreWindow(window);
+            }
+            else
+            {
+                SystemCommands.MaximizeWindow(window);
+            }
         }
 
         private void Maximize_Click(object sender, RoutedEventArgs e)
         {
-            // maximize the window
-            if (Window.GetWindow(this) is not Window window) return;
-            if (window.WindowState == WindowState.Maximized)
-                window.WindowState = WindowState.Normal;
-            else
-                window.WindowState = WindowState.Maximized;
+            if (Window.GetWindow(this) is Window window)
+            {
+                ToggleMaximize(window);
+            }
         }
 
         private void Minimize_Click(object sender, RoutedEventArgs e)
         {
-            // minimize the window
-            if (Window.GetWindow(this) is not Window window) return;
-            window.WindowState = WindowState.Minimized;
+            if (Window.GetWindow(this) is Window window)
+            {
+                SystemCommands.MinimizeWindow(window);
+            }
         }
 
         private void Close_Click(object sender, RoutedEventArgs e)
         {
-            // close the window
-            if (Window.GetWindow(this) is not Window window) return;
-            window.Close();
+            if (Window.GetWindow(this) is Window window)
+            {
+                SystemCommands.CloseWindow(window);
+            }
         }
     }
 }
