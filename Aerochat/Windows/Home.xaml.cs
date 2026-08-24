@@ -35,13 +35,39 @@ public partial class Home : Window
         // The test host intentionally has no Application object, so it can exercise
         // the state controller without loading the visual tree or application resources.
         if (Application.Current is not null)
+        {
             InitializeComponent();
+            InitializeHomeInteractions();
+        }
 
         DataContext = State;
     }
 
+    private void InitializeHomeInteractions()
+    {
+        MouseEnter += (_, _) => SetVisibleProperty(true);
+        MouseLeave += (_, _) =>
+        {
+            if (!IsActive)
+                SetVisibleProperty(false);
+        };
+        Activated += (_, _) => SetVisibleProperty(true);
+        Deactivated += (_, _) => SetVisibleProperty(false);
+    }
+
+    public void SetVisibleProperty(bool visible)
+    {
+        foreach (ContactGroupPresentation group in State.ContactGroups)
+            group.IsVisibleProperty = visible;
+        foreach (ContactGroupPresentation group in State.FilteredContactGroups)
+            group.IsVisibleProperty = visible;
+    }
+
     public void ApplySearch(string searchText) =>
         State.ApplySearch(searchText ?? "");
+
+    private void SearchInput_TextChanged(object sender, TextChangedEventArgs e) =>
+        ApplySearch(SearchInput.Text);
 
     public void SetPresence(PresenceStatus status) =>
         State.CurrentUser.Presence.Status = status;
@@ -183,8 +209,47 @@ public partial class Home : Window
 
     private void ItemClick(object sender, MouseButtonEventArgs e)
     {
-        // Selection is deliberately visual-only until the chat route is migrated.
-        e.Handled = false;
+        if (sender is not FrameworkElement { DataContext: object item })
+            return;
+
+        switch (item)
+        {
+            case ContactGroupPresentation group:
+                SelectGroup(group);
+                break;
+            case ContactPresentation contact:
+                SelectContact(contact);
+                break;
+        }
+    }
+
+    private void SelectGroup(ContactGroupPresentation group)
+    {
+        ClearSelection();
+        group.IsSelected = true;
+    }
+
+    private void SelectContact(ContactPresentation contact)
+    {
+        ClearSelection();
+        contact.IsSelected = true;
+    }
+
+    private void ClearSelection()
+    {
+        foreach (ContactGroupPresentation group in State.ContactGroups)
+        {
+            group.IsSelected = false;
+            foreach (ContactPresentation contact in group.Items)
+                contact.IsSelected = false;
+        }
+
+        foreach (ContactGroupPresentation group in State.FilteredContactGroups)
+        {
+            group.IsSelected = false;
+            foreach (ContactPresentation contact in group.Items)
+                contact.IsSelected = false;
+        }
     }
 
     private void Button_MouseDoubleClick(object sender, MouseButtonEventArgs e)

@@ -1,4 +1,6 @@
 using System.Collections.ObjectModel;
+using System.Globalization;
+using System.Windows.Data;
 
 namespace Aerochat.Presentation;
 
@@ -50,23 +52,35 @@ public sealed class PresentationState : ObservableObject
     public void ApplySearch(string searchText)
     {
         string query = searchText.Trim();
+
+        foreach (ContactGroupPresentation filteredGroup in FilteredContactGroups)
+            filteredGroup.UnlinkFilteredCopy();
         FilteredContactGroups.Clear();
 
         foreach (ContactGroupPresentation sourceGroup in ContactGroups)
         {
+            if (query.Length == 0)
+            {
+                FilteredContactGroups.Add(sourceGroup);
+                continue;
+            }
+
             ContactGroupPresentation filteredGroup = new()
             {
                 Name = sourceGroup.Name,
-                IsCollapsed = sourceGroup.IsCollapsed
+                IsCollapsed = sourceGroup.IsCollapsed,
+                IsSelected = sourceGroup.IsSelected,
+                IsVisibleProperty = sourceGroup.IsVisibleProperty
             };
+            filteredGroup.LinkFilteredCopy(sourceGroup);
 
             foreach (ContactPresentation contact in sourceGroup.Items)
             {
-                if (query.Length == 0 || Matches(contact.Person, query))
+                if (Matches(contact.Person, query))
                     filteredGroup.Items.Add(contact);
             }
 
-            if (query.Length == 0 || filteredGroup.Items.Count > 0)
+            if (filteredGroup.Items.Count > 0)
                 FilteredContactGroups.Add(filteredGroup);
         }
 
@@ -159,4 +173,36 @@ public sealed class PresentationState : ObservableObject
         conversation.TargetMessage = null;
         conversation.TargetMode = MessageTargetMode.None;
     }
+}
+
+public sealed class AdImagePresentation
+{
+    public required string Image { get; init; }
+    public required string Url { get; init; }
+    public required string ImageType { get; init; }
+    public int AnimationFrames { get; init; }
+    public int AnimationFramerate { get; init; }
+}
+
+public sealed class AdImagePresentationConverter : IValueConverter
+{
+    public object? Convert(object value, Type targetType, object? parameter, CultureInfo culture)
+    {
+        if (value is not AdPresentation ad)
+            return null;
+
+        return new AdImagePresentation
+        {
+            Image = ad.ImageUri,
+            Url = ad.ImageUri,
+            ImageType = ad.ImageUri.EndsWith(".gif", StringComparison.OrdinalIgnoreCase)
+                ? "Gif"
+                : "StaticImage",
+            AnimationFrames = 0,
+            AnimationFramerate = 0
+        };
+    }
+
+    public object ConvertBack(object value, Type targetType, object? parameter, CultureInfo culture) =>
+        throw new NotSupportedException();
 }

@@ -23,6 +23,7 @@
         <converter:MembersCountConverter x:Key="MembersCountConverter" />
         <local:BooleanToVisibilityConverter x:Key="BooleanToVisibilityConverter" />
         <converter:InverseBooleanConverter x:Key="InverseBooleanConverter" />
+        <presentation:AdImagePresentationConverter x:Key="AdImagePresentationConverter" />
         <Storyboard x:Key="FadeOutStoryboard">
             <DoubleAnimation Storyboard.TargetProperty="Opacity"
                              To="0"
@@ -252,13 +253,13 @@
                                                                                 <DataTrigger Binding="{Binding CurrentUser.Presence.Status}" Value="Online">
                                             <Setter Property="Text" Value="{loc:Loc StatusAvailableParens}" />
                                                                 </DataTrigger>
-                                                                <DataTrigger Binding="{Binding CurrentUser.Presence.Status}" Value="DoNotDisturb">
+                                                                <DataTrigger Binding="{Binding CurrentUser.Presence.Status}" Value="Busy">
                                                                     <Setter Property="Text" Value="{loc:Loc StatusBusyParens}" />
                                                                 </DataTrigger>
-                                                                <DataTrigger Binding="{Binding CurrentUser.Presence.Status}" Value="Idle">
+                                                                <DataTrigger Binding="{Binding CurrentUser.Presence.Status}" Value="Away">
                                                                     <Setter Property="Text" Value="{loc:Loc StatusAwayParens}" />
                                                                 </DataTrigger>
-                                                                <DataTrigger Binding="{Binding CurrentUser.Presence.Status}" Value="Invisible">
+                                                                <DataTrigger Binding="{Binding CurrentUser.Presence.Status}" Value="Offline">
                                                                     <Setter Property="Text" Value="{loc:Loc StatusAppearOfflineParens}" />
                                                                                 </DataTrigger>
                                                                             </Style.Triggers>
@@ -452,7 +453,7 @@
                                 <ColumnDefinition Width="Auto" />
                             </Grid.ColumnDefinitions>
                             <Grid Grid.Column="0">
-                                <TextBox Background="Transparent" Height="28" VerticalContentAlignment="Center" VerticalAlignment="Center" Padding="12,0" Panel.ZIndex="5" Margin="7,0,23,0" BorderThickness="0" x:Name="SearchInput" Text="">
+                                <TextBox Background="Transparent" Height="28" VerticalContentAlignment="Center" VerticalAlignment="Center" Padding="12,0" Panel.ZIndex="5" Margin="7,0,23,0" BorderThickness="0" x:Name="SearchInput" TextChanged="SearchInput_TextChanged" Text="">
                                     <TextBox.Style>
                                         <Style TargetType="{x:Type TextBox}">
                                             <Setter Property="Cursor" Value="Arrow" />
@@ -674,16 +675,13 @@
                                                                         <DataTrigger Binding="{Binding Person.Presence.Status}" Value="Online">
                                                                             <Setter Property="Source" Value="/Aerochat;component/Resources/Frames/XSFrameActive.png" />
                                                                         </DataTrigger>
-                                                                        <DataTrigger Binding="{Binding Person.Presence.Status}" Value="Idle">
+                                                                        <DataTrigger Binding="{Binding Person.Presence.Status}" Value="Away">
                                                                             <Setter Property="Source" Value="/Aerochat;component/Resources/Frames/XSFrameIdle.png" />
                                                                         </DataTrigger>
-                                                                        <DataTrigger Binding="{Binding Person.Presence.Status}" Value="DoNotDisturb">
+                                                                        <DataTrigger Binding="{Binding Person.Presence.Status}" Value="Busy">
                                                                             <Setter Property="Source" Value="/Aerochat;component/Resources/Frames/XSFrameDnd.png" />
                                                                         </DataTrigger>
                                                                         <DataTrigger Binding="{Binding Person.Presence.Status}" Value="Offline">
-                                                                            <Setter Property="Source" Value="/Aerochat;component/Resources/Frames/XSFrameOffline.png" />
-                                                                        </DataTrigger>
-                                                                        <DataTrigger Binding="{Binding Person.Presence.Status}" Value="Invisible">
                                                                             <Setter Property="Source" Value="/Aerochat;component/Resources/Frames/XSFrameOffline.png" />
                                                                         </DataTrigger>
                                                                         <DataTrigger Binding="{Binding Person.Presence.Status}" Value="">
@@ -925,18 +923,18 @@
                                     </Grid.RowDefinitions>
                                     <Grid Grid.Row="0" UseLayoutRounding="True">
                                         <Border Width="Auto" Height="Auto" HorizontalAlignment="Left" VerticalAlignment="Bottom" BorderThickness="1" BorderBrush="Black">
-                                            <Image x:Name="AdImage" PreviewMouseLeftButtonDown="Image_PreviewMouseLeftButtonDown" PreviewMouseRightButtonDown="Image_PreviewMouseRightButtonDown" MaxWidth="234" Height="60" Grid.Column="1" Source="{Binding CurrentAd.ImageUri}">
-                                                <Image.Style>
-                                                    <Style TargetType="Image">
+                                            <controls:AdImage x:Name="AdImage" PreviewMouseLeftButtonDown="Image_PreviewMouseLeftButtonDown" PreviewMouseRightButtonDown="Image_PreviewMouseRightButtonDown" MaxWidth="234" Height="60" Grid.Column="1" Tag="{Binding CurrentAd.ImageUri}" DataContext="{Binding CurrentAd, Converter={StaticResource AdImagePresentationConverter}}">
+                                                <controls:AdImage.Style>
+                                                    <Style TargetType="controls:AdImage">
                                                         <Setter Property="Cursor" Value="Hand" />
                                                         <Style.Triggers>
-                                                            <DataTrigger Binding="{Binding CurrentAd.ImageUri}" Value="">
+                                                            <DataTrigger Binding="{Binding Image}" Value="">
                                                                 <Setter Property="Cursor" Value="Arrow" />
                                                             </DataTrigger>
                                                         </Style.Triggers>
                                                     </Style>
-                                                </Image.Style>
-                                            </Image>
+                                                </controls:AdImage.Style>
+                                            </controls:AdImage>
                                         </Border>
                                     </Grid>
                                 </Grid>

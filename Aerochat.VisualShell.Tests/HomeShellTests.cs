@@ -161,6 +161,100 @@ public sealed class HomeShellTests
     }
 
     [Test]
+    public void Home_search_input_wires_typing_to_typed_search_filtering()
+    {
+        string homePath = GetHomePath("Home.xaml");
+        string codeBehindPath = GetHomePath("Home.xaml.cs");
+        string xaml = File.ReadAllText(homePath);
+        string codeBehind = File.ReadAllText(codeBehindPath);
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(xaml, Does.Contain("x:Name=\"SearchInput\" TextChanged=\"SearchInput_TextChanged\""));
+            Assert.That(codeBehind, Does.Contain("private void SearchInput_TextChanged(object sender, TextChangedEventArgs e)"));
+            Assert.That(codeBehind, Does.Contain("ApplySearch(SearchInput.Text)"));
+        });
+    }
+
+    [Test]
+    public void Home_presentation_models_expose_observable_local_selection_and_visibility()
+    {
+        PresentationState state = DemoData.Create();
+        ContactGroupPresentation group = state.ContactGroups[0];
+        ContactPresentation contact = group.Items[0];
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(typeof(ContactGroupPresentation).GetProperty(nameof(ContactGroupPresentation.IsSelected)), Is.Not.Null);
+            Assert.That(typeof(ContactGroupPresentation).GetProperty(nameof(ContactGroupPresentation.IsVisibleProperty)), Is.Not.Null);
+            Assert.That(typeof(ContactPresentation).GetProperty(nameof(ContactPresentation.IsSelected)), Is.Not.Null);
+        });
+
+        var selected = typeof(ContactPresentation).GetProperty(nameof(ContactPresentation.IsSelected));
+        var visible = typeof(ContactGroupPresentation).GetProperty(nameof(ContactGroupPresentation.IsVisibleProperty));
+        selected!.SetValue(contact, true);
+        visible!.SetValue(group, true);
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(selected.GetValue(contact), Is.EqualTo(true));
+            Assert.That(visible.GetValue(group), Is.EqualTo(true));
+        });
+    }
+
+    [Test]
+    public void Home_status_triggers_use_local_presence_values()
+    {
+        string xaml = File.ReadAllText(GetHomePath("Home.xaml"));
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(xaml, Does.Contain("Value=\"Online\""));
+            Assert.That(xaml, Does.Contain("Value=\"Busy\""));
+            Assert.That(xaml, Does.Contain("Value=\"Away\""));
+            Assert.That(xaml, Does.Contain("Value=\"Offline\""));
+            Assert.That(xaml, Does.Not.Contain("Value=\"DoNotDisturb\""));
+            Assert.That(xaml, Does.Not.Contain("Value=\"Idle\""));
+            Assert.That(xaml, Does.Not.Contain("Value=\"Invisible\""));
+        });
+    }
+
+    [Test]
+    public void Home_uses_animated_ad_control_bound_to_current_ad()
+    {
+        string xaml = File.ReadAllText(GetHomePath("Home.xaml"));
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(xaml, Does.Contain("<controls:AdImage"));
+            Assert.That(xaml, Does.Contain("DataContext=\"{Binding CurrentAd"));
+            Assert.That(xaml, Does.Not.Contain("<Image x:Name=\"AdImage\""));
+        });
+    }
+
+    [Test]
+    public void Home_filtered_group_collapse_synchronizes_with_source_group()
+    {
+        WpfTestHost.Run(() =>
+        {
+            PresentationState state = DemoData.Create();
+            var home = new Home(state, new WindowNavigator(state));
+
+            home.ApplySearch("maya");
+            ContactGroupPresentation sourceGroup = state.ContactGroups[0];
+            ContactGroupPresentation filteredGroup = state.FilteredContactGroups[0];
+
+            filteredGroup.IsCollapsed = true;
+            Assert.That(sourceGroup.IsCollapsed, Is.True);
+
+            sourceGroup.IsCollapsed = false;
+            Assert.That(filteredGroup.IsCollapsed, Is.False);
+
+            home.Close();
+        });
+    }
+
+    [Test]
     public void Navigator_creates_home_with_the_shared_state()
     {
         WpfTestHost.Run(() =>
@@ -236,4 +330,10 @@ public sealed class HomeShellTests
             Assert.That(xaml, Does.Contain("/Aerochat;component/Resources/Message/Background.png"));
         });
     }
+
+    private static string GetHomePath(string fileName) =>
+        Path.GetFullPath(Path.Combine(
+            TestContext.CurrentContext.TestDirectory,
+            "../../../../../Aerochat/Windows",
+            fileName));
 }
