@@ -1,4 +1,5 @@
 using Aerochat.Presentation;
+using System.Globalization;
 
 namespace Aerochat.VisualShell.Tests;
 
@@ -92,6 +93,61 @@ public sealed class DemoDataTests
             resource?.Stream.Dispose();
         }
     }
+
+    [Test]
+    public void Ad_image_converter_preserves_static_gif_and_spritesheet_metadata()
+    {
+        AdPresentation staticAd = new(
+            "Static", "/Aerochat;component/Ads/Aerochat.png", "Static", System.Windows.Media.Colors.White);
+        AdPresentation gifAd = new(
+            "Gif", "/Aerochat;component/Ads/Bytemind.gif", "Gif", System.Windows.Media.Colors.White);
+        AdPresentation spritesheetAd = new(
+            "JVTeX", "/Aerochat;component/Ads/jvtexad.png", "Spritesheet",
+            System.Windows.Media.Colors.White, AdImageType.SpritesheetAnimation, 53, 220);
+
+        AdImagePresentation staticImage = ConvertAdImage(staticAd);
+        AdImagePresentation gifImage = ConvertAdImage(gifAd);
+        AdImagePresentation spritesheetImage = ConvertAdImage(spritesheetAd);
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(staticImage.ImageType, Is.EqualTo("StaticImage"));
+            Assert.That(staticImage.AnimationFrames, Is.EqualTo(0));
+            Assert.That(staticImage.AnimationFramerate, Is.EqualTo(0));
+            Assert.That(gifImage.ImageType, Is.EqualTo("Gif"));
+            Assert.That(spritesheetImage.ImageType, Is.EqualTo("SpritesheetAnimation"));
+            Assert.That(spritesheetImage.AnimationFrames, Is.EqualTo(53));
+            Assert.That(spritesheetImage.AnimationFramerate, Is.EqualTo(220));
+        });
+    }
+
+    [Test]
+    public void Create_includes_resolvable_spritesheet_ad_with_animation_metadata()
+    {
+        PresentationState state = DemoData.Create();
+        AdPresentation spritesheetAd = state.Ads.Single(ad =>
+            ad.ImageUri.EndsWith("/jvtexad.png", StringComparison.OrdinalIgnoreCase));
+        AdImagePresentation image = ConvertAdImage(spritesheetAd);
+        System.Windows.Resources.StreamResourceInfo? resource =
+            System.Windows.Application.GetResourceStream(new Uri(spritesheetAd.ImageUri, UriKind.Relative));
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(spritesheetAd.ImageUri, Is.EqualTo("/Aerochat;component/Ads/jvtexad.png"));
+            Assert.That(spritesheetAd.ImageType, Is.EqualTo(AdImageType.SpritesheetAnimation));
+            Assert.That(spritesheetAd.AnimationFrames, Is.EqualTo(53));
+            Assert.That(spritesheetAd.AnimationFramerate, Is.EqualTo(220));
+            Assert.That(resource, Is.Not.Null);
+            Assert.That(image.ImageType, Is.EqualTo("SpritesheetAnimation"));
+            Assert.That(image.AnimationFrames, Is.EqualTo(53));
+            Assert.That(image.AnimationFramerate, Is.EqualTo(220));
+        });
+        resource?.Stream.Dispose();
+    }
+
+    private static AdImagePresentation ConvertAdImage(AdPresentation ad) =>
+        (AdImagePresentation)new AdImagePresentationConverter().Convert(
+            ad, typeof(AdImagePresentation), null, CultureInfo.InvariantCulture)!;
 
     [Test]
     public void ApplySearch_filters_contacts_by_searchable_person_fields()

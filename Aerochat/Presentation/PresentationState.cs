@@ -191,15 +191,20 @@ public sealed class AdImagePresentationConverter : IValueConverter
         if (value is not AdPresentation ad)
             return null;
 
+        AdImageType imageType = ad.ImageType;
+        if (imageType == AdImageType.StaticImage &&
+            ad.ImageUri.EndsWith(".gif", StringComparison.OrdinalIgnoreCase))
+        {
+            imageType = AdImageType.Gif;
+        }
+
         return new AdImagePresentation
         {
             Image = ad.ImageUri,
             Url = ad.ImageUri,
-            ImageType = ad.ImageUri.EndsWith(".gif", StringComparison.OrdinalIgnoreCase)
-                ? "Gif"
-                : "StaticImage",
-            AnimationFrames = 0,
-            AnimationFramerate = 0
+            ImageType = imageType.ToString(),
+            AnimationFrames = ad.AnimationFrames,
+            AnimationFramerate = ad.AnimationFramerate
         };
     }
 

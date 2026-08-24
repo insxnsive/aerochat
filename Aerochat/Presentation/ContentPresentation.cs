@@ -14,11 +14,21 @@ public sealed record NoticePresentation(
     DateTimeOffset Date,
     Color AccentColor);
 
+public enum AdImageType
+{
+    StaticImage,
+    Gif,
+    SpritesheetAnimation
+}
+
 public sealed record AdPresentation(
     string Title,
     string ImageUri,
     string Caption,
-    Color AccentColor);
+    Color AccentColor,
+    AdImageType ImageType = AdImageType.StaticImage,
+    int AnimationFrames = 0,
+    int AnimationFramerate = 0);
 
 public sealed record PreviewImagePresentation(
     string FileName,

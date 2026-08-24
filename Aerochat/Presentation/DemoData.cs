@@ -140,6 +140,14 @@ public static class DemoData
             "/Aerochat;component/Ads/visitnhrevise.gif",
             "A scenic break between conversations.",
             Color.FromRgb(74, 135, 99)));
+        state.Ads.Add(new AdPresentation(
+            "JVTeX",
+            "/Aerochat;component/Ads/jvtexad.png",
+            "A 53-frame vertical spritesheet ad from the packaged Ads.xml set.",
+            Color.FromRgb(126, 82, 171),
+            AdImageType.SpritesheetAnimation,
+            53,
+            220));
         state.CurrentAd = state.Ads[0];
 
         state.PreviewImages.Add(new PreviewImagePresentation(
