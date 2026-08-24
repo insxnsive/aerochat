@@ -1,8 +1,13 @@
 using Aerochat.Controls;
 using Aerochat.Presentation;
+using System;
 using System.IO;
+using System.Linq;
+using System.Reflection;
 using System.Threading;
 using System.Windows;
+using System.Windows.Controls;
+using System.Windows.Input;
 using System.Windows.Media.Imaging;
 
 namespace Aerochat.VisualShell.Tests;
@@ -112,6 +117,110 @@ public sealed class PresentationControlTests
             Is.EqualTo(PresenceStatus.Away));
     }
 
+    [Test, Apartment(ApartmentState.STA)]
+    public void Interop_context_menu_opens_on_left_click_when_configured()
+    {
+        EnsureWpfApplication();
+        var owner = new Border();
+        var menu = new InteropContextMenu
+        {
+            PlacementTarget = owner,
+            OpenOn = EOpenOn.LeftClick,
+        };
+
+        RaiseMouseUp(owner, MouseButton.Left);
+
+        Assert.That(menu.IsOpen, Is.True);
+        menu.Close();
+    }
+
+    [Test, Apartment(ApartmentState.STA)]
+    public void Interop_context_menu_opens_on_right_click_when_configured()
+    {
+        EnsureWpfApplication();
+        var owner = new Border();
+        var menu = new InteropContextMenu
+        {
+            PlacementTarget = owner,
+            OpenOn = EOpenOn.RightClick,
+        };
+
+        RaiseMouseUp(owner, MouseButton.Right);
+
+        Assert.That(menu.IsOpen, Is.True);
+        menu.Close();
+    }
+
+    [Test, Apartment(ApartmentState.STA)]
+    public void Interop_context_menu_does_not_open_when_open_on_is_none()
+    {
+        EnsureWpfApplication();
+        var owner = new Border();
+        var menu = new InteropContextMenu
+        {
+            PlacementTarget = owner,
+            OpenOn = EOpenOn.None,
+        };
+
+        RaiseMouseUp(owner, MouseButton.Left);
+        RaiseMouseUp(owner, MouseButton.Right);
+
+        Assert.That(menu.IsOpen, Is.False);
+    }
+
+    [Test, Apartment(ApartmentState.STA)]
+    public void Interop_context_menu_rebinds_mouse_subscription_without_leaking_old_owner()
+    {
+        EnsureWpfApplication();
+        var firstOwner = new Border();
+        var secondOwner = new Border();
+        var menu = new InteropContextMenu
+        {
+            OpenOn = EOpenOn.LeftClick,
+            PlacementTarget = firstOwner,
+        };
+
+        RaiseMouseUp(firstOwner, MouseButton.Left);
+        Assert.That(menu.IsOpen, Is.True);
+        menu.Close();
+
+        menu.PlacementTarget = secondOwner;
+        RaiseMouseUp(firstOwner, MouseButton.Left);
+        Assert.That(menu.IsOpen, Is.False);
+
+        RaiseMouseUp(secondOwner, MouseButton.Left);
+        Assert.That(menu.IsOpen, Is.True);
+        menu.Close();
+    }
+
+    [Test, Apartment(ApartmentState.STA)]
+    public void Interop_context_menu_compatibility_population_overload_delegates_to_wpf_items()
+    {
+        EnsureWpfApplication();
+        var child = new InteropMenuItem { Header = "Child" };
+        var items = new List<InteropMenuItem>
+        {
+            new() { Header = "Parent", SubMenuItems = [child] },
+            new() { Header = "Command" },
+        };
+        var menu = new InteropContextMenu();
+        MethodInfo? compatibilityOverload = typeof(InteropContextMenu)
+            .GetMethods(BindingFlags.Instance | BindingFlags.Public)
+            .SingleOrDefault(method => method.Name == nameof(InteropContextMenu.PopulateMenu)
+                && method.GetParameters() is [{ ParameterType: var handleType }, { ParameterType: var itemsType }]
+                && handleType == typeof(IntPtr)
+                && itemsType == typeof(List<InteropMenuItem>));
+
+        Assert.That(compatibilityOverload, Is.Not.Null);
+        Assert.DoesNotThrow(() => compatibilityOverload!.Invoke(
+            menu, [new IntPtr(0x1234), items]));
+        Assert.That(menu.ContextMenuItems, Is.SameAs(items));
+        Assert.That(menu.Items.Count, Is.EqualTo(2));
+        Assert.That(((MenuItem)menu.Items[0]).Header, Is.EqualTo("Parent"));
+        Assert.That(((MenuItem)menu.Items[0]).Items.Count, Is.EqualTo(1));
+        Assert.That(((MenuItem)menu.Items[1]).Header, Is.EqualTo("Command"));
+    }
+
     [Test]
     public void Shared_controls_do_not_reference_backend_or_native_packages()
     {
@@ -128,5 +237,24 @@ public sealed class PresentationControlTests
             .ToArray();
 
         Assert.That(offenders, Is.Empty, string.Join(Environment.NewLine, offenders));
+    }
+
+    private static void EnsureWpfApplication()
+    {
+        if (Application.Current is null)
+        {
+            _ = new Application();
+        }
+    }
+
+    private static void RaiseMouseUp(UIElement owner, MouseButton button)
+    {
+        var args = new MouseButtonEventArgs(Mouse.PrimaryDevice, 0, button)
+        {
+            RoutedEvent = button == MouseButton.Left
+                ? UIElement.PreviewMouseLeftButtonUpEvent
+                : UIElement.PreviewMouseRightButtonUpEvent,
+        };
+        owner.RaiseEvent(args);
     }
 }

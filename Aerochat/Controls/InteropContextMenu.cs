@@ -41,10 +41,21 @@ namespace Aerochat.Controls
             DependencyProperty.Register(nameof(Y), typeof(int?), typeof(InteropContextMenu), new PropertyMetadata(null));
 
         public static readonly DependencyProperty OpenOnProperty =
-            DependencyProperty.Register(nameof(OpenOn), typeof(EOpenOn), typeof(InteropContextMenu), new PropertyMetadata(EOpenOn.RightClick));
+            DependencyProperty.Register(nameof(OpenOn), typeof(EOpenOn), typeof(InteropContextMenu), new PropertyMetadata(EOpenOn.RightClick, OnOpenOnChanged));
 
         public static readonly DependencyProperty OpenToBottomProperty =
             DependencyProperty.Register(nameof(OpenToBottom), typeof(bool), typeof(InteropContextMenu), new PropertyMetadata(true));
+
+        static InteropContextMenu()
+        {
+            PlacementTargetProperty.OverrideMetadata(
+                typeof(InteropContextMenu),
+                new FrameworkPropertyMetadata(null, OnPlacementTargetChanged));
+        }
+
+        private UIElement? _mouseOwner;
+        private readonly MouseButtonEventHandler _leftMouseHandler;
+        private readonly MouseButtonEventHandler _rightMouseHandler;
 
         public int? X
         {
@@ -78,8 +89,25 @@ namespace Aerochat.Controls
 
         public InteropContextMenu()
         {
+            var weakSelf = new WeakReference<InteropContextMenu>(this);
+            _leftMouseHandler = (_, e) =>
+            {
+                if (weakSelf.TryGetTarget(out InteropContextMenu? menu))
+                {
+                    menu.OpenFromOwner(e, EOpenOn.LeftClick);
+                }
+            };
+            _rightMouseHandler = (_, e) =>
+            {
+                if (weakSelf.TryGetTarget(out InteropContextMenu? menu))
+                {
+                    menu.OpenFromOwner(e, EOpenOn.RightClick);
+                }
+            };
+
             ContextMenuItems = new List<InteropMenuItem>();
             Opened += OnOpened;
+            UpdateMouseHandlers();
         }
 
         public void Open()
@@ -98,6 +126,11 @@ namespace Aerochat.Controls
         {
             ContextMenuItems = contextMenuItems ?? new List<InteropMenuItem>();
             RebuildItems();
+        }
+
+        public void PopulateMenu(IntPtr ignoredHandle, List<InteropMenuItem> contextMenuItems)
+        {
+            PopulateMenu(contextMenuItems);
         }
 
         public static InteropMenuItem? FindHashcode(List<InteropMenuItem> items, int hashcode)
@@ -128,6 +161,59 @@ namespace Aerochat.Controls
             {
                 menu.RebuildItems();
             }
+        }
+
+        private static void OnOpenOnChanged(DependencyObject d, DependencyPropertyChangedEventArgs e)
+        {
+            if (d is InteropContextMenu menu)
+            {
+                menu.UpdateMouseHandlers();
+            }
+        }
+
+        private static void OnPlacementTargetChanged(DependencyObject d, DependencyPropertyChangedEventArgs e)
+        {
+            if (d is InteropContextMenu menu)
+            {
+                menu.UpdateMouseHandlers();
+            }
+        }
+
+        private void UpdateMouseHandlers()
+        {
+            if (_mouseOwner is not null)
+            {
+                _mouseOwner.PreviewMouseLeftButtonUp -= _leftMouseHandler;
+                _mouseOwner.PreviewMouseRightButtonUp -= _rightMouseHandler;
+                _mouseOwner = null;
+            }
+
+            if (OpenOn == EOpenOn.None || PlacementTarget is not UIElement owner)
+            {
+                return;
+            }
+
+            if (OpenOn == EOpenOn.LeftClick)
+            {
+                owner.PreviewMouseLeftButtonUp += _leftMouseHandler;
+            }
+            else
+            {
+                owner.PreviewMouseRightButtonUp += _rightMouseHandler;
+            }
+
+            _mouseOwner = owner;
+        }
+
+        private void OpenFromOwner(MouseButtonEventArgs e, EOpenOn trigger)
+        {
+            if (OpenOn != trigger)
+            {
+                return;
+            }
+
+            Open();
+            e.Handled = true;
         }
 
         private void OnOpened(object? sender, RoutedEventArgs e)
