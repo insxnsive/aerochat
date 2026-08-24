@@ -60,6 +60,7 @@ public sealed class LocalizationManager : INotifyPropertyChanged
     public void LoadLanguage(string code)
     {
         string requestedCode = string.IsNullOrWhiteSpace(code) ? DefaultLanguage : code.Trim();
+        _ = GetLocalePath(requestedCode);
         _fallback = LoadFile(DefaultLanguage)
             ?? LoadFile(EnglishFallbackLanguage)
             ?? new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
@@ -128,7 +129,7 @@ public sealed class LocalizationManager : INotifyPropertyChanged
 
     private static Dictionary<string, string>? LoadFile(string code)
     {
-        string path = Path.Combine(LocalesDirectory, $"{code}.json");
+        string path = GetLocalePath(code);
         if (!File.Exists(path))
             return null;
 
@@ -142,6 +143,32 @@ public sealed class LocalizationManager : INotifyPropertyChanged
         {
             return null;
         }
+    }
+
+    private static string GetLocalePath(string code)
+    {
+        string[] segments = code.Split('-', StringSplitOptions.None);
+        if (segments.Length == 0 || segments.Any(segment =>
+                segment.Length == 0 || segment.Any(character => !char.IsAsciiLetterOrDigit(character))))
+        {
+            throw new ArgumentException(
+                "Locale codes must contain only ASCII letters or digits separated by single hyphens.",
+                nameof(code));
+        }
+
+        string localesDirectory = Path.GetFullPath(LocalesDirectory);
+        string candidatePath = Path.GetFullPath(Path.Combine(localesDirectory, $"{code}.json"));
+        string directoryPrefix = localesDirectory.EndsWith(Path.DirectorySeparatorChar)
+            ? localesDirectory
+            : localesDirectory + Path.DirectorySeparatorChar;
+        if (!candidatePath.StartsWith(directoryPrefix, StringComparison.OrdinalIgnoreCase))
+        {
+            throw new ArgumentException(
+                "The locale path must remain inside the Locales directory.",
+                nameof(code));
+        }
+
+        return candidatePath;
     }
 
     public event PropertyChangedEventHandler? PropertyChanged;

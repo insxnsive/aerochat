@@ -1,5 +1,6 @@
 using Aerochat.Presentation;
 using Aerochat.Windows;
+using System.Diagnostics;
 using System.IO;
 
 namespace Aerochat.VisualShell.Tests;
@@ -289,6 +290,106 @@ public sealed class HomeShellTests
 
         Assert.That(localization.LanguageCode, Is.EqualTo("en-US"));
         Assert.That(localization["MissingKey"], Is.EqualTo("MissingKey"));
+    }
+
+    [Test]
+    public void Localization_rejects_path_like_language_codes()
+    {
+        var localization = new Aerochat.Localization.LocalizationManager();
+        string absoluteCode = Path.GetFullPath(Path.Combine(Path.GetTempPath(), "outside-locale"));
+        string[] invalidCodes =
+        [
+            "../",
+            @"..\\",
+            "fr/../../secret",
+            @"fr\\..\\secret",
+            absoluteCode
+        ];
+
+        Assert.Multiple(() =>
+        {
+            foreach (string code in invalidCodes)
+            {
+                Assert.That(
+                    () => localization.LoadLanguage(code),
+                    Throws.TypeOf<ArgumentException>(),
+                    $"Expected path-like locale code '{code}' to be rejected.");
+            }
+        });
+    }
+
+    [TestCase("en")]
+    [TestCase("en-US")]
+    [TestCase("fr")]
+    public void Localization_accepts_safe_language_codes(string code)
+    {
+        var localization = new Aerochat.Localization.LocalizationManager();
+
+        Assert.DoesNotThrow(() => localization.LoadLanguage(code));
+        Assert.That(localization.LanguageCode, Is.EqualTo(code));
+    }
+
+    [Test, Timeout(15000)]
+    public void Aerochat_executable_starts_the_real_home_window()
+    {
+        string executablePath = Path.GetFullPath(Path.Combine(
+            RepositoryRoot.Path,
+            "Aerochat",
+            "bin",
+            "x64",
+            "Debug",
+            "net8.0-windows7.0",
+            "Aerochat.exe"));
+        Assert.That(File.Exists(executablePath), Is.True, $"Expected Debug x64 executable at {executablePath}");
+
+        using var process = new Process
+        {
+            StartInfo = new ProcessStartInfo
+            {
+                FileName = executablePath,
+                WorkingDirectory = Path.GetDirectoryName(executablePath)!,
+                UseShellExecute = false,
+                RedirectStandardOutput = true,
+                RedirectStandardError = true,
+                CreateNoWindow = true
+            }
+        };
+
+        bool started = false;
+        try
+        {
+            started = process.Start();
+            Assert.That(started, Is.True, "The real Aerochat.exe process did not start.");
+
+            if (process.WaitForExit(3000))
+            {
+                string standardOutput = process.StandardOutput.ReadToEnd();
+                string standardError = process.StandardError.ReadToEnd();
+                Assert.Fail(
+                    $"Aerochat.exe exited before the Home smoke window stayed open. " +
+                    $"ExitCode={process.ExitCode}; stdout={standardOutput}; stderr={standardError}");
+            }
+
+            Assert.That(process.HasExited, Is.False, "Aerochat.exe exited during the Home startup smoke window.");
+        }
+        finally
+        {
+            if (started)
+            {
+                try
+                {
+                    if (!process.HasExited)
+                    {
+                        process.Kill(entireProcessTree: true);
+                        process.WaitForExit(5000);
+                    }
+                }
+                catch (InvalidOperationException)
+                {
+                    // The process can exit between HasExited and Kill.
+                }
+            }
+        }
     }
 
     [Test]
