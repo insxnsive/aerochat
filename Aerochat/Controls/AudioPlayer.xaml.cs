@@ -1,68 +1,50 @@
 ﻿using System;
-using System.Collections.Generic;
-using System.Diagnostics;
-using System.Linq;
-using System.Security.Policy;
-using System.Text;
-using System.Threading.Tasks;
 using System.Windows;
 using System.Windows.Controls;
-using System.Windows.Data;
-using System.Windows.Documents;
-using System.Windows.Input;
-using System.Windows.Media;
-using System.Windows.Media.Imaging;
-using System.Windows.Navigation;
-using System.Windows.Shapes;
-using Aerochat.ViewModels;
-using Aerochat.Enums;
-using Vanara.PInvoke;
-using System.Windows.Threading;
-using System.Reactive;
 using System.Windows.Controls.Primitives;
-using System.Net;
-using System.Net.Http;
-using Vanara.Extensions.Reflection;
-using System.IO;
+using System.Windows.Input;
+using Aerochat.Enums;
 
 namespace Aerochat.Controls
 {
     public partial class AudioPlayer : UserControl
     {
+        private bool _muted;
+        private double _preMuteVolume;
+        private bool _updatingPosition;
+        private bool _updatingVolume;
+        private bool _updatingVolumeState;
+        private bool _wasPlayingBeforeSeek;
 
-        private MediaPlayer _mediaPlayer = new MediaPlayer();
+        public static readonly DependencyProperty UrlProperty = DependencyProperty.Register(
+            nameof(Url),
+            typeof(string),
+            typeof(AudioPlayer),
+            new PropertyMetadata(null));
 
-        DispatcherTimer _soundTimer = new DispatcherTimer();
-
-        private double _preMuteVolume = 0;
-        private bool _muted = false;
-
-        public static readonly DependencyProperty UrlProperty = DependencyProperty.Register(nameof(Url), 
-            typeof(string), 
-            typeof(AudioPlayer), 
-            new PropertyMetadata(null, OnUrlChanged));
-      
-        public string Url
+        public string? Url
         {
-            get => (string)GetValue(UrlProperty);
+            get => (string?)GetValue(UrlProperty);
             set => SetValue(UrlProperty, value);
         }
 
-        public static readonly DependencyProperty NameProperty = DependencyProperty.Register(nameof(Name),
+        public static new readonly DependencyProperty NameProperty = DependencyProperty.Register(
+            nameof(Name),
             typeof(string),
             typeof(AudioPlayer),
-            new PropertyMetadata(null, OnUrlChanged));
+            new PropertyMetadata(null));
 
-        public string Name
+        public new string? Name
         {
-            get => (string)GetValue(NameProperty);
+            get => (string?)GetValue(NameProperty);
             set => SetValue(NameProperty, value);
         }
 
-        public static readonly DependencyProperty PlayingProperty = DependencyProperty.Register(nameof(Playing),
+        public static readonly DependencyProperty PlayingProperty = DependencyProperty.Register(
+            nameof(Playing),
             typeof(PlayingState),
             typeof(AudioPlayer),
-            new PropertyMetadata(PlayingState.Stopped));
+            new PropertyMetadata(PlayingState.Stopped, OnPlayingChanged));
 
         public PlayingState Playing
         {
@@ -70,49 +52,243 @@ namespace Aerochat.Controls
             set => SetValue(PlayingProperty, value);
         }
 
-        public static readonly DependencyProperty VolumeStateProperty = DependencyProperty.Register(nameof(VolumeState),
-            typeof(Volume),
+        public static readonly DependencyProperty IsPlayingProperty = DependencyProperty.Register(
+            nameof(IsPlaying),
+            typeof(bool),
             typeof(AudioPlayer),
-            new PropertyMetadata(Volume.Medium));
+            new PropertyMetadata(false, OnIsPlayingChanged));
 
-        public Volume VolumeState
+        public bool IsPlaying
         {
-            get => (Volume)GetValue(VolumeStateProperty);
-            set => SetValue(VolumeStateProperty, value);
+            get => (bool)GetValue(IsPlayingProperty);
+            set => SetValue(IsPlayingProperty, value);
         }
 
+        public static readonly DependencyProperty PositionProperty = DependencyProperty.Register(
+            nameof(Position),
+            typeof(TimeSpan),
+            typeof(AudioPlayer),
+            new PropertyMetadata(TimeSpan.Zero, OnPositionChanged));
 
-        private static void OnUrlChanged(DependencyObject d, DependencyPropertyChangedEventArgs e)
+        public TimeSpan Position
         {
-            if (d != null)
-            {
-               var audioplayer = (AudioPlayer)d;
-               audioplayer.LoadSound((string)d.GetValue(UrlProperty));
-            }
+            get => (TimeSpan)GetValue(PositionProperty);
+            set => SetValue(PositionProperty, value);
+        }
+
+        public static readonly DependencyProperty DurationProperty = DependencyProperty.Register(
+            nameof(Duration),
+            typeof(TimeSpan),
+            typeof(AudioPlayer),
+            new PropertyMetadata(TimeSpan.Zero, OnDurationChanged));
+
+        public TimeSpan Duration
+        {
+            get => (TimeSpan)GetValue(DurationProperty);
+            set => SetValue(DurationProperty, value);
+        }
+
+        public static readonly DependencyProperty VolumeProperty = DependencyProperty.Register(
+            nameof(Volume),
+            typeof(double),
+            typeof(AudioPlayer),
+            new PropertyMetadata(0.5d, OnVolumeChanged));
+
+        public double Volume
+        {
+            get => (double)GetValue(VolumeProperty);
+            set => SetValue(VolumeProperty, value);
+        }
+
+        public static readonly DependencyProperty VolumeStateProperty = DependencyProperty.Register(
+            nameof(VolumeState),
+            typeof(Aerochat.Enums.Volume),
+            typeof(AudioPlayer),
+            new PropertyMetadata(Aerochat.Enums.Volume.Medium, OnVolumeStateChanged));
+
+        public Aerochat.Enums.Volume VolumeState
+        {
+            get => (Aerochat.Enums.Volume)GetValue(VolumeStateProperty);
+            set => SetValue(VolumeStateProperty, value);
         }
 
         public AudioPlayer()
         {
-            InitializeComponent();;
-            _soundTimer.Interval = TimeSpan.FromMilliseconds(1);
-            _soundTimer.Tick += Timer_Tick;
+            InitializeComponent();
 
+            PlayButton.Visibility = Visibility.Visible;
+            PlayButton_Disabled.Visibility = Visibility.Collapsed;
             TimeSlider.Loaded += TimeSlider_Loaded;
-
-            Unloaded += AudioPlayer_Unloaded;
+            UpdateVolumeVisualState();
+            UpdateTimeVisualState();
         }
 
-        private void AudioPlayer_Unloaded(object sender, RoutedEventArgs e)
+        public void TogglePlayback()
         {
-            _mediaPlayer.Stop();
-            _mediaPlayer.Close();
+            if (IsPlaying)
+            {
+                IsPlaying = false;
+                return;
+            }
+
+            if (Duration > TimeSpan.Zero && Position >= Duration)
+            {
+                Position = TimeSpan.Zero;
+            }
+
+            IsPlaying = true;
+        }
+
+        public void OnPlayClick(object sender, RoutedEventArgs e)
+        {
+            TogglePlayback();
+        }
+
+        private static void OnPlayingChanged(DependencyObject d, DependencyPropertyChangedEventArgs e)
+        {
+            if (d is not AudioPlayer control)
+            {
+                return;
+            }
+
+            bool isPlaying = control.Playing == PlayingState.Playing;
+            if (control.IsPlaying != isPlaying)
+            {
+                control.IsPlaying = isPlaying;
+            }
+
+            control.UpdatePlayVisualState();
+        }
+
+        private static void OnIsPlayingChanged(DependencyObject d, DependencyPropertyChangedEventArgs e)
+        {
+            if (d is not AudioPlayer control)
+            {
+                return;
+            }
+
+            PlayingState targetState = control.IsPlaying
+                ? PlayingState.Playing
+                : control.Playing == PlayingState.Playing
+                    ? PlayingState.Paused
+                    : control.Playing;
+
+            if (control.Playing != targetState)
+            {
+                control.Playing = targetState;
+            }
+
+            control.UpdatePlayVisualState();
+        }
+
+        private static void OnPositionChanged(DependencyObject d, DependencyPropertyChangedEventArgs e)
+        {
+            if (d is not AudioPlayer control)
+            {
+                return;
+            }
+
+            TimeSpan position = control.Position;
+            if (position < TimeSpan.Zero)
+            {
+                control.Position = TimeSpan.Zero;
+                return;
+            }
+
+            if (control.Duration <= TimeSpan.Zero && position != TimeSpan.Zero)
+            {
+                control.Position = TimeSpan.Zero;
+                return;
+            }
+
+            if (control.Duration > TimeSpan.Zero && position > control.Duration)
+            {
+                control.Position = control.Duration;
+                return;
+            }
+
+            control.UpdateTimeVisualState();
+        }
+
+        private static void OnDurationChanged(DependencyObject d, DependencyPropertyChangedEventArgs e)
+        {
+            if (d is not AudioPlayer control)
+            {
+                return;
+            }
+
+            if (control.Duration < TimeSpan.Zero)
+            {
+                control.Duration = TimeSpan.Zero;
+                return;
+            }
+
+            if (control.Duration == TimeSpan.Zero)
+            {
+                control.Position = TimeSpan.Zero;
+            }
+            else if (control.Position > control.Duration)
+            {
+                control.Position = control.Duration;
+            }
+
+            control.UpdateTimeVisualState();
+        }
+
+        private static void OnVolumeChanged(DependencyObject d, DependencyPropertyChangedEventArgs e)
+        {
+            if (d is not AudioPlayer control)
+            {
+                return;
+            }
+
+            double volume = Math.Clamp(control.Volume, 0d, 1d);
+            if (volume != control.Volume)
+            {
+                control.Volume = volume;
+                return;
+            }
+
+            control.UpdateVolumeVisualState();
+        }
+
+        private static void OnVolumeStateChanged(DependencyObject d, DependencyPropertyChangedEventArgs e)
+        {
+            if (d is not AudioPlayer control || control._updatingVolumeState)
+            {
+                return;
+            }
+
+            double volume = control.VolumeState switch
+            {
+                Aerochat.Enums.Volume.Muted => 0d,
+                Aerochat.Enums.Volume.Low => 0.25d,
+                Aerochat.Enums.Volume.Medium => 0.5d,
+                Aerochat.Enums.Volume.High => 0.75d,
+                Aerochat.Enums.Volume.Max => 1d,
+                _ => 0.5d
+            };
+
+            if (control.Volume != volume)
+            {
+                control.Volume = volume;
+            }
+        }
+
+        private void UpdatePlayVisualState()
+        {
+            if (PlayButton is null || PlayButton_Disabled is null)
+            {
+                return;
+            }
+
+            PlayButton.Visibility = Visibility.Visible;
+            PlayButton_Disabled.Visibility = Visibility.Collapsed;
         }
 
         private void TimeSlider_Loaded(object sender, RoutedEventArgs e)
         {
-            Thumb thumb = (Thumb)TimeSlider.Template.FindName("TimeThumb", TimeSlider);
-
-            if (thumb != null)
+            if (TimeSlider.Template.FindName("TimeThumb", TimeSlider) is Thumb thumb)
             {
                 thumb.DragStarted += OnDragStart;
                 thumb.DragCompleted += OnDragEnd;
@@ -121,168 +297,158 @@ namespace Aerochat.Controls
 
         private void TimeSlider_Changed(object sender, RoutedEventArgs e)
         {
-            if (!_mediaPlayer.NaturalDuration.HasTimeSpan) return;
+            if (_updatingPosition)
+            {
+                return;
+            }
 
-            TimeSpan currentTime = TimeSpan.FromSeconds(TimeSlider.Value / 100 * _mediaPlayer.NaturalDuration.TimeSpan.TotalSeconds);
-
-            TimeLabel.Content = ConvertTime(currentTime, _mediaPlayer.NaturalDuration.TimeSpan);
+            double percentage = Math.Clamp(TimeSlider.Value, 0d, 100d);
+            Position = Duration <= TimeSpan.Zero
+                ? TimeSpan.Zero
+                : TimeSpan.FromMilliseconds(Duration.TotalMilliseconds * percentage / 100d);
         }
 
-        private void VolumeButton_Click(object sender, MouseButtonEventArgs e)
+        private void OnDragStart(object sender, DragStartedEventArgs e)
         {
-            if (!_muted)
+            _wasPlayingBeforeSeek = IsPlaying;
+            if (_wasPlayingBeforeSeek)
             {
-                _preMuteVolume = _mediaPlayer.Volume;
-                VolumeSlider.Value = 0;
-            }
-            else
-            {
-                _mediaPlayer.Volume = _preMuteVolume;
-                VolumeSlider.Value = _preMuteVolume * 100;
-                _muted = true;
-            }
-            _muted = !_muted;
-        }
-
-        private void VolumeSlider_Changed(object sender, RoutedEventArgs e)
-        {
-            _mediaPlayer.Volume = VolumeSlider.Value / 100;
-            if (VolumeSlider.Value == 0) {
-                VolumeState = Volume.Muted;
-            }
-            if (VolumeSlider.Value > 0) {
-                VolumeState = Volume.Low;
-                if (_muted) _muted = false;
-            }
-            if (VolumeSlider.Value > 31)
-            {
-                VolumeState = Volume.Medium;
-            }
-            if (VolumeSlider.Value > 62)
-            {
-                VolumeState = Volume.High;
+                IsPlaying = false;
             }
         }
 
         private void OnDragEnd(object sender, DragCompletedEventArgs e)
         {
-            _mediaPlayer.Position = TimeSpan.FromMilliseconds(TimeSlider.Value / 100 * _mediaPlayer.NaturalDuration.TimeSpan.TotalMilliseconds);
-            if (Playing == PlayingState.Playing)
+            if (_wasPlayingBeforeSeek)
             {
-                _mediaPlayer.Play();
-                _soundTimer.Start();
-            }
-        }
-
-        private void OnDragStart(object sender, DragStartedEventArgs e)
-        {
-            _mediaPlayer.Pause();
-            _soundTimer.Stop();
-        }
-
-        // Forgive me father.
-        private string ConvertTime(TimeSpan time, TimeSpan maxtime)
-        {
-            string convertedTime = "";
-
-            var curTime = time;
-            string processConversion()
-            {
-                var minutes = curTime.TotalMinutes < 10 ? $"0{(int)curTime.TotalMinutes}" : ((int)curTime.TotalMinutes).ToString();
-                var seconds = curTime.TotalSeconds % 60 < 10 ? $"0{(int)(curTime.TotalSeconds % 60)}" : ((int)(curTime.TotalSeconds % 60)).ToString();
-                return $"{minutes}:{seconds}";
-            }
-            convertedTime += processConversion() + "/";
-            curTime = maxtime;
-            convertedTime += processConversion();
-
-            return convertedTime;
-        }
-
-
-        private void Timer_Tick(object sender, EventArgs e)
-        {
-            if (!_mediaPlayer.NaturalDuration.HasTimeSpan) return;
-            TimeSpan currentPosition = _mediaPlayer.Position;
-            TimeSpan totalPosition = _mediaPlayer.NaturalDuration.TimeSpan;
-            TimeSlider.Value = currentPosition.TotalMilliseconds / _mediaPlayer.NaturalDuration.TimeSpan.TotalMilliseconds * 100;
-            
-   
-
-        }
-
-        private void LoadSound(string url)
-        {
-            try
-            {
-                _mediaPlayer.Open(new Uri(url, UriKind.Absolute));
-                _mediaPlayer.MediaEnded += OnSoundEnded;
-                _mediaPlayer.MediaOpened += OnSoundOpened;
-            }
-            catch (Exception ex)
-            {
-                Debug.WriteLine("Error opening sound: " + ex.Message);
-            }
-        }
-
-        private void OnSoundOpened(object? sender, EventArgs e)
-        {
-            PlayButton.Visibility = Visibility.Visible;
-            PlayButton_Disabled.Visibility = Visibility.Collapsed;
-            TimeLabel.Content = ConvertTime(TimeSpan.Zero, _mediaPlayer.NaturalDuration.TimeSpan);
-        }
-
-        private void OnSoundEnded(object sender, EventArgs e)
-        {
-            Playing = PlayingState.Stopped;
-        }
-
-
-        private async void DownloadButton_Click(object sender, RoutedEventArgs e)
-        {
-            System.Windows.Forms.SaveFileDialog saveFile = new System.Windows.Forms.SaveFileDialog
-            {
-                Title = "Save audio file",
-                Filter = "MP3 files (*.mp3)|*.mp3|WAV files (*.wav)|*.wav|OGG files (*.ogg)|*.ogg|FLAC files (*.flac)|*.flac|All files (*.*)|*.*",
-                FileName = Name
-            };
-
-            if (saveFile.ShowDialog() == System.Windows.Forms.DialogResult.OK)
-            {
-                HttpClient client = new HttpClient();
-                byte[] bytes = await client.GetByteArrayAsync(Url);
-                await File.WriteAllBytesAsync(saveFile.FileName, bytes);
+                IsPlaying = true;
             }
 
-
+            _wasPlayingBeforeSeek = false;
         }
 
-
-        public void OnPlayClick(object sender, RoutedEventArgs e)
+        private void VolumeButton_Click(object sender, MouseButtonEventArgs e)
         {
-            if (Playing == PlayingState.Stopped)
+            if (_muted || Volume <= 0d)
             {
-                if (_mediaPlayer.Position == _mediaPlayer.NaturalDuration.TimeSpan)
-                { 
-                    _mediaPlayer.Position = TimeSpan.Zero;
-                }
-                _mediaPlayer.Play();
-                _soundTimer.Start();
-                Playing = PlayingState.Playing;
+                Volume = _preMuteVolume > 0d ? _preMuteVolume : 0.5d;
+                _muted = false;
+                return;
             }
-            else if (Playing == PlayingState.Playing)
+
+            _preMuteVolume = Volume;
+            _muted = true;
+            Volume = 0d;
+        }
+
+        private void VolumeSlider_Changed(object sender, RoutedEventArgs e)
+        {
+            if (_updatingVolume)
             {
-                _mediaPlayer.Pause();
-                _soundTimer.Stop();
-                Playing = PlayingState.Paused;
+                return;
+            }
+
+            double volume = Math.Clamp(VolumeSlider.Value / 100d, 0d, 1d);
+            if (volume > 0d)
+            {
+                _preMuteVolume = volume;
+                _muted = false;
             }
             else
             {
-                _mediaPlayer.Play();
-                _soundTimer.Start();
-                Playing = PlayingState.Playing;
+                _muted = true;
+            }
+
+            Volume = volume;
+        }
+
+        private void UpdateTimeVisualState()
+        {
+            if (TimeLabel is not null)
+            {
+                TimeLabel.Content = ConvertTime(Position, Duration);
+            }
+
+            if (TimeSlider is null || _updatingPosition)
+            {
+                return;
+            }
+
+            _updatingPosition = true;
+            try
+            {
+                TimeSlider.Value = Duration > TimeSpan.Zero
+                    ? Position.TotalMilliseconds / Duration.TotalMilliseconds * 100d
+                    : 0d;
+            }
+            finally
+            {
+                _updatingPosition = false;
             }
         }
 
+        private void UpdateVolumeVisualState()
+        {
+            double percentage = Math.Clamp(Volume, 0d, 1d) * 100d;
+            Aerochat.Enums.Volume state = percentage switch
+            {
+                0d => Aerochat.Enums.Volume.Muted,
+                <= 31d => Aerochat.Enums.Volume.Low,
+                <= 62d => Aerochat.Enums.Volume.Medium,
+                _ => Aerochat.Enums.Volume.High
+            };
+
+            _updatingVolumeState = true;
+            try
+            {
+                if (VolumeState != state)
+                {
+                    VolumeState = state;
+                }
+            }
+            finally
+            {
+                _updatingVolumeState = false;
+            }
+
+            if (VolumeSlider is null || _updatingVolume)
+            {
+                return;
+            }
+
+            _updatingVolume = true;
+            try
+            {
+                VolumeSlider.Value = percentage;
+            }
+            finally
+            {
+                _updatingVolume = false;
+            }
+        }
+
+        private static string ConvertTime(TimeSpan time, TimeSpan maximum)
+        {
+            time = time < TimeSpan.Zero ? TimeSpan.Zero : time;
+            maximum = maximum < TimeSpan.Zero ? TimeSpan.Zero : maximum;
+            if (maximum > TimeSpan.Zero && time > maximum)
+            {
+                time = maximum;
+            }
+
+            return $"{FormatTime(time)}/{FormatTime(maximum)}";
+        }
+
+        private static string FormatTime(TimeSpan time)
+        {
+            int minutes = (int)time.TotalMinutes;
+            int seconds = time.Seconds;
+            return $"{minutes:00}:{seconds:00}";
+        }
+
+        private void DownloadButton_Click(object sender, RoutedEventArgs e)
+        {
+            // Retained as a no-op XAML compatibility handler for the visual-only control.
+        }
     }
 }
