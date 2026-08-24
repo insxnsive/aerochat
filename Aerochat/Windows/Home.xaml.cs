@@ -1,6 +1,7 @@
 using Aerochat.Helpers;
 using Aerochat.Hoarder;
 using Aerochat.Localization;
+using Aerochat.Presentation;
 using Aerochat.Settings;
 using Aerochat.ViewModels;
 using DiscordProtos.DiscordUsers.V1;
@@ -32,6 +33,8 @@ namespace Aerochat.Windows
     {
         private Dictionary<ulong, Timer> _typingTimers = new();
         public HomeWindowViewModel ViewModel { get; } = new HomeWindowViewModel();
+        public PresentationState? PresentationState { get; }
+        public WindowNavigator? Navigator { get; }
         private Timer _hoverTimer = new(50);
         private Timer _adTimer = new(20000);
 
@@ -68,6 +71,15 @@ namespace Aerochat.Windows
             }
 
             return null;
+        }
+
+        public Home(PresentationState state, WindowNavigator navigator)
+        {
+            PresentationState = state ?? throw new ArgumentNullException(nameof(state));
+            Navigator = navigator ?? throw new ArgumentNullException(nameof(navigator));
+            if (Assembly.GetEntryAssembly() == typeof(App).Assembly)
+                InitializeComponent();
+            DataContext = state;
         }
 
         public Home()
