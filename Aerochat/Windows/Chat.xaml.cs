@@ -1,5 +1,8 @@
 using Aerochat.Helpers;
 using Aerochat.Hoarder;
+using PresentationState = Aerochat.Presentation.PresentationState;
+using ConversationPresentation = Aerochat.Presentation.ConversationPresentation;
+using WindowNavigator = Aerochat.Presentation.WindowNavigator;
 using Aerochat.Localization;
 using Aerochat.Services;
 using Aerochat.Settings;
@@ -67,6 +70,10 @@ namespace Aerochat.Windows
         private PresenceViewModel? _initialPresence = null;
         private HomeListItemViewModel? _openingItem = null;
         private readonly ChatService _chatService;
+
+        public PresentationState State { get; private set; } = null!;
+        public ConversationPresentation Conversation { get; private set; } = null!;
+        public WindowNavigator Navigator { get; private set; } = null!;
 
         public ObservableCollection<DiscordUser> TypingUsers { get; } = new();
         public ChatWindowViewModel ViewModel { get; set; } = new ChatWindowViewModel();
@@ -159,6 +166,24 @@ namespace Aerochat.Windows
             RefreshAerochatVersionLinkVisibility();
             STTButton.SetToggle(true);
         }
+
+        public Chat(
+            PresentationState state,
+            ConversationPresentation conversation,
+            WindowNavigator navigator)
+        {
+            State = state ?? throw new ArgumentNullException(nameof(state));
+            Conversation = conversation ?? throw new ArgumentNullException(nameof(conversation));
+            Navigator = navigator ?? throw new ArgumentNullException(nameof(navigator));
+
+            // Controller tests run without an Application object so they can exercise
+            // the presentation boundary without loading the legacy visual tree.
+            if (Application.Current is not null)
+                InitializeComponent();
+
+            DataContext = Conversation;
+        }
+
         public async Task ExecuteNudgePrettyPlease(double initialLeft, double initialTop, double duration = 2, double intensity = 10, bool forceFocus = false)
         {
             double GetRandomNumber(double minimum, double maximum)
@@ -644,6 +669,12 @@ namespace Aerochat.Windows
 
         protected override void OnClosing(CancelEventArgs e)
         {
+            if (Conversation is not null)
+            {
+                base.OnClosing(e);
+                return;
+            }
+
             try
             {
                 if (Channel?.Guild?.Channels?.Select(x => x.Key).ToList().Contains(VoiceManager.Instance.Channel?.Id ?? 0) ?? false)
