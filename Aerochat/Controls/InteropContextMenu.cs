@@ -1,45 +1,38 @@
 ﻿using System;
 using System.Collections.Generic;
-using System.Collections.ObjectModel;
-using System.Collections.Specialized;
-using System.Diagnostics;
-using System.Linq;
-using System.Runtime.InteropServices;
-using System.Text;
-using System.Threading.Tasks;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Input;
-using System.Windows.Interop;
-using Vanara.PInvoke;
-using static Vanara.PInvoke.User32;
-
-#pragma warning disable CA1416
 
 namespace Aerochat.Controls
 {
     public enum EOpenOn
-    { 
+    {
         LeftClick,
         RightClick,
         None
     }
+
     public class InteropMenuItem
     {
         public string Header { get; set; } = string.Empty;
         public ICommand? Command { get; set; }
-        public List<InteropMenuItem> SubMenuItems { get; set; } = new List<InteropMenuItem>();
+        public List<InteropMenuItem> SubMenuItems { get; set; } = new();
 
         public bool HasSubMenu => SubMenuItems.Count > 0;
     }
-    public class InteropContextMenu : UserControl
-    {
-        private Dictionary<uint, int> IdToHashcodeMap = new();
-        private HMENU _menu;
-        private uint _ids = 0;
 
+    /// <summary>
+    /// WPF compatibility wrapper for callers that still use the old context-menu name.
+    /// </summary>
+    public class InteropContextMenu : ContextMenu
+    {
         public static readonly DependencyProperty ContextMenuItemsProperty =
-            DependencyProperty.Register(nameof(ContextMenuItems), typeof(List<InteropMenuItem>), typeof(InteropContextMenu), new PropertyMetadata(new List<InteropMenuItem>(), null));
+            DependencyProperty.Register(
+                nameof(ContextMenuItems),
+                typeof(List<InteropMenuItem>),
+                typeof(InteropContextMenu),
+                new PropertyMetadata(null, OnContextMenuItemsChanged));
 
         public static readonly DependencyProperty XProperty =
             DependencyProperty.Register(nameof(X), typeof(int?), typeof(InteropContextMenu), new PropertyMetadata(null));
@@ -52,9 +45,6 @@ namespace Aerochat.Controls
 
         public static readonly DependencyProperty OpenToBottomProperty =
             DependencyProperty.Register(nameof(OpenToBottom), typeof(bool), typeof(InteropContextMenu), new PropertyMetadata(true));
-
-        public static readonly DependencyPropertyKey IsOpenPropertyKey =
-            DependencyProperty.RegisterReadOnly(nameof(IsOpen), typeof(bool), typeof(InteropContextMenu), new PropertyMetadata(false));
 
         public int? X
         {
@@ -80,148 +70,108 @@ namespace Aerochat.Controls
             set => SetValue(OpenToBottomProperty, value);
         }
 
-        public bool IsOpen
-        {
-            get => (bool)GetValue(IsOpenPropertyKey.DependencyProperty);
-            private set => SetValue(IsOpenPropertyKey, value);
-        }
-
         public List<InteropMenuItem> ContextMenuItems
         {
-            get => (List<InteropMenuItem>)GetValue(ContextMenuItemsProperty) ?? new List<InteropMenuItem>();
+            get => (List<InteropMenuItem>?)GetValue(ContextMenuItemsProperty) ?? new();
             set => SetValue(ContextMenuItemsProperty, value);
         }
 
         public InteropContextMenu()
         {
-            PreviewMouseRightButtonUp += OnRightClick;
-            PreviewMouseLeftButtonUp += OnLeftClick;
-            Loaded += InteropContextMenu_Loaded;
+            ContextMenuItems = new List<InteropMenuItem>();
+            Opened += OnOpened;
         }
 
-        private void OnLeftClick(object sender, MouseButtonEventArgs e)
+        public void Open()
         {
-            if (OpenOn == EOpenOn.LeftClick)
-            {
-                Open();
-            }
+            RebuildItems();
+            ConfigurePlacement();
+            IsOpen = true;
         }
 
-        private void InteropContextMenu_Loaded(object sender, RoutedEventArgs e)
+        public void Close()
         {
-            var wnd = Window.GetWindow(this);
-            if (wnd is null) return; 
-            wnd.Closing += InteropContextMenu_Closing;
+            IsOpen = false;
         }
 
-        private void InteropContextMenu_Closing(object? sender, System.ComponentModel.CancelEventArgs e)
+        public void PopulateMenu(List<InteropMenuItem> contextMenuItems)
         {
-            DestroyMenu(_menu);
-            ContextMenuItems.Clear();
+            ContextMenuItems = contextMenuItems ?? new List<InteropMenuItem>();
+            RebuildItems();
         }
 
         public static InteropMenuItem? FindHashcode(List<InteropMenuItem> items, int hashcode)
         {
-            foreach (var item in items)
+            foreach (InteropMenuItem item in items)
             {
                 if (item.GetHashCode() == hashcode)
                 {
                     return item;
                 }
+
                 if (item.HasSubMenu)
                 {
-                    var subItem = FindHashcode(item.SubMenuItems, hashcode);
-                    if (subItem != null)
+                    InteropMenuItem? subItem = FindHashcode(item.SubMenuItems, hashcode);
+                    if (subItem is not null)
                     {
                         return subItem;
                     }
                 }
             }
+
             return null;
         }
 
-
-        // we need to manually import TrackPopupMenu
-        [DllImport("user32.dll")]
-        private static extern int TrackPopupMenu(IntPtr hMenu, TrackPopupMenuFlags uFlags, int x, int y, int nReserved, IntPtr hWnd, IntPtr prcRect);
-
-        private void OnRightClick(object sender, MouseButtonEventArgs e)
+        private static void OnContextMenuItemsChanged(DependencyObject d, DependencyPropertyChangedEventArgs e)
         {
-            if (OpenOn == EOpenOn.RightClick)
+            if (d is InteropContextMenu menu)
             {
-                Open();
+                menu.RebuildItems();
             }
         }
 
-        public void Open()
+        private void OnOpened(object? sender, RoutedEventArgs e)
         {
-            if (OpenToBottom && Content is not null)
-            {
-                var content = (FrameworkElement)Content;
-                var pos = content.PointToScreen(new Point(0, 0));
-                X = (int)pos.X;
-                Y = (int)pos.Y + (int)content.ActualHeight;
-            }
-            _ids = 0;
-            IdToHashcodeMap.Clear();
+            ConfigurePlacement();
+        }
 
-            if (_menu != default)
-            {
-                DestroyMenu(_menu);
-                _menu = default;
-                Debug.WriteLine("Destroyed menu");
-            }
-            var wnd = Window.GetWindow(this);
-            if (wnd is null) return;
-            IsOpen = true;
-            var hWnd = new WindowInteropHelper(wnd).Handle;
-            _menu = CreatePopupMenu();
-            PopulateMenu(_menu, ContextMenuItems);
-            //GetCursorPos(out POINT point);
-            POINT point = new POINT();
+        private void ConfigurePlacement()
+        {
             if (X.HasValue && Y.HasValue)
             {
-                point.x = X.Value;
-                point.y = Y.Value;
+                Placement = System.Windows.Controls.Primitives.PlacementMode.AbsolutePoint;
+                HorizontalOffset = X.Value;
+                VerticalOffset = Y.Value;
             }
-            else
+            else if (OpenToBottom && PlacementTarget is FrameworkElement)
             {
-                GetCursorPos(out point);
+                Placement = System.Windows.Controls.Primitives.PlacementMode.Bottom;
             }
-            int res = TrackPopupMenu(_menu.DangerousGetHandle(), TrackPopupMenuFlags.TPM_LEFTALIGN | TrackPopupMenuFlags.TPM_RETURNCMD, point.x, point.y, 0, hWnd, default);
-            if (IdToHashcodeMap.TryGetValue((uint)res, out int hashcode))
-            {
-                var item = FindHashcode(ContextMenuItems, hashcode);
-                item?.Command?.Execute(null);
-            }
-            IsOpen = false;
         }
 
-        public void Close()
+        private void RebuildItems()
         {
-            if (_menu == default) return;
-            DestroyMenu(_menu);
-            _menu = default;
-            IsOpen = false;
+            Items.Clear();
+            foreach (InteropMenuItem item in ContextMenuItems)
+            {
+                Items.Add(CreateMenuItem(item));
+            }
         }
 
-        public void PopulateMenu(HMENU menu, List<InteropMenuItem> contextMenuItems)
+        private static MenuItem CreateMenuItem(InteropMenuItem item)
         {
-            foreach (var item in contextMenuItems)
+            var menuItem = new MenuItem
             {
-                _ids++;
-                if (item.HasSubMenu)
-                {
-                    var subMenu = CreatePopupMenu();
-                    AppendMenu(menu, MenuFlags.MF_STRING | MenuFlags.MF_POPUP, subMenu.DangerousGetHandle(), item.Header);
-                    PopulateMenu(subMenu, item.SubMenuItems);
-                }
-                else
-                {
-                    IdToHashcodeMap.Add(_ids, item.GetHashCode());
-                    AppendMenu(menu, MenuFlags.MF_STRING, (nint)_ids, item.Header);
-                }
+                Header = item.Header,
+                Command = item.Command
+            };
+
+            foreach (InteropMenuItem child in item.SubMenuItems)
+            {
+                menuItem.Items.Add(CreateMenuItem(child));
             }
+
+            return menuItem;
         }
     }
 }
