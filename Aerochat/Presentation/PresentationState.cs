@@ -6,6 +6,7 @@ public sealed class PresentationState : ObservableObject
 {
     private ScenePresentation _currentScene;
     private AdPresentation? _currentAd;
+    private bool _isEditingStatus;
 
     public PresentationState(
         PersonPresentation currentUser,
@@ -38,6 +39,12 @@ public sealed class PresentationState : ObservableObject
     {
         get => _currentAd;
         set => SetProperty(ref _currentAd, value);
+    }
+
+    public bool IsEditingStatus
+    {
+        get => _isEditingStatus;
+        set => SetProperty(ref _isEditingStatus, value);
     }
 
     public void ApplySearch(string searchText)

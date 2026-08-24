@@ -23,16 +23,141 @@ public sealed class HomeShellTests
     }
 
     [Test]
-    public void Search_filters_contacts_without_mutating_source_groups()
+    public void Home_default_constructor_creates_demo_state_and_navigator()
     {
-        PresentationState state = DemoData.Create();
-        int sourceCount = state.ContactGroups.Sum(group => group.Items.Count);
+        WpfTestHost.Run(() =>
+        {
+            var home = new Home();
 
-        state.ApplySearch("Mara");
+            Assert.That(home.State, Is.Not.Null);
+            Assert.That(home.Navigator.State, Is.SameAs(home.State));
+            Assert.That(home.State.ContactGroups, Is.Not.Empty);
+            home.Close();
+        });
+    }
 
-        Assert.That(state.FilteredContactGroups.SelectMany(group => group.Items)
-            .All(item => item.Person.Name.Contains("Mara", StringComparison.OrdinalIgnoreCase)), Is.True);
-        Assert.That(state.ContactGroups.Sum(group => group.Items.Count), Is.EqualTo(sourceCount));
+    [Test]
+    public void Home_applies_search_without_mutating_source_groups()
+    {
+        WpfTestHost.Run(() =>
+        {
+            PresentationState state = DemoData.Create();
+            var home = new Home(state, new WindowNavigator(state));
+            int sourceCount = state.ContactGroups.Sum(group => group.Items.Count);
+
+            home.ApplySearch("maya");
+
+            var filteredContacts = state.FilteredContactGroups.SelectMany(group => group.Items).ToList();
+            Assert.That(filteredContacts, Has.Count.EqualTo(1));
+            Assert.That(filteredContacts
+                .All(item => item.Person.Name.Contains("maya", StringComparison.OrdinalIgnoreCase)), Is.True);
+            Assert.That(state.ContactGroups.Sum(group => group.Items.Count), Is.EqualTo(sourceCount));
+            home.Close();
+        });
+    }
+
+    [Test]
+    public void Home_changes_presence_locally()
+    {
+        WpfTestHost.Run(() =>
+        {
+            PresentationState state = DemoData.Create();
+            var home = new Home(state, new WindowNavigator(state));
+
+            home.SetPresence(PresenceStatus.Busy);
+
+            Assert.That(state.CurrentUser.Presence.Status, Is.EqualTo(PresenceStatus.Busy));
+            home.Close();
+        });
+    }
+
+    [Test]
+    public void Home_commits_personal_message_locally()
+    {
+        WpfTestHost.Run(() =>
+        {
+            PresentationState state = DemoData.Create();
+            var home = new Home(state, new WindowNavigator(state));
+
+            home.EditPersonalMessage("  Local-only note  ");
+            Assert.That(state.CurrentUser.Presence.CustomStatus, Is.EqualTo("Available"));
+
+            home.CommitPersonalMessage();
+
+            Assert.That(state.CurrentUser.Presence.CustomStatus, Is.EqualTo("Local-only note"));
+            home.Close();
+        });
+    }
+
+    [Test]
+    public void Home_toggles_group_collapse_locally()
+    {
+        WpfTestHost.Run(() =>
+        {
+            PresentationState state = DemoData.Create();
+            var home = new Home(state, new WindowNavigator(state));
+            ContactGroupPresentation group = state.ContactGroups[0];
+
+            home.ToggleGroupCollapse(group);
+            Assert.That(group.IsCollapsed, Is.True);
+            home.ToggleGroupCollapse(group);
+            Assert.That(group.IsCollapsed, Is.False);
+            home.Close();
+        });
+    }
+
+    [Test]
+    public void Home_dismisses_notice_locally()
+    {
+        WpfTestHost.Run(() =>
+        {
+            PresentationState state = DemoData.Create();
+            var home = new Home(state, new WindowNavigator(state));
+
+            home.DismissNotice();
+
+            Assert.That(state.Notices, Is.Empty);
+            home.Close();
+        });
+    }
+
+    [Test]
+    public void Home_cycles_ad_locally()
+    {
+        WpfTestHost.Run(() =>
+        {
+            PresentationState state = DemoData.Create();
+            var home = new Home(state, new WindowNavigator(state));
+            AdPresentation first = state.Ads[0];
+
+            home.CycleAd();
+
+            Assert.That(state.CurrentAd, Is.SameAs(state.Ads[1]));
+            Assert.That(state.CurrentAd, Is.Not.SameAs(first));
+            home.Close();
+        });
+    }
+
+    [Test]
+    public void Home_code_behind_stays_inside_the_presentation_boundary()
+    {
+        string homePath = Path.GetFullPath(Path.Combine(
+            TestContext.CurrentContext.TestDirectory,
+            "../../../../../Aerochat/Windows/Home.xaml.cs"));
+        string source = File.ReadAllText(homePath);
+        string[] forbiddenTokens =
+        [
+            "Discord", "DSharpPlus", "HttpClient", "System.Net", "SettingsManager",
+            "Hoarder", "Vanara", "ShellExecute", "Process.Start", "Task.Run",
+            "System.Timers", "Timer", "UpdateRemote", "File.WriteAll", "File.ReadAll",
+            "Application.Current.Windows"
+        ];
+
+        Assert.Multiple(() =>
+        {
+            foreach (string token in forbiddenTokens)
+                Assert.That(source, Does.Not.Contain(token), $"Home.xaml.cs contains forbidden token {token}");
+        });
     }
 
     [Test]
