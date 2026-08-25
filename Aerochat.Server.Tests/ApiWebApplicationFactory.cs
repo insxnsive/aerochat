@@ -24,6 +24,10 @@ public sealed class ApiWebApplicationFactory : WebApplicationFactory<Program>
 
     public List<int> MessageQueryLimits { get; } = [];
 
+    public string? TenorApiKey { get; set; }
+
+    public Func<HttpRequestMessage, HttpResponseMessage>? TenorRequestHandler { get; set; }
+
     public ApiWebApplicationFactory()
     {
         _connection.Open();
@@ -34,6 +38,11 @@ public sealed class ApiWebApplicationFactory : WebApplicationFactory<Program>
         builder.UseEnvironment("Testing");
         builder.UseSetting("ConnectionStrings:Chat", "Data Source=:memory:");
         builder.UseSetting("Auth:SessionSigningKey", Convert.ToBase64String(TestSigningKey));
+        if (TenorApiKey is not null)
+        {
+            builder.UseSetting("Tenor:ApiKey", TenorApiKey);
+        }
+
         builder.ConfigureServices(services =>
         {
             services.RemoveAll<DbContextOptions<ChatDb>>();
@@ -41,6 +50,13 @@ public sealed class ApiWebApplicationFactory : WebApplicationFactory<Program>
             services.AddDbContext<ChatDb>(options => options
                 .UseSqlite(_connection)
                 .AddInterceptors(new MessageQueryLimitInterceptor(MessageQueryLimits)));
+
+            if (TenorRequestHandler is not null)
+            {
+                Func<HttpRequestMessage, HttpResponseMessage> handler = TenorRequestHandler;
+                services.AddHttpClient<Aerochat.Server.Gifs.TenorProxyService>()
+                    .ConfigurePrimaryHttpMessageHandler(() => new StubHttpMessageHandler(handler));
+            }
         });
     }
 
@@ -61,6 +77,15 @@ public sealed class ApiWebApplicationFactory : WebApplicationFactory<Program>
 
         base.Dispose(disposing);
     }
+}
+
+internal sealed class StubHttpMessageHandler(
+    Func<HttpRequestMessage, HttpResponseMessage> handler) : HttpMessageHandler
+{
+    protected override Task<HttpResponseMessage> SendAsync(
+        HttpRequestMessage request,
+        CancellationToken cancellationToken) =>
+        Task.FromResult(handler(request));
 }
 
 internal sealed class MessageQueryLimitInterceptor(ICollection<int> limits) : DbCommandInterceptor

@@ -3,6 +3,7 @@ using Aerochat.Server.Auth;
 using Aerochat.Server.Auth.OAuth;
 using Aerochat.Server.Data;
 using Aerochat.Server.Gateway;
+using Aerochat.Server.Gifs;
 using Aerochat.Server.Rest;
 using Microsoft.Data.Sqlite;
 using Microsoft.EntityFrameworkCore;
@@ -40,6 +41,7 @@ internal static class ServerComposition
         builder.Services.AddScoped<IExternalUserStore, EfExternalUserStore>();
         builder.Services.AddScoped<ConversationMessageService>();
         builder.Services.AddHttpClient<IOAuthProviderClient, OAuthProviderClient>();
+        builder.Services.AddHttpClient<TenorProxyService>().RemoveAllLoggers();
         builder.Services.AddScoped(sp => new OAuthFlowService(
             sp.GetRequiredService<IReadOnlyDictionary<string, OAuthProviderDefinition>>(),
             sp.GetRequiredService<IOAuthProviderClient>(),
@@ -62,6 +64,7 @@ internal static class ServerComposition
         app.MapGet("/health", () => Results.Json(new { status = "ok" }));
         app.MapOAuthEndpoints();
         app.MapConversationEndpoints();
+        app.MapGifEndpoints();
         app.MapGatewayEndpoints();
     }
 
