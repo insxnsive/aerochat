@@ -13,6 +13,14 @@ public sealed class SessionServiceTests
     ];
 
     [Test]
+    public void Signing_key_shorter_than_256_bits_is_rejected()
+    {
+        Assert.That(
+            () => new SessionService(new byte[31], TimeProvider.System),
+            Throws.TypeOf<ArgumentException>());
+    }
+
+    [Test]
     public void Issue_and_validate_roundtrip()
     {
         var svc = new SessionService(TestSigningKey, TimeProvider.System);

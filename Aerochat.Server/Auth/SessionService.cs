@@ -14,6 +14,10 @@ public sealed class SessionService
     {
         ArgumentNullException.ThrowIfNull(signingKey);
         ArgumentNullException.ThrowIfNull(clock);
+        if (signingKey.Length < 32)
+        {
+            throw new ArgumentException("HS256 signing keys must be at least 256 bits.", nameof(signingKey));
+        }
 
         _signingKey = signingKey.ToArray();
         _clock = clock;
