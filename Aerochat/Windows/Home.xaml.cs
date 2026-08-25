@@ -1,5 +1,4 @@
 using Aerochat.Presentation;
-using Aerochat.ViewModels;
 using System.ComponentModel;
 using System.Windows;
 using System.Windows.Controls;
@@ -116,9 +115,6 @@ public partial class Home : Window
     public void UpdateUnreadMessages()
     {
     }
-
-    public PresenceViewModel? FindPresenceForUserId(ulong userId) =>
-        null;
 
     private void TryNavigate(ShellRoute route, object? payload = null)
     {

@@ -1,293 +1,153 @@
-using Aerochat.Localization;
-using Aerochat.Settings;
-using Aerochat.Theme;
-using Aerochat.ViewModels;
-using System;
-using System.Collections.Generic;
-using System.Linq;
-using System.Reflection;
-using System.Text;
-using System.Threading.Tasks;
+using System.Collections.ObjectModel;
 using System.Windows;
 using System.Windows.Controls;
-using System.Windows.Data;
-using System.Windows.Documents;
 using System.Windows.Input;
-using System.Windows.Media;
-using System.Windows.Media.Imaging;
-using System.Windows.Shapes;
-using Vanara.PInvoke;
-using Aerochat.Attributes;
-using System.Collections.ObjectModel;
-using HarmonyLib;
+using Aerochat.Presentation;
 
-namespace Aerochat.Windows
+namespace Aerochat.Windows;
+
+public partial class Settings : Window
 {
-    public partial class Settings : Window
+    private readonly PresentationState _state;
+    public SettingsPresentationView ViewModel { get; }
+
+    public Settings(PresentationState state)
     {
-        public SettingsViewModel ViewModel { get; } = new();
-        private const string GeneralCategoryKey = "General";
+        _state = state ?? throw new ArgumentNullException(nameof(state));
+        ViewModel = SettingsPresentationView.Create(state);
+        InitializeComponent();
+        DataContext = ViewModel;
+        CategoriesListBox.SelectedIndex = 0;
+    }
 
-        public Settings()
+    private void ListBox_SelectionChanged(object sender, SelectionChangedEventArgs e)
+    {
+        if (CategoriesListBox.SelectedItem is SettingsCategoryPresentation category)
+            ViewModel.Select(category);
+    }
+
+    private void TextBox_PreviewTextInput(object sender, TextCompositionEventArgs e) =>
+        e.Handled = !int.TryParse(e.Text, out _);
+
+    private void TextBox_TextChanged(object sender, TextChangedEventArgs e)
+    {
+        if (sender is TextBox box && box.DataContext is SettingPresentation item)
+            Apply(item.Key, box.Text);
+    }
+
+    private void CheckBox_Click(object sender, RoutedEventArgs e)
+    {
+        if (sender is CheckBox box && box.DataContext is SettingPresentation item)
+            Apply(item.Key, box.IsChecked == true);
+    }
+
+    private void ComboBox_SelectionChanged(object sender, SelectionChangedEventArgs e)
+    {
+        if (sender is ComboBox box && box.DataContext is SettingPresentation item)
+            Apply(item.Key, box.SelectedItem?.ToString() ?? "");
+    }
+
+    private void StringList_SelectionChanged(object sender, SelectionChangedEventArgs e) =>
+        ComboBox_SelectionChanged(sender, e);
+
+    private void Apply(string key, object value)
+    {
+        switch (key)
         {
-            InitializeComponent();
-            DataContext = ViewModel;
-
-            // Inject the "General" category first (contains language selector).
-            ViewModel.Categories.Add(new SettingsCategory
-            {
-                Key = GeneralCategoryKey,
-                Name = LocalizationManager.Instance["SettingsCategoryGeneral"]
-            });
-
-            // Populate remaining categories from reflection on SettingsManager.
-            var properties = SettingsManager.Instance.GetType()
-                .GetProperties()
-                .Where(prop => prop.GetCustomAttribute<SettingsAttribute>() != null);
-
-            foreach (var englishCategory in properties
-                .Select(prop => prop.GetCustomAttribute<SettingsAttribute>()!.Category)
-                .Distinct())
-            {
-                var locKey = "SettingsCategory" + englishCategory;
-                var translated = LocalizationManager.Instance.Get(locKey);
-                ViewModel.Categories.Add(new SettingsCategory
-                {
-                    Key = englishCategory,
-                    Name = translated != locKey ? translated : englishCategory
-                });
-            }
-
-            ViewModel.SelectedCategory = ViewModel.Categories.First();
-            CategoriesListBox.SelectedItem = ViewModel.SelectedCategory;
-            var items = GetSettingsFromCategory(ViewModel.SelectedCategory.Key);
-            foreach (var item in items)
-            {
-                ViewModel.SettingsItems.Add(item);
-            }
+            case nameof(VisualSettingsPresentation.ShowAds): _state.Settings.ShowAds = Convert.ToBoolean(value); break;
+            case nameof(VisualSettingsPresentation.ShowNews): _state.Settings.ShowNews = Convert.ToBoolean(value); break;
+            case nameof(VisualSettingsPresentation.ShowEyecandy): _state.Settings.ShowEyecandy = Convert.ToBoolean(value); break;
+            case nameof(VisualSettingsPresentation.ShowTimestamps): _state.Settings.ShowTimestamps = Convert.ToBoolean(value); break;
+            case nameof(VisualSettingsPresentation.EnableAnimations): _state.Settings.EnableAnimations = Convert.ToBoolean(value); break;
+            case nameof(VisualSettingsPresentation.Language): _state.Settings.Language = value.ToString() ?? "en-US"; break;
+            case nameof(VisualSettingsPresentation.TimeFormat): _state.Settings.TimeFormat = value.ToString() ?? "24-hour"; break;
         }
+    }
+}
 
-        private static string GetEnumDisplayName(Enum enumValue)
-        {
-            var field = enumValue.GetType().GetField(enumValue.ToString());
-            var attribute = (DisplayAttribute)Attribute.GetCustomAttribute(field, typeof(DisplayAttribute));
-            var englishName = attribute?.Name ?? enumValue.ToString();
-            // Translate via reverse-lookup in the English baseline
-            return LocalizationManager.Instance.GetByEnglishValue(englishName);
-        }
+public sealed class SettingsPresentationView
+{
+    private SettingsPresentationView(PresentationState state)
+    {
+        State = state;
+        Categories.Add(new SettingsCategoryPresentation("General", "General"));
+        Categories.Add(new SettingsCategoryPresentation("Visual", "Visual"));
+        Categories.Add(new SettingsCategoryPresentation("Chat", "Chat"));
+        foreach (SettingsCategoryPresentation category in Categories)
+            category.Items = CreateItems(category.Key, state);
+        SelectedCategory = Categories[0];
+    }
 
-        /// <summary>
-        /// Returns the translated display name for a settings property.
-        /// The locale key is constructed as "Setting" + the C# property name (e.g. "SettingShowBetaWarning").
-        /// Falls back to the English DisplayName from [SettingsAttribute] when no translation is available.
-        /// </summary>
-        private static string TranslateSettingName(PropertyInfo prop)
-        {
-            var attr = prop.GetCustomAttribute<SettingsAttribute>()!;
-            var locKey = "Setting" + prop.Name;
-            var translated = LocalizationManager.Instance.Get(locKey);
-            return translated != locKey ? translated : attr.DisplayName;
-        }
+    public PresentationState State { get; }
+    public ObservableCollection<SettingsCategoryPresentation> Categories { get; } = [];
+    public ObservableCollection<SettingPresentation> SettingsItems { get; } = [];
+    public SettingsCategoryPresentation SelectedCategory { get; private set; }
 
-        public List<SettingViewModel> GetSettingsFromCategory(string category)
-        {
-            // The "General" category is handled separately since its items are not
-            // backed by [Settings]-decorated properties on SettingsManager.
-            // category is always the English Key, so comparing to GeneralCategoryKey is sufficient.
-            if (category == GeneralCategoryKey)
-                return GetGeneralSettings();
+    public void Select(SettingsCategoryPresentation category)
+    {
+        SelectedCategory = category;
+        SettingsItems.Clear();
+        foreach (SettingPresentation item in category.Items)
+            SettingsItems.Add(item);
+    }
 
-            var properties = SettingsManager.Instance.GetType()
-                .GetProperties()
-                .Where(prop => prop.GetCustomAttribute<SettingsAttribute>()?.Category == category);
+    public static SettingsPresentationView Create(PresentationState state)
+    {
+        var view = new SettingsPresentationView(state);
+        view.Select(view.SelectedCategory);
+        return view;
+    }
 
-            var settings = new List<SettingViewModel>();
+    private static ObservableCollection<SettingPresentation> CreateItems(string key, PresentationState state) => key switch
+    {
+        "General" => [
+            SettingPresentation.String(nameof(VisualSettingsPresentation.Language), "Language", state.Settings.Language, ["en-US", "ja-JP"]),
+            SettingPresentation.String(nameof(VisualSettingsPresentation.TimeFormat), "Time format", state.Settings.TimeFormat, ["12-hour", "24-hour"])],
+        "Visual" => [
+            SettingPresentation.Boolean(nameof(VisualSettingsPresentation.ShowAds), "Show advertisements", state.Settings.ShowAds),
+            SettingPresentation.Boolean(nameof(VisualSettingsPresentation.ShowNews), "Show news", state.Settings.ShowNews),
+            SettingPresentation.Boolean(nameof(VisualSettingsPresentation.ShowEyecandy), "Show visual effects", state.Settings.ShowEyecandy),
+            SettingPresentation.Boolean(nameof(VisualSettingsPresentation.ShowTimestamps), "Show timestamps", state.Settings.ShowTimestamps),
+            SettingPresentation.Boolean(nameof(VisualSettingsPresentation.EnableAnimations), "Enable animations", state.Settings.EnableAnimations)],
+        "Chat" => [SettingPresentation.Boolean(nameof(VisualSettingsPresentation.ShowTimestamps), "Show timestamps", state.Settings.ShowTimestamps)],
+        _ => []
+    };
+}
 
-            foreach (var prop in properties)
-            {
-                if (prop.PropertyType.IsEnum)
-                {
-                    // Get the enum values with their display names
-                    var enumValues = Enum.GetValues(prop.PropertyType)
-                        .Cast<Enum>()
-                        .Select(e => new KeyValuePair<string, string>(e.ToString(), GetEnumDisplayName(e)))
-                        .ToList();
+public sealed class SettingsCategoryPresentation(string key, string name)
+{
+    public string Key { get; } = key;
+    public string Name { get; } = name;
+    public ObservableCollection<SettingPresentation> Items { get; set; } = [];
+}
 
-                    settings.Add(new SettingViewModel
-                    {
-                        Key = prop.GetCustomAttribute<SettingsAttribute>()!.DisplayName,
-                        Name = TranslateSettingName(prop),
-                        Type = "Enum",
-                        DefaultValue = prop.GetValue(SettingsManager.Instance)?.ToString(),
-                        EnumValues = new ObservableCollection<string>(enumValues.Select(ev => ev.Value)),
-                        SelectedEnumValue = GetEnumDisplayName((Enum)prop.GetValue(SettingsManager.Instance))
-                    });
-                }
-                else
-                {
-                    var attribute = prop.GetCustomAttribute<MultiStringToIntAction>();
-                    if (attribute != null)
-                    {
-                        var displayNames = attribute.GetDisplayNames();
-                        
-                        settings.Add(new SettingViewModel
-                        {
-                            Key = prop.GetCustomAttribute<SettingsAttribute>()!.DisplayName,
-                            Name = TranslateSettingName(prop),
-                            Type = prop.PropertyType.Name,
-                            DefaultValue = displayNames.ElementAtOrDefault(SettingsManager.Instance.InputDeviceIndex) ?? LocalizationManager.Instance["SettingsUnknownDevice"],
-                            StringValues = new ObservableCollection<string>(displayNames),
-                        });
-                    }
-                    else
-                    {
-                        settings.Add(new SettingViewModel
-                        {
-                            Key = prop.GetCustomAttribute<SettingsAttribute>()!.DisplayName,
-                            Name = TranslateSettingName(prop),
-                            Type = prop.PropertyType.Name,
-                            DefaultValue = prop.GetValue(SettingsManager.Instance)?.ToString()
-                        });
-                    }
-                }
-            }
+public sealed class SettingPresentation
+{
+    private SettingPresentation(string key, string name, string type, object value)
+    {
+        Key = key;
+        Name = name;
+        Type = type;
+        DefaultValue = value;
+        StringValues = [];
+    }
 
-            return settings;
-        }
+    public string Key { get; }
+    public string Name { get; }
+    public string Type { get; }
+    public object DefaultValue { get; set; }
+    public string? Note { get; init; }
+    public ObservableCollection<string> StringValues { get; }
+    public ObservableCollection<string> EnumValues { get; } = [];
+    public string? SelectedEnumValue { get; set; }
 
-        /// <summary>
-        /// Builds the settings items for the "General" category, which contains the language selector.
-        /// The available languages are discovered dynamically by scanning the Locales folder, so
-        /// contributors can add new translations without recompiling the application.
-        /// </summary>
-        private List<SettingViewModel> GetGeneralSettings()
-        {
-            var loc = LocalizationManager.Instance;
-            var languages = loc.GetAvailableLanguages();
-            var currentName = languages.FirstOrDefault(l => l.Code == SettingsManager.Instance.Language).Name
-                              ?? SettingsManager.Instance.Language;
+    public static SettingPresentation Boolean(string key, string name, bool value) =>
+        new(key, name, "Boolean", value);
 
-            return new List<SettingViewModel>
-            {
-                new SettingViewModel
-                {
-                    Key = "Language",
-                    Name = loc["SettingLanguage"],
-                    Note = loc["SettingLanguageRestartNote"],
-                    Type = "StringList",
-                    DefaultValue = currentName,
-                    StringValues = new ObservableCollection<string>(languages.Select(l => l.Name))
-                }
-            };
-        }
-
-        private void ListBox_SelectionChanged(object sender, SelectionChangedEventArgs e)
-        {
-            // get the selected category
-            var category = (SettingsCategory)CategoriesListBox.SelectedItem;
-            ViewModel.SelectedCategory = category;
-            // clear the settings list
-            ViewModel.SettingsItems.Clear();
-            // add the settings from the selected category
-            var items = GetSettingsFromCategory(category.Key);
-            foreach (var item in items)
-            {
-                ViewModel.SettingsItems.Add(item);
-            }
-        }
-
-        private void TextBox_PreviewTextInput(object sender, TextCompositionEventArgs e)
-        {
-            // if it's not a number, don't allow it
-            e.Handled = !int.TryParse(e.Text, out _);
-        }
-
-        private void TextBox_TextChanged(object sender, TextChangedEventArgs e)
-        {
-            var textBox = (TextBox)sender;
-            if (textBox.Tag is not string name) return;
-            if (!int.TryParse(textBox.Text, out var result)) return;
-            var property = SettingsManager.Instance.GetType()
-                .GetProperties()
-                .FirstOrDefault(prop => prop.GetCustomAttribute<SettingsAttribute>()?.DisplayName == name);
-            if (property is null || property.PropertyType != typeof(int)) return;
-            property.SetValue(SettingsManager.Instance, result);
-            SettingsManager.Save();
-        }
-
-        private void CheckBox_Click(object sender, RoutedEventArgs e)
-        {
-            var checkBox = (CheckBox)sender;
-            if (checkBox.Tag is not string name) return;
-            var property = SettingsManager.Instance.GetType()
-                .GetProperties()
-                .FirstOrDefault(prop => prop.GetCustomAttribute<SettingsAttribute>()?.DisplayName == name);
-            if (property is null || property.PropertyType != typeof(bool)) return;
-            property.SetValue(SettingsManager.Instance, checkBox.IsChecked);
-            SettingsManager.Save();
-        }
-
-        private void ComboBox_SelectionChanged(object sender, SelectionChangedEventArgs e)
-        {
-            var comboBox = (ComboBox)sender;
-            if (comboBox.Tag is not string name) return;
-            if (comboBox.SelectedItem is not string selectedValue) return;
-
-            var property = SettingsManager.Instance.GetType()
-                .GetProperties()
-                .FirstOrDefault(prop => prop.GetCustomAttribute<SettingsAttribute>()?.DisplayName == name);
-
-            if (property is null) return;
-
-            if (property.PropertyType.IsEnum)
-            {
-                var enumValue = Enum.GetValues(property.PropertyType)
-                    .Cast<Enum>()
-                    .FirstOrDefault(v => GetEnumDisplayName(v) == selectedValue);
-
-                if (enumValue != null)
-                    property.SetValue(SettingsManager.Instance, enumValue);
-            }
-            else if (property.PropertyType.IsInteger())
-            {
-                int index = 0;
-                foreach (string comboBoxItem in comboBox.Items)
-                {
-                    if (comboBoxItem == selectedValue) break;
-                    index++;
-                }
-                property.SetValue(SettingsManager.Instance, index);
-            }
-
-            SettingsManager.Save();
-        }
-
-        /// <summary>
-        /// Handles language selection changes from the StringList combobox in the General category.
-        /// Finds the language code that corresponds to the selected display name and reloads the locale.
-        /// </summary>
-        private void StringList_SelectionChanged(object sender, SelectionChangedEventArgs e)
-        {
-            var comboBox = (ComboBox)sender;
-            if (comboBox.SelectedItem is not string selectedName)
-                return;
-
-            var languages = LocalizationManager.Instance.GetAvailableLanguages();
-            var match = languages.FirstOrDefault(l => l.Name == selectedName);
-            if (match == default)
-                return;
-
-            // Do nothing if the language hasn't actually changed (e.g. ComboBox init fires SelectionChanged).
-            if (match.Code == SettingsManager.Instance.Language)
-                return;
-
-            // Persist the new language choice before restarting.
-            SettingsManager.Instance.Language = match.Code;
-            SettingsManager.Save();
-
-            // Restart the application so every already-open window picks up the new language.
-            System.Diagnostics.Process.Start(Environment.ProcessPath!);
-            Application.Current.Shutdown();
-        }
+    public static SettingPresentation String(string key, string name, string value, IEnumerable<string> values)
+    {
+        var item = new SettingPresentation(key, name, "StringList", value);
+        foreach (string option in values) item.StringValues.Add(option);
+        return item;
     }
 }

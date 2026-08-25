@@ -68,7 +68,7 @@ namespace Aerochat.Controls
         {
             if (_titlebar is not null)
             {
-                _titlebar.ViewModel.TextColor = new SolidColorBrush(newColor);
+                _titlebar.TextColor = new SolidColorBrush(newColor);
             }
         }
 
@@ -81,7 +81,7 @@ namespace Aerochat.Controls
         {
             if (_titlebar is not null)
             {
-                _titlebar.ViewModel.Color = new SolidColorBrush(newColor);
+                _titlebar.Color = new SolidColorBrush(newColor);
             }
         }
 
@@ -105,8 +105,8 @@ namespace Aerochat.Controls
             };
 
             NoDwmTitlebar titlebar = new();
-            titlebar.ViewModel.TextColor = new SolidColorBrush(BlackText);
-            titlebar.ViewModel.Color = new SolidColorBrush(Color);
+            titlebar.TextColor = new SolidColorBrush(BlackText);
+            titlebar.Color = new SolidColorBrush(Color);
             Grid.SetRow(titlebar, 0);
             Grid.SetRow(contentPresenter, 1);
 
@@ -158,9 +158,9 @@ namespace Aerochat.Controls
                 _window.Activated += Window_Activated;
                 _window.Deactivated += Window_Deactivated;
 
-                titlebar.ViewModel.Title = _window.Title;
-                titlebar.ViewModel.Icon = _window.Icon ?? LoadDefaultIcon();
-                titlebar.ViewModel.Activated = _window.IsActive;
+                titlebar.Title = _window.Title;
+                titlebar.Icon = _window.Icon ?? LoadDefaultIcon();
+                titlebar.Activated = _window.IsActive;
             }
 
             RefreshTitlebarState();
@@ -188,7 +188,7 @@ namespace Aerochat.Controls
         {
             if (_titlebar is not null)
             {
-                _titlebar.ViewModel.Activated = false;
+                _titlebar.Activated = false;
             }
         }
 
@@ -196,7 +196,7 @@ namespace Aerochat.Controls
         {
             if (_titlebar is not null)
             {
-                _titlebar.ViewModel.Activated = true;
+                _titlebar.Activated = true;
             }
         }
 

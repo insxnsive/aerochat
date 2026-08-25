@@ -14,6 +14,8 @@ internal static class WpfTestHost
         using var ready = new ManualResetEventSlim();
         var thread = new Thread(() =>
         {
+            var app = new Aerochat.App(suppressStartup: true);
+            app.ShutdownMode = System.Windows.ShutdownMode.OnExplicitShutdown;
             dispatcher = Dispatcher.CurrentDispatcher;
             ready.Set();
             Dispatcher.Run();

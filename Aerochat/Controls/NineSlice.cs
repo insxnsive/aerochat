@@ -1,6 +1,4 @@
 ﻿using Aerochat.Controls.NineSliceStuff;
-using NAudio.CoreAudioApi;
-using System.Diagnostics;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Media;

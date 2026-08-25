@@ -1,5 +1,4 @@
 using System.Windows;
-using Aerochat.ViewModels;
 using Aerochat.Windows;
 
 namespace Aerochat.Presentation;
@@ -13,52 +12,25 @@ public sealed class WindowNavigator
 
     public PresentationState State { get; }
 
-    public Window Create(ShellRoute route, object? payload = null)
+    public Window Create(ShellRoute route, object? payload = null) => route switch
     {
-        return route switch
-        {
-            ShellRoute.Home => new Home(State, this),
-            ShellRoute.Chat => CreateChat(payload),
-            ShellRoute.ImagePreviewer => CreateUnavailableImagePreviewer(payload),
-            ShellRoute.Settings or ShellRoute.About or ShellRoute.Login or ShellRoute.ChangeScene =>
-                throw new NotSupportedException($"The {route} route is not available in the local visual shell yet."),
-            _ => throw new ArgumentOutOfRangeException(nameof(route), route, "Unknown shell route.")
-        };
-    }
+        ShellRoute.Home => new Home(State, this),
+        ShellRoute.Chat => new Chat(State, payload as ConversationPresentation ?? State.Conversations[0], this),
+        ShellRoute.Settings => new Aerochat.Windows.Settings(State),
+        ShellRoute.About => new About(),
+        ShellRoute.Login => new Login(State, this),
+        ShellRoute.ChangeScene => new ChangeScene(State),
+        ShellRoute.ImagePreviewer => new ImagePreviewer(State,
+            payload as PreviewImagePresentation ?? State.PreviewImages[0]),
+        _ => throw new ArgumentOutOfRangeException(nameof(route), route, null)
+    };
 
     public Window Show(ShellRoute route, Window? owner = null, object? payload = null)
     {
         Window window = Create(route, payload);
         if (route is not ShellRoute.Home and not ShellRoute.Login && owner is not null)
             window.Owner = owner;
-
         window.Show();
         return window;
-    }
-
-    private Chat CreateChat(object? payload)
-    {
-        ConversationPresentation conversation = payload switch
-        {
-            ConversationPresentation presentation => presentation,
-            ulong conversationId => State.Conversations.FirstOrDefault(item => item.Id == conversationId)
-                ?? throw new NotSupportedException(
-                    $"The local conversation {conversationId} is not available in the presentation state."),
-            _ => throw new ArgumentException(
-                "Chat routes require a ConversationPresentation or ulong conversation id payload.",
-                nameof(payload))
-        };
-
-        return new Chat(State, conversation, this);
-    }
-
-    private static Window CreateUnavailableImagePreviewer(object? payload)
-    {
-        if (payload is not AttachmentViewModel && payload is not EmbedImageViewModel)
-            throw new ArgumentException(
-                "ImagePreviewer routes require an attachment or embed image payload.",
-                nameof(payload));
-
-        throw new NotSupportedException("The ImagePreviewer route is not available in the local visual shell yet.");
     }
 }

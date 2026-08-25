@@ -1,9 +1,6 @@
 ﻿using System;
 using System.Collections.Generic;
-using System.Diagnostics;
 using System.Linq;
-using System.Text;
-using System.Threading.Tasks;
 using System.Windows.Documents;
 using System.Windows.Media;
 
@@ -82,10 +79,6 @@ namespace Aerochat.BBCode
             {
                 case "link":
                     ((Hyperlink)inline).NavigateUri = new Uri(Attributes["url"]);
-                    ((Hyperlink)inline).Click += (s, e) =>
-                    {
-                        Process.Start(new ProcessStartInfo(((Hyperlink)s).NavigateUri.AbsoluteUri) { UseShellExecute = true });
-                    };
                     break;
                 case "color":
                     inline.Foreground = new SolidColorBrush((Color)ColorConverter.ConvertFromString(Attributes["color"]));

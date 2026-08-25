@@ -73,7 +73,7 @@ public sealed class PresentationControlTests
     {
         if (Application.Current is null)
         {
-            _ = new Application();
+            _ = new Aerochat.App(suppressStartup: true);
         }
 
         var image = new BitmapImage();
@@ -333,7 +333,7 @@ public sealed class PresentationControlTests
     {
         if (Application.Current is null)
         {
-            _ = new Application();
+            _ = new Aerochat.App(suppressStartup: true);
         }
     }
 

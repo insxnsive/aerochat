@@ -5,9 +5,7 @@
         xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
         xmlns:local="clr-namespace:Aerochat.Windows"
         xmlns:controls="clr-namespace:Aerochat.Controls"
-        xmlns:viewmodels="clr-namespace:Aerochat.ViewModels"
         xmlns:loc="clr-namespace:Aerochat.Localization"
-        xmlns:converter="clr-namespace:Aerochat.Converter"
         mc:Ignorable="d"
         Title="{loc:Loc NotificationTitle}" Height="150" Width="239"
         AllowsTransparency="True" WindowStyle="None"
@@ -18,11 +16,7 @@
         ShowInTaskbar="False"
         Background="Transparent"
         Style="{StaticResource Window}">
-    <Window.DataContext>
-        <viewmodels:NotificationWindowViewModel />
-    </Window.DataContext>
     <Window.Resources>
-        <converter:NotificationTextConverter x:Key="NotificationTextConverter" />
     </Window.Resources>
     <Grid>
         <controls:NineSlice Image="/Aerochat;component/Resources/Notification/Background.png" Slice="16,16" />
@@ -68,14 +62,7 @@
                         </Style.Triggers>
                     </Style>
                 </StackPanel.Style>
-                <TextBlock MaxHeight="72" TextAlignment="Center" Foreground="#333" TextWrapping="Wrap" TextTrimming="CharacterEllipsis">
-                    <TextBlock.Text>
-                        <MultiBinding Converter="{StaticResource NotificationTextConverter}">
-                            <Binding Path="Message.Author.Name" />
-                            <Binding Path="Message.RawMessage" />
-                        </MultiBinding>
-                    </TextBlock.Text>
-                </TextBlock>
+                <TextBlock Text="{Binding Message.RawMessage}" TextAlignment="Center" MaxHeight="72" Foreground="#333" TextWrapping="Wrap" TextTrimming="CharacterEllipsis" />
                 <TextBlock TextAlignment="Center" MaxHeight="60" TextTrimming="CharacterEllipsis" TextWrapping="Wrap" Text="{Binding Message.Message}" Foreground="#333" Margin="0,4,0,0">
                     <TextBlock.Style>
                         <Style TargetType="TextBlock">

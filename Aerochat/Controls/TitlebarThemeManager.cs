@@ -9,11 +9,13 @@ namespace Aerochat.Controls
     /// </summary>
     public class TitlebarThemeManager : DependencyObject
     {
-        public static TitlebarThemeManager Instance { get; } = new();
+        public static TitlebarThemeManager Instance => LazyInstance.Value;
+    private static readonly Lazy<TitlebarThemeManager> LazyInstance = new();
 
         public TitlebarThemeManager()
         {
-            ReloadTheme();
+            LoadVistaTheme();
+            FreezeThemeResources();
         }
 
         /// <summary>
@@ -41,7 +43,7 @@ namespace Aerochat.Controls
 
         public void ReloadTheme()
         {
-            if (XPCaptionButtons)
+            if (XPCaptionButtonsProperty is not null && XPCaptionButtons)
             {
                 LoadXPTheme();
             }

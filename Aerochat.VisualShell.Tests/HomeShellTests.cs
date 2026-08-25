@@ -2,6 +2,7 @@ using Aerochat.Presentation;
 using Aerochat.Windows;
 using System.Diagnostics;
 using System.IO;
+using System.Windows;
 
 namespace Aerochat.VisualShell.Tests;
 
@@ -272,14 +273,20 @@ public sealed class HomeShellTests
     }
 
     [Test]
-    public void Navigator_stages_unmigrated_routes_as_not_supported()
+    public void Navigator_creates_all_retained_routes()
     {
         WpfTestHost.Run(() =>
         {
-            var navigator = new WindowNavigator(DemoData.Create());
-
-            Assert.Throws<NotSupportedException>(() => navigator.Create(ShellRoute.Chat, 42UL));
-            Assert.Throws<NotSupportedException>(() => navigator.Create(ShellRoute.Settings));
+            PresentationState state = DemoData.Create();
+            var navigator = new WindowNavigator(state);
+            foreach (ShellRoute route in Enum.GetValues<ShellRoute>())
+            {
+                Window window = navigator.Create(route,
+                    route == ShellRoute.Chat ? state.Conversations[0] :
+                    route == ShellRoute.ImagePreviewer ? state.PreviewImages[0] : null);
+                Assert.That(window, Is.Not.Null);
+                window.Close();
+            }
         });
     }
 

@@ -4,7 +4,7 @@
         xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
         xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
         xmlns:local="clr-namespace:Aerochat.Windows"
-        xmlns:controls="clr-namespace:Aerochat.Controls" xmlns:viewmodels="clr-namespace:Aerochat.ViewModels" d:DataContext="{d:DesignInstance Type=viewmodels:NonNativeTooltipViewModel}"
+        xmlns:controls="clr-namespace:Aerochat.Controls"
         mc:Ignorable="d"
         AllowsTransparency="True" WindowStyle="None"
         ResizeMode="NoResize"

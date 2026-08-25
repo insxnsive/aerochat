@@ -43,7 +43,7 @@ public static class DemoData
         {
             Id = 2,
             DisplayName = "Blue Waves",
-            File = "/Aerochat;component/Scenes/BlueWaves.png",
+            File = "/Aerochat;component/Scenes/Windows7Setup.png",
             Color = Color.FromRgb(36, 103, 171),
             TextColor = Colors.White,
             ShadowColor = Color.FromArgb(170, 3, 28, 62)
@@ -152,11 +152,11 @@ public static class DemoData
 
         state.PreviewImages.Add(new PreviewImagePresentation(
             "aerochat.png",
-            "/Aerochat;component/Scenes/Aerochat.png",
+            "/Aerochat;component/Scenes/default.png",
             "Aerochat scene study"));
         state.PreviewImages.Add(new PreviewImagePresentation(
             "blue-waves.png",
-            "/Aerochat;component/Scenes/BlueWaves.png",
+            "/Aerochat;component/Scenes/Windows7Setup.png",
             "Blue Waves scene study"));
 
         state.ApplySearch("");
@@ -250,7 +250,7 @@ public static class DemoData
             At(2026, 8, 24, 10, 8),
             false,
             "Blue Waves makes a good attachment preview.",
-            "/Aerochat;component/Scenes/BlueWaves.png",
+            "/Aerochat;component/Scenes/Windows7Setup.png",
             second);
 
         conversation.Messages.Add(first);

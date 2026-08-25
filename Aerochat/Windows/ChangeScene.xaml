@@ -4,10 +4,8 @@
         xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
         xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
         xmlns:local="clr-namespace:Aerochat.Windows"
-        xmlns:controls="clr-namespace:Aerochat.Controls" 
-        xmlns:viewmodels="clr-namespace:Aerochat.ViewModels" 
+        xmlns:controls="clr-namespace:Aerochat.Controls"
         xmlns:loc="clr-namespace:Aerochat.Localization"
-        d:DataContext="{d:DesignInstance Type=viewmodels:ChangeSceneViewModel}"
         mc:Ignorable="d"
         Title="{loc:Loc ChangeSceneTitle}" Height="587" Width="535"
         ResizeMode="NoResize"
@@ -57,7 +55,7 @@
                                                     </controls:NineSlice.Style>
                                                 </controls:NineSlice>
                                                 <Rectangle Margin="4,4,0,0" UseLayoutRounding="True" Width="96" Height="48" HorizontalAlignment="Left" VerticalAlignment="Top" Fill="#33aacc" />
-                                                <Image Margin="4,4,0,0" UseLayoutRounding="True" Width="96" Height="48" HorizontalAlignment="Left" VerticalAlignment="Top" Source="{Binding Scene.File}" Stretch="Fill">
+                                                <Image Margin="4,4,0,0" UseLayoutRounding="True" Width="96" Height="48" HorizontalAlignment="Left" VerticalAlignment="Top" Source="{x:Null}" Stretch="Fill">
                                                     <Image.Effect>
                                                         <DropShadowEffect Opacity="0.4" Color="Black" BlurRadius="6" Direction="315" />
                                                     </Image.Effect>

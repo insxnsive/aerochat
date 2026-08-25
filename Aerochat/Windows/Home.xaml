@@ -138,10 +138,10 @@
                     <RowDefinition Height="12" />
                     <RowDefinition Height="*" />
                 </Grid.RowDefinitions>
-                <Grid Grid.Row="0" Panel.ZIndex="3" Background="{Binding CurrentScene.Color}">
+                <Grid Grid.Row="0" Panel.ZIndex="3" Background="{Binding CurrentScene.Color}" Tag="{Binding CurrentScene.File}">
                     <Grid>
                         <Grid.Background>
-                            <ImageBrush RenderOptions.BitmapScalingMode="NearestNeighbor" ImageSource="{Binding CurrentScene.File}" Stretch="UniformToFill" AlignmentX="Right" />
+                            <ImageBrush RenderOptions.BitmapScalingMode="NearestNeighbor" Stretch="UniformToFill" AlignmentX="Right" />
                         </Grid.Background>
                         <Grid.Style>
                             <Style TargetType="Grid">
@@ -154,7 +154,7 @@
                             </Style>
                         </Grid.Style>
                     </Grid>
-                    <controls:ColorizedNineSlice Image="/Scenes/default.png" Slice="1,1" TintColor="{Binding CurrentScene.Color}">
+                    <controls:ColorizedNineSlice Image="{x:Null}" Slice="1,1" TintColor="{Binding CurrentScene.Color}">
                         <controls:ColorizedNineSlice.Style>
                             <Style TargetType="controls:ColorizedNineSlice">
                                 <Setter Property="Visibility" Value="Collapsed" />
