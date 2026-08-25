@@ -67,6 +67,37 @@ public sealed class RepositoryLayoutTests
             .OrderBy(name => name, StringComparer.Ordinal)
             .ToArray();
 
-        Assert.That(names, Is.EqualTo(new[] { "Aerochat", "Aerochat.VisualShell.Tests" }));
+        Assert.That(names, Is.EqualTo(new[] { "Aerochat", "Aerochat.Server", "Aerochat.VisualShell.Tests" }));
+    }
+
+    [Test]
+    public void Solution_contains_client_and_server_projects()
+    {
+        string solution = File.ReadAllText(Path.Combine(Root, "Aerochat.sln"));
+        string[] projectLines = solution.Split('\n')
+            .Where(line => line.StartsWith("Project(", StringComparison.Ordinal))
+            .Where(line => !line.Contains("= \"Solution Items\",", StringComparison.Ordinal))
+            .ToArray();
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(projectLines, Has.Some.Contains("\"Aerochat\\Aerochat.csproj\""));
+            Assert.That(projectLines, Has.Some.Contains("\"Aerochat.Server\\Aerochat.Server.csproj\""));
+            Assert.That(projectLines, Has.Length.EqualTo(3));
+            Assert.That(projectLines, Has.None.Contains("\"Aerotest.csproj\""));
+        });
+    }
+
+    [Test]
+    public void Server_project_has_no_wpf_dependencies()
+    {
+        string project = File.ReadAllText(Path.Combine(Root, "Aerochat.Server", "Aerochat.Server.csproj"));
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(project, Does.Not.Contain("UseWPF"));
+            Assert.That(project, Does.Not.Contain("net8.0-windows"));
+            Assert.That(project, Does.Contain("Microsoft.NET.Sdk.Web"));
+        });
     }
 }

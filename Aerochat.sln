@@ -12,6 +12,8 @@ Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "Solution Items", "Solution 
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Aerochat.VisualShell.Tests", "Aerochat.VisualShell.Tests\Aerochat.VisualShell.Tests.csproj", "{C000E853-2C4F-41D3-8B11-A9305F1A316B}"
 EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Aerochat.Server", "Aerochat.Server\Aerochat.Server.csproj", "{D89DAB8E-8F95-40EA-BCE6-DC9087290FE7}"
+EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
 		Debug|Any CPU = Debug|Any CPU
@@ -46,6 +48,18 @@ Global
 		{C000E853-2C4F-41D3-8B11-A9305F1A316B}.Release|x64.Build.0 = Release|Any CPU
 		{C000E853-2C4F-41D3-8B11-A9305F1A316B}.Release|x86.ActiveCfg = Release|Any CPU
 		{C000E853-2C4F-41D3-8B11-A9305F1A316B}.Release|x86.Build.0 = Release|Any CPU
+		{D89DAB8E-8F95-40EA-BCE6-DC9087290FE7}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{D89DAB8E-8F95-40EA-BCE6-DC9087290FE7}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{D89DAB8E-8F95-40EA-BCE6-DC9087290FE7}.Debug|x64.ActiveCfg = Debug|Any CPU
+		{D89DAB8E-8F95-40EA-BCE6-DC9087290FE7}.Debug|x64.Build.0 = Debug|Any CPU
+		{D89DAB8E-8F95-40EA-BCE6-DC9087290FE7}.Debug|x86.ActiveCfg = Debug|Any CPU
+		{D89DAB8E-8F95-40EA-BCE6-DC9087290FE7}.Debug|x86.Build.0 = Debug|Any CPU
+		{D89DAB8E-8F95-40EA-BCE6-DC9087290FE7}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{D89DAB8E-8F95-40EA-BCE6-DC9087290FE7}.Release|Any CPU.Build.0 = Release|Any CPU
+		{D89DAB8E-8F95-40EA-BCE6-DC9087290FE7}.Release|x64.ActiveCfg = Release|Any CPU
+		{D89DAB8E-8F95-40EA-BCE6-DC9087290FE7}.Release|x64.Build.0 = Release|Any CPU
+		{D89DAB8E-8F95-40EA-BCE6-DC9087290FE7}.Release|x86.ActiveCfg = Release|Any CPU
+		{D89DAB8E-8F95-40EA-BCE6-DC9087290FE7}.Release|x86.Build.0 = Release|Any CPU
 	EndGlobalSection
 	GlobalSection(SolutionProperties) = preSolution
 		HideSolutionNode = FALSE
