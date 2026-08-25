@@ -2,7 +2,7 @@
 
 ## Project status
 
-This repository is a visual-only WPF shell derived from the archived `not-nullptr/Aerochat` project. It preserves the Windows Live Messenger 2009 visual language and assets, but does not connect to Discord or any other backend.
+This repository contains a visual-only WPF client plus a planned/self-hostable server component, derived from the archived `not-nullptr/Aerochat` project. It preserves the Windows Live Messenger 2009 visual language and assets.
 
 - Primary working branch: `visual-shell`
 - Local project path: `C:/Users/insxn/Documents/chataero.v2`
@@ -16,23 +16,25 @@ This repository is a visual-only WPF shell derived from the archived `not-nullpt
 
 `README.md` is inherited upstream documentation and still describes the original Discord client. This file is the current development guide.
 
-## Non-negotiable product boundary
+## Layering contract (supersedes the former no-networking boundary)
 
-This is a presentation shell, not a Discord client. Do not reintroduce:
+1. `Aerochat.Presentation` and `Aerochat/Controls` remain PURE: no I/O, no sockets,
+   no process launch, no persistence, no P/Invoke. Boundary tests keep scanning these
+   trees for forbidden tokens. Inert controls stay visibly inert unless wired through
+   Aerochat.Connectivity.
+2. `Aerochat.Connectivity` (new namespace) owns ALL client networking: transports,
+   token cache, realtime protocol, RTC engine. Only this namespace may contain
+   socket/HTTP/data-protection types.
+3. `Aerochat.Server` (new project) is the self-hostable backend. Secrets and deploy
+   config never enter git.
+4. Offline-first: DemoData remains the default mode. With no server configured the
+   app behaves exactly like the visual shell does today.
+5. Still forbidden globally: telemetry, update checkers, analytics, crash uploaders,
+   and any behavior not explicitly routed through layers 2 or 3.
 
-- Discord/DSharpPlus or any network client
-- authentication, tokens, MFA, OAuth, WebView login, or credential storage
-- voice sockets, audio networking, or remote presence updates
-- HTTP requests, WebSockets, upload/download behavior, or update checks
-- settings persistence, registry/config writes, session files, or durable user state
-- subprocesses, browser launches, external URL launches, installer/update launchers
-- named-pipe IPC, single-instance protocol handling, tray integration, taskbar presence integration
-- Win32/P/Invoke/DWM/native menu implementations
-- backend-only generated protobuf, service, hoarder, or legacy ViewModel layers
-
-All runtime state is process-local and resets when the application exits. Controls that used to have external behavior must either mutate local presentation state or be visibly inert. Never make an inert visual control silently perform an external side effect.
-
-Preserve the existing WLM 2009 visual design. Do not modernize the layout, replace the art direction, flatten the titlebars, remove the scene system, or substitute generic controls when the existing visual control can be retained.
+Preserve the WLM 2009 visual design mandate: do not modernize the layout, replace
+the art direction, flatten the titlebars, remove the scene system, or substitute
+generic controls when the existing visual control can be retained.
 
 ## Repository map
 
@@ -45,6 +47,20 @@ Preserve the existing WLM 2009 visual design. Do not modernize the layout, repla
   - It still contains a few no-op compatibility shims for legacy windows. They are not active backend behavior and are intended to disappear as the remaining legacy surfaces are cleaned.
 - `Aerochat/Aerochat.csproj`
   - WPF x64 executable project. Resources are included with wildcards from `Resources`, `Scenes`, `Ads`, and `Icons`.
+
+### Connectivity (Phase 1+)
+
+- `Aerochat/Connectivity/` owns ALL client networking: transports, OAuth token
+  cache, realtime gateway protocol, and the RTC media engine.
+- Only this namespace may contain socket/HTTP/data-protection types. Presentation,
+  Controls, and Windows code-behind reach connectivity exclusively through
+  interfaces injected at the composition root (`App.xaml.cs`).
+
+### Server (Phase 0+)
+
+- `Aerochat.Server/` is an ASP.NET Core backend: REST history, WebSocket gateway,
+  call signaling relay, GIF proxy. Joins `Aerochat.sln`; tests live beside it.
+- Secrets, provider keys, and deployment configuration never enter the repository.
 
 ### Presentation state
 
@@ -169,6 +185,10 @@ dotnet test Aerochat.sln -c Debug -p:Platform=x64 --no-restore
 
 # Full solution build
 dotnet build Aerochat.sln -c Debug -p:Platform=x64 --no-restore
+
+# Server smoke (after Phase 0 lands)
+dotnet run --project Aerochat.Server             # starts API on http://localhost:5080
+curl -s http://localhost:5080/health             # expect {"status":"ok"}
 
 # Focused visual-shell project tests
 dotnet test Aerochat.VisualShell.Tests/Aerochat.VisualShell.Tests.csproj \
