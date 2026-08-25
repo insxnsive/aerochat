@@ -6,10 +6,12 @@ public sealed class GatewayConnection : IGatewaySink, IDisposable
 
     private readonly object _gate = new();
     private readonly Queue<string> _frames = [];
+    private readonly SemaphoreSlim _frameSignal = new(0);
     private readonly CancellationTokenSource _disconnectedSource = new();
     private readonly int _queueCapacity;
     private readonly int _maxFrameBytes;
     private bool _completed;
+    private GatewayAbortReason? _terminalAbortReason;
     private GatewayAbortReason? _enqueueFailureReason;
 
     public GatewayConnection(string connectionId, Guid userId, GatewayOptions options)
@@ -60,6 +62,17 @@ public sealed class GatewayConnection : IGatewaySink, IDisposable
         }
     }
 
+    public GatewayAbortReason? TerminalAbortReason
+    {
+        get
+        {
+            lock (_gate)
+            {
+                return _terminalAbortReason;
+            }
+        }
+    }
+
     public bool TryEnqueue(GatewayEnvelope envelope)
     {
         ArgumentNullException.ThrowIfNull(envelope);
@@ -104,7 +117,30 @@ public sealed class GatewayConnection : IGatewaySink, IDisposable
 
             _frames.Enqueue(frame);
             _enqueueFailureReason = null;
-            return true;
+        }
+
+        _frameSignal.Release();
+        return true;
+    }
+
+    public async Task<string?> WaitForFrameAsync(CancellationToken cancellationToken = default)
+    {
+        while (true)
+        {
+            lock (_gate)
+            {
+                if (_frames.TryDequeue(out string? frame))
+                {
+                    return frame;
+                }
+
+                if (_completed)
+                {
+                    return null;
+                }
+            }
+
+            await _frameSignal.WaitAsync(cancellationToken).ConfigureAwait(false);
         }
     }
 
@@ -122,22 +158,24 @@ public sealed class GatewayConnection : IGatewaySink, IDisposable
         }
     }
 
-    public void Abort(GatewayAbortReason reason) => Complete();
-
-    public void Complete()
+    public void Abort(GatewayAbortReason reason)
     {
         bool cancel;
         lock (_gate)
         {
             cancel = !_completed;
             _completed = true;
+            _terminalAbortReason ??= reason;
         }
 
         if (cancel)
         {
             _disconnectedSource.Cancel();
+            _frameSignal.Release();
         }
     }
+
+    public void Complete() => Abort(GatewayAbortReason.Closed);
 
     public void Dispose()
     {

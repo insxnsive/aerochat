@@ -6,6 +6,9 @@ public enum GatewayAbortReason
     Replaced,
     Overloaded,
     FrameTooLarge,
+    PolicyViolation,
+    ServerRestarted,
+    Unexpected,
     Closed
 }
 

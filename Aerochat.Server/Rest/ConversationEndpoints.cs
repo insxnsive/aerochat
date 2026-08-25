@@ -150,80 +150,14 @@ public static class ConversationEndpoints
         return Results.Ok(new MessagePageDto(rows, nextBefore));
     }
 
-    private static async Task<IResult> SendMessageAsync(
+    private static Task<IResult> SendMessageAsync(
         string conversationId,
         HttpContext httpContext,
-        ChatDb db,
-        IExternalUserStore externalUsers,
-        SessionService sessions,
-        TimeProvider clock,
+        ConversationMessageService messages,
         SendMessageRequest? request,
         CancellationToken cancellationToken)
     {
-        ExternalUser? user = await ConversationAuth.TryGetCurrentUserAsync(
-            httpContext,
-            sessions,
-            externalUsers,
-            cancellationToken);
-        if (user is null)
-        {
-            return ConversationAuth.Unauthorized(httpContext);
-        }
-
-        if (!Guid.TryParse(conversationId, out Guid conversationGuid)
-            || request is null
-            || string.IsNullOrWhiteSpace(request.Body)
-            || request.Kind is null
-            || !MessageKinds.Contains(request.Kind))
-        {
-            return ConversationAuth.InvalidRequest();
-        }
-
-        bool exists = await db.Conversations
-            .AsNoTracking()
-            .AnyAsync(conversation => conversation.Id == conversationGuid, cancellationToken);
-        if (!exists)
-        {
-            return ConversationAuth.NotFound();
-        }
-
-        bool isMember = await db.Participants
-            .AsNoTracking()
-            .AnyAsync(
-                participant => participant.ConversationId == conversationGuid && participant.UserId == user.Id,
-                cancellationToken);
-        if (!isMember)
-        {
-            return ConversationAuth.Forbidden();
-        }
-
-        MessageEntity message = new()
-        {
-            Id = Guid.NewGuid(),
-            ConversationId = conversationGuid,
-            AuthorId = user.Id,
-            Body = request.Body,
-            Kind = request.Kind,
-            RefPayloadJson = null,
-            CreatedAt = clock.GetUtcNow().ToUniversalTime(),
-            EditedAt = null,
-            DeletedAt = null
-        };
-        db.Messages.Add(message);
-        await db.SaveChangesAsync(cancellationToken);
-
-        return Results.Created(
-            $"/conversations/{conversationGuid}/messages/{message.Id}",
-            new MessageDto(
-                message.Id,
-                message.ConversationId,
-                message.AuthorId,
-                message.Body,
-                message.Kind,
-                message.RefPayloadJson,
-                message.CreatedAt,
-                message.EditedAt,
-                message.DeletedAt));
+        return messages.SendAsync(httpContext, conversationId, request, cancellationToken);
     }
 
     private static bool TryParseLimit(string? value, out int limit)
@@ -240,61 +174,5 @@ public static class ConversationEndpoints
                 System.Globalization.CultureInfo.InvariantCulture,
                 out limit)
             && limit > 0;
-    }
-}
-
-internal static class ConversationAuth
-{
-    public static async Task<ExternalUser?> TryGetCurrentUserAsync(
-        HttpContext httpContext,
-        SessionService sessions,
-        IExternalUserStore externalUsers,
-        CancellationToken cancellationToken)
-    {
-        string authorization = httpContext.Request.Headers.Authorization.ToString();
-        if (!authorization.StartsWith("Bearer ", StringComparison.OrdinalIgnoreCase))
-        {
-            return null;
-        }
-
-        string token = authorization["Bearer ".Length..].Trim();
-        if (token.Length == 0)
-        {
-            return null;
-        }
-
-        SessionClaims? claims = sessions.Validate(token);
-        if (claims is null)
-        {
-            return null;
-        }
-
-        return await externalUsers.FindAsync(
-            claims.Provider,
-            claims.ProviderUserId,
-            cancellationToken);
-    }
-
-    public static IResult Unauthorized(HttpContext httpContext)
-    {
-        httpContext.Response.Headers.WWWAuthenticate = "Bearer";
-        return Results.Json(
-            new ErrorDto("unauthorized"),
-            statusCode: StatusCodes.Status401Unauthorized);
-    }
-
-    public static IResult Forbidden()
-    {
-        return Results.Json(new ErrorDto("forbidden"), statusCode: StatusCodes.Status403Forbidden);
-    }
-
-    public static IResult NotFound()
-    {
-        return Results.Json(new ErrorDto("not_found"), statusCode: StatusCodes.Status404NotFound);
-    }
-
-    public static IResult InvalidRequest()
-    {
-        return Results.Json(new ErrorDto("invalid_request"), statusCode: StatusCodes.Status400BadRequest);
     }
 }

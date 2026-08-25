@@ -96,4 +96,56 @@ public sealed class GatewayConnectionTests
             Assert.That(json, Does.Not.Contain("original"));
         });
     }
+
+    [Test]
+    public async Task WaitForFrameAsync_blocks_until_enqueue_and_returns_fifo_frame()
+    {
+        Guid userId = Guid.NewGuid();
+        using var connection = new GatewayConnection("connection", userId, new GatewayOptions());
+        GatewayEnvelope envelope = GatewayEnvelope.Control(
+            GatewayEventType.Ready,
+            new GatewayReadyData(userId, "hub", null, null));
+
+        Task<string?> waiter = connection.WaitForFrameAsync();
+        Assert.That(waiter.Wait(TimeSpan.FromMilliseconds(100)), Is.False);
+
+        Assert.That(connection.TryEnqueue(envelope), Is.True);
+        string? frame = await waiter;
+
+        Assert.That(frame, Does.Contain("gateway.ready"));
+    }
+
+    [Test]
+    public async Task Complete_wakes_waiter_and_exposes_terminal_reason()
+    {
+        using var connection = new GatewayConnection("connection", Guid.NewGuid(), new GatewayOptions());
+        Task<string?> waiter = connection.WaitForFrameAsync();
+
+        connection.Complete();
+
+        string? frame = await waiter;
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(frame, Is.Null);
+            Assert.That(connection.TerminalAbortReason, Is.EqualTo(GatewayAbortReason.Closed));
+        });
+    }
+
+    [Test]
+    public async Task Abort_wakes_waiter_and_exposes_abort_reason()
+    {
+        using var connection = new GatewayConnection("connection", Guid.NewGuid(), new GatewayOptions());
+        Task<string?> waiter = connection.WaitForFrameAsync();
+
+        connection.Abort(GatewayAbortReason.FrameTooLarge);
+
+        string? frame = await waiter;
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(frame, Is.Null);
+            Assert.That(connection.TerminalAbortReason, Is.EqualTo(GatewayAbortReason.FrameTooLarge));
+        });
+    }
 }

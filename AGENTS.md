@@ -64,6 +64,34 @@ generic controls when the existing visual control can be retained.
   call signaling relay, GIF proxy. Joins `Aerochat.sln`; tests live beside it.
 - Secrets, provider keys, and deployment configuration never enter the repository.
 
+#### Server gateway (Task 8, implemented)
+
+- `Gateway/GatewayHub.cs` — singleton connection registry and event fanout. Publishes
+  assign monotonic sequences (`instanceId:sequence` cursors) under a lock, queue frames
+  per sink, and drain outside the hot path. Replaces are dual-delivery: the old sink
+  stays registered until the new registration fully succeeds, then the old is aborted
+  with `Replaced`.
+- `Gateway/GatewayConnection.cs` — bounded per-connection frame queue implementing
+  `IGatewaySink`. `WaitForFrameAsync` blocks until a frame, `Complete`, or `Abort`;
+  `TerminalAbortReason` exposes why the connection ended (`Closed`, `PolicyViolation`,
+  `Overloaded`, ...).
+- `Rest/GatewayEndpoints.cs` — `GET /ws?token=&lastEventId=`. Auth via exact query
+  token through `ConversationAuth`; missing/invalid/no-local-user returns HTTP 401 +
+  `WWW-Authenticate: Bearer`, authenticated non-upgrade GET returns 400. Push-only:
+  inbound text/binary closes with policy violation (1008). Close codes: invalid/future
+  cursor 1008, expired resync 1000 after ready+resync_required controls,
+  server-restarted resync 1012, overload 1013, frame too large 1009, unexpected 1011.
+- `Rest/ConversationMessageService.cs` — extracted send persistence + authz shared by
+  REST. Persists exactly once; only after `SaveChanges` succeeds does it load
+  participant user IDs server-side and publish one `message.created` to the hub.
+  Audiences are never accepted from clients. Failed validation/authz/DB publishes
+  nothing.
+- `ServerComposition.cs` — shared composition root used by `Program.cs` and test
+  fixtures hosting the real pipeline on loopback ports.
+- Wire format: `{"t":"<event>","eventId":"<instance>:<seq>|null","d":{...}}`, camelCase
+  payloads. Control events: `gateway.ready`, `gateway.resync_required`
+  (`reason`: `cursor_too_old` | `server_restarted`).
+
 ### Presentation state
 
 Everything new should depend on `Aerochat.Presentation`, not legacy service/model namespaces.
@@ -171,6 +199,20 @@ Important test files:
   - Retained secondary-window route construction.
 - `WpfTestHost.cs`
   - Durable STA dispatcher for unit-style WPF tests. It intentionally avoids creating an `Application` because doing so caused the NUnit process to hang. Real visual startup is tested separately by launching the executable.
+
+Server-side test files:
+
+- `Aerochat.Server.Tests/GatewayWebSocketIntegrationTests.cs`
+  - Real-Kestrel loopback WebSockets (127.0.0.1:0): handshake auth (401/400),
+    push-only policy close with hub cleanup, REST→gateway exactly-once persistence and
+    participant-scoped fanout, reconnect replay filtering, expired-cursor resync
+    (1000), previous-instance cursor resync (1012).
+- `Aerochat.Server.Tests/GatewayHandshakeTests.cs`
+  - TestServer-level handshake matrix: missing/blank/invalid token → 401 Bearer,
+    valid local token without upgrade → 400.
+- `Aerochat.Server.Tests/LoopbackServerFixture.cs`
+  - Boots the real pipeline (Kestrel + WebSockets + isolated in-memory SQLite) via
+    `ServerComposition` on an OS-chosen numeric loopback port.
 
 ## Exact verification commands
 
