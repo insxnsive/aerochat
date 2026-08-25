@@ -62,6 +62,14 @@ public sealed class OAuthAuthClient : IAuthClient
 
     public bool IsAvailable => true;
 
+    public static OAuthAuthClient Create(Uri serverUri) =>
+        new(
+            new HttpClient(),
+            serverUri,
+            new DpapiTokenCache(),
+            new ShellBrowserLauncher(),
+            () => new LoopbackCallbackListener());
+
     public async Task<AuthSession> SignInAsync(
         string provider,
         bool rememberSession = true,

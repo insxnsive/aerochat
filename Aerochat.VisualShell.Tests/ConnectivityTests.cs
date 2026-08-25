@@ -11,6 +11,19 @@ namespace Aerochat.VisualShell.Tests;
 public sealed class ConnectivityTests
 {
     [Test]
+    public async Task Null_transport_is_an_inert_async_transport()
+    {
+        IChatTransport transport = new NullTransport();
+
+        await transport.ConnectAsync(new Uri("https://server.example/"), "token");
+        await transport.SendAsync("conversation", "hello");
+        await transport.SetTypingAsync("conversation");
+        await transport.DisposeAsync();
+
+        Assert.That(transport, Is.InstanceOf<NullTransport>());
+    }
+
+    [Test]
     public async Task Dpapi_token_cache_roundtrips_and_clears()
     {
         string directory = Path.Combine(Path.GetTempPath(), "AerochatTests", Guid.NewGuid().ToString("N"));
