@@ -111,6 +111,22 @@ generic controls when the existing visual control can be retained.
   only in the net10 line; VP8 comes from SIPSorceryMedia.Encoders (not the
   net10-only SIPSorcery.VP8). Client RTC tasks must include the TFM-raise smoke.
 
+#### Client connectivity (Tasks 5 & 9, implemented)
+
+- `Connectivity/IChatTransport.cs` — transport seam: `MessageCreated` /
+  `PresenceUpdated` events plus connect/send/typing. `NullTransport` is the
+  inert default (DemoData mode stays default); `GatewayClient` is constructed
+  only when a server URL is configured (`AEROCHAT_SERVER_URL`).
+- `Connectivity/GatewayClient.cs` — ClientWebSocket client for `GET /ws`.
+  Pure frame parser (`GatewayProtocol.cs`) separate from socket code; tracks
+  latest `eventId` and resumes with `lastEventId` on reconnect. Send/typing
+  throw `NotSupportedException`: the server gateway is push-only by design
+  (documented deviation from the original interface sketch).
+- `Connectivity/ExponentialBackoff.cs` — pure capped curve (min(30s, 1s*2^n))
+  with injectable jitter; fully unit-tested, no socket types.
+- `Connectivity/PresentationAdapter.cs` — maps transport events onto existing
+  `PresentationState` objects on the dispatcher; never invents members.
+
 ### Presentation state
 
 Everything new should depend on `Aerochat.Presentation`, not legacy service/model namespaces.
