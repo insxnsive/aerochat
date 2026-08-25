@@ -1,5 +1,7 @@
 using System.IO;
 using System.Windows;
+using System.Windows.Controls;
+using Aerochat.Connectivity.Auth;
 using Aerochat.Presentation;
 using Aerochat.Windows;
 
@@ -44,19 +46,81 @@ public sealed class WindowNavigatorTests
     }
 
     [Test]
-    public void Login_uses_fixed_preview_text_and_does_not_accept_credentials()
+    public void Login_with_null_auth_client_disables_provider_buttons_and_reports_unconfigured_server()
     {
-        string source = File.ReadAllText(Path.Combine(RepositoryRoot.Path, "Aerochat", "Windows", "Login.xaml.cs"))
-            + File.ReadAllText(Path.Combine(RepositoryRoot.Path, "Aerochat", "Windows", "Login.xaml"));
+        WpfTestHost.Run(() =>
+        {
+            PresentationState state = DemoData.Create();
+            var navigator = new WindowNavigator(state);
+            var login = new Login(state, navigator, new NullAuthClient());
+            login.Show();
+
+            Assert.Multiple(() =>
+            {
+                Assert.That(((Button)login.FindName("GoogleSignIn")).IsEnabled, Is.False);
+                Assert.That(((Button)login.FindName("GitHubSignIn")).IsEnabled, Is.False);
+                Assert.That(((Button)login.FindName("DiscordSignIn")).IsEnabled, Is.False);
+                Assert.That(login.ViewModel.StatusMessage, Is.EqualTo("Server not configured."));
+            });
+            login.Close();
+        });
+    }
+
+    [Test]
+    public void Login_two_argument_constructor_still_builds()
+    {
+        WpfTestHost.Run(() =>
+        {
+            PresentationState state = DemoData.Create();
+            var login = new Login(state, new WindowNavigator(state));
+            Assert.That(login, Is.Not.Null);
+            login.Close();
+        });
+    }
+
+    [Test]
+    public void Login_xaml_uses_provider_buttons_without_legacy_credential_controls()
+    {
+        string xaml = File.ReadAllText(Path.Combine(RepositoryRoot.Path, "Aerochat", "Windows", "Login.xaml"));
         Assert.Multiple(() =>
         {
-            Assert.That(source, Does.Contain("Visual shell preview"));
-            Assert.That(source, Does.Not.Contain("TransformTokenForConsumption"));
-            Assert.That(source, Does.Not.Contain("BeginLogin"));
-            Assert.That(source, Does.Not.Contain("PasswordBox"));
-            Assert.That(source, Does.Not.Contain(".Password"));
-            Assert.That(source, Does.Not.Contain("WebView"));
+            Assert.That(xaml, Does.Contain("GoogleSignIn"));
+            Assert.That(xaml, Does.Contain("GitHubSignIn"));
+            Assert.That(xaml, Does.Contain("DiscordSignIn"));
+            Assert.That(xaml, Does.Not.Contain("Password"));
+            Assert.That(xaml, Does.Not.Contain("MFATextBox"));
+            Assert.That(xaml, Does.Not.Contain("OnClickLoginWithPassword"));
         });
+    }
+
+    [Test]
+    public void Closing_login_cancels_active_authentication()
+    {
+        WpfTestHost.Run(() =>
+        {
+            PresentationState state = DemoData.Create();
+            var navigator = new WindowNavigator(state);
+            var auth = new CancellationAwareAuthClient();
+            var login = new Login(state, navigator, auth);
+            login.Show();
+
+            ((Button)login.FindName("GoogleSignIn")).RaiseEvent(
+                new RoutedEventArgs(Button.ClickEvent));
+            Assert.That(auth.Started, Is.True);
+
+            login.Close();
+            Assert.That(auth.Token.IsCancellationRequested, Is.True);
+        });
+    }
+
+    [Test]
+    public void Login_handles_only_expected_auth_failures()
+    {
+        string codeBehind = File.ReadAllText(
+            Path.Combine(RepositoryRoot.Path, "Aerochat", "Windows", "Login.xaml.cs"));
+
+        Assert.That(codeBehind, Does.Not.Contain("catch (Exception)"));
+        Assert.That(codeBehind, Does.Contain("catch (AuthException)"));
     }
 
     [Test]
@@ -75,5 +139,23 @@ public sealed class WindowNavigatorTests
             return forbidden.Where(text.Contains).Select(token => $"{file}: {token}");
         }).ToArray();
         Assert.That(offenders, Is.Empty, string.Join(Environment.NewLine, offenders));
+    }
+
+    private sealed class CancellationAwareAuthClient : IAuthClient
+    {
+        public bool IsAvailable => true;
+        public bool Started { get; private set; }
+        public CancellationToken Token { get; private set; }
+
+        public async Task<AuthSession> SignInAsync(
+            string provider,
+            bool rememberSession = true,
+            CancellationToken cancellationToken = default)
+        {
+            Started = true;
+            Token = cancellationToken;
+            await Task.Delay(Timeout.InfiniteTimeSpan, cancellationToken);
+            throw new InvalidOperationException("Unreachable.");
+        }
     }
 }

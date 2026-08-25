@@ -24,5 +24,6 @@
   </ItemGroup>
   <ItemGroup>
     <PackageReference Include="XamlAnimatedGif" Version="2.3.0" />
+    <PackageReference Include="System.Security.Cryptography.ProtectedData" Version="8.0.0" />
   </ItemGroup>
 </Project>

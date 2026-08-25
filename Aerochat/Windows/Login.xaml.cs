@@ -1,33 +1,82 @@
-﻿using System.ComponentModel;
+using System.ComponentModel;
 using System.Windows;
 using System.Windows.Controls;
-using System.Windows.Input;
 using System.Windows.Navigation;
+using Aerochat.Connectivity.Auth;
 using Aerochat.Presentation;
 
 namespace Aerochat.Windows;
 
 public partial class Login : Window
 {
-    public const string HELP_LOGON_URI = "";
-
-    private readonly PresentationState _state;
     private readonly WindowNavigator _navigator;
+    private readonly IAuthClient _authClient;
+    private CancellationTokenSource? _signInCancellation;
+    private bool _isClosing;
+
     public LoginPresentation ViewModel { get; }
 
     public Login(PresentationState state, WindowNavigator navigator)
+        : this(state, navigator, new NullAuthClient())
     {
-        _state = state ?? throw new ArgumentNullException(nameof(state));
-        _navigator = navigator ?? throw new ArgumentNullException(nameof(navigator));
-        ViewModel = new LoginPresentation(state.CurrentScene);
-        InitializeComponent();
-        DataContext = ViewModel;
     }
 
-    private void SignIn_Click(object sender, RoutedEventArgs e)
+    public Login(PresentationState state, WindowNavigator navigator, IAuthClient authClient)
     {
-        Close();
-        _navigator.Show(ShellRoute.Home);
+        ArgumentNullException.ThrowIfNull(state);
+        _navigator = navigator ?? throw new ArgumentNullException(nameof(navigator));
+        _authClient = authClient ?? throw new ArgumentNullException(nameof(authClient));
+        ViewModel = new LoginPresentation(state.CurrentScene, _authClient.IsAvailable);
+        DataContext = ViewModel;
+        InitializeComponent();
+    }
+
+    private async void ProviderSignIn_Click(object sender, RoutedEventArgs e)
+    {
+        if (sender is not Button { Tag: string provider })
+            return;
+
+        ViewModel.IsSigningIn = true;
+        ViewModel.StatusMessage = "Opening sign-in...";
+        using var operation = new CancellationTokenSource();
+        _signInCancellation = operation;
+        try
+        {
+            await _authClient.SignInAsync(
+                provider,
+                rememberSession: RememberMe.IsChecked == true,
+                cancellationToken: operation.Token);
+            if (_isClosing)
+                return;
+
+            _signInCancellation = null;
+            Close();
+            _navigator.Show(ShellRoute.Home);
+        }
+        catch (OperationCanceledException)
+        {
+            if (!_isClosing)
+                ViewModel.StatusMessage = "Sign-in cancelled.";
+        }
+        catch (AuthException)
+        {
+            if (!_isClosing)
+                ViewModel.StatusMessage = "Sign-in could not be completed. Please try again.";
+        }
+        finally
+        {
+            if (ReferenceEquals(_signInCancellation, operation))
+                _signInCancellation = null;
+            if (!_isClosing)
+                ViewModel.IsSigningIn = false;
+        }
+    }
+
+    protected override void OnClosing(CancelEventArgs e)
+    {
+        _isClosing = true;
+        _signInCancellation?.Cancel();
+        base.OnClosing(e);
     }
 
     private void Button_Click(object sender, RoutedEventArgs e)
@@ -41,18 +90,63 @@ public partial class Login : Window
     private void Busy_Click(object sender, RoutedEventArgs e) => ViewModel.LoginStatus = "Busy";
     private void Away_Click(object sender, RoutedEventArgs e) => ViewModel.LoginStatus = "Away";
     private void AppearsOffline_Click(object sender, RoutedEventArgs e) => ViewModel.LoginStatus = "Appear offline";
-    private void OnClickLoginWithPassword(object sender, RoutedEventArgs e) { }
     private void Hyperlink_RequestNavigate(object sender, RequestNavigateEventArgs e) => e.Handled = true;
-    private void PART_GetHelpLoggingInHyperlink_Click(object sender, RequestNavigateEventArgs e) => e.Handled = true;
-    private void OnClickResetPasswordLink(object sender, RequestNavigateEventArgs e) => e.Handled = true;
 }
 
 public sealed class LoginPresentation : ObservableObject
 {
     private string _loginStatus = "Available";
-    public LoginPresentation(ScenePresentation scene) => Scene = scene;
+    private bool _isAuthenticationAvailable;
+    private bool _isSigningIn;
+    private string _statusMessage = string.Empty;
+
+    public LoginPresentation(ScenePresentation scene, bool isAuthenticationAvailable)
+    {
+        Scene = scene;
+        IsAuthenticationAvailable = isAuthenticationAvailable;
+        StatusMessage = isAuthenticationAvailable
+            ? "Choose a provider to continue."
+            : "Server not configured.";
+    }
+
     public ScenePresentation Scene { get; }
-    public string LoginStatus { get => _loginStatus; set => SetProperty(ref _loginStatus, value); }
-    public bool NotLoggingIn => true;
-    public bool EditBoxHasContent => true;
+
+    public string LoginStatus
+    {
+        get => _loginStatus;
+        set => SetProperty(ref _loginStatus, value);
+    }
+
+    public bool IsAuthenticationAvailable
+    {
+        get => _isAuthenticationAvailable;
+        private set
+        {
+            if (SetProperty(ref _isAuthenticationAvailable, value))
+                Notify(nameof(CanSignIn));
+        }
+    }
+
+    public bool IsSigningIn
+    {
+        get => _isSigningIn;
+        set
+        {
+            if (SetProperty(ref _isSigningIn, value))
+            {
+                Notify(nameof(CanSignIn));
+                Notify(nameof(NotLoggingIn));
+            }
+        }
+    }
+
+    public bool CanSignIn => IsAuthenticationAvailable && !IsSigningIn;
+
+    public string StatusMessage
+    {
+        get => _statusMessage;
+        set => SetProperty(ref _statusMessage, value);
+    }
+
+    public bool NotLoggingIn => !IsSigningIn;
 }

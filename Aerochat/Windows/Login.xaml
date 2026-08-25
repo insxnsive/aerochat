@@ -39,38 +39,20 @@
                     </Grid>
                     <TextBlock Margin="0,6,0,0" Text="{loc:Loc SignIn}" Foreground="#355a88" FontSize="19" HorizontalAlignment="Center" VerticalAlignment="Top" />
                     <TextBlock Foreground="#333333" Margin="0,6,0,0" HorizontalAlignment="Center" VerticalAlignment="Top" TextWrapping="Wrap">
-                Sign in with your Discord account. Don't have one? <Hyperlink RequestNavigate="Hyperlink_RequestNavigate" NavigateUri="https://discord.com/login"><Run Text="{loc:Loc SignUp}" /></Hyperlink>
+                        Sign in to Aerochat through your configured server.
                     </TextBlock>
                     <Grid MaxWidth="238" Margin="0,20,0,0">
                         <controls:NineSlice Image="/Aerochat;component/Resources/Login/Frame.png" Slice="4,4" />
                         <StackPanel Margin="6">
-                            <Grid Margin="0,0,0,8">
-                                <TextBox Text="Visual shell preview" IsReadOnly="True" Foreground="#333333" x:Name="Password" Height="24" />
-                                <TextBlock x:Name="PasswordPlaceholder" Foreground="#6d6d6d" FontStyle="Italic" Text="{loc:Loc EnterToken}" IsHitTestVisible="False" VerticalAlignment="Center" Margin="5,0,5,2" />
-                            </Grid>
-                            <TextBlock Margin="0,-2,0,8">
-                                <Hyperlink Click="OnClickLoginWithPassword" FontStyle="Italic"><Run Text="{loc:Loc OrLoginViaPassword}" /></Hyperlink>
+                            <TextBlock Foreground="#333333" TextWrapping="Wrap" Margin="0,0,0,8">
+                                Choose a provider to continue. Your browser will open only after you choose a button.
                             </TextBlock>
-                            <TextBlock Margin="0,-2,0,8">
-                                <Hyperlink x:Name="PART_GetHelpLoggingInHyperlink" RequestNavigate="PART_GetHelpLoggingInHyperlink_Click" NavigateUri="FAKE URI THIS IS IN CODEBEHIND"><Run Text="{loc:Loc GetHelpLoggingIn}" /></Hyperlink>
-                            </TextBlock>
-                            <Grid x:Name="MFATextBoxParent" Visibility="Collapsed" Margin="0,0,0,10">
-                                <TextBox IsEnabled="{Binding NotLoggingIn}" Foreground="#333333" x:Name="MFATextBox" Height="24" />
-                                <TextBlock Foreground="#6d6d6d" FontStyle="Italic" Text="{loc:Loc MfaCode}" IsHitTestVisible="False" VerticalAlignment="Center" Margin="5,0,5,2">
-                                    <TextBlock.Style>
-                                        <Style TargetType="TextBlock">
-                                            <Setter Property="Visibility" Value="Hidden" />
-                                            <Style.Triggers>
-                                                <DataTrigger Binding="{Binding ElementName=MFATextBox, Path=Text}" Value="">
-                                                    <Setter Property="Visibility" Value="Visible" />
-                                                </DataTrigger>
-                                            </Style.Triggers>
-                                        </Style>
-                                    </TextBlock.Style>
-                                </TextBlock>
-                            </Grid>
-                            <StackPanel Orientation="Horizontal">
-                                <TextBlock IsEnabled="{Binding NotLoggingIn}" Margin="2,0,0,0" VerticalAlignment="Center" Text="{loc:Loc SignInAs}" Foreground="#333" />
+                            <TextBlock x:Name="AuthStatusText" Foreground="#6d6d6d" Text="{Binding StatusMessage}" TextWrapping="Wrap" Margin="0,0,0,8" />
+                            <Button x:Name="GoogleSignIn" Tag="google" Click="ProviderSignIn_Click" Content="Google" Height="24" Margin="0,0,0,4" IsEnabled="{Binding CanSignIn}" />
+                            <Button x:Name="GitHubSignIn" Tag="github" Click="ProviderSignIn_Click" Content="GitHub" Height="24" Margin="0,0,0,4" IsEnabled="{Binding CanSignIn}" />
+                            <Button x:Name="DiscordSignIn" Tag="discord" Click="ProviderSignIn_Click" Content="Discord" Height="24" IsEnabled="{Binding CanSignIn}" />
+                            <StackPanel Orientation="Horizontal" Margin="2,14,0,0">
+                                <TextBlock Margin="2,0,0,0" VerticalAlignment="Center" Text="{loc:Loc SignInAs}" Foreground="#333" />
                                 <Button Click="Button_Click" Margin="2,0,0,0" ContextMenuService.Placement="Bottom" Style="{StaticResource TransparentStyle}">
                                     <Grid>
                                         <controls:NineSlice Slice="4,4">
@@ -118,24 +100,16 @@
                                     <Button.ContextMenu>
                                         <ContextMenu x:Name="Dropdown" Placement="Bottom">
                                             <MenuItem Header="{loc:Loc StatusAvailable}" x:Name="Available" Click="Available_Click">
-                                                <MenuItem.Icon>
-                                                    <Image Width="16" Source="/Aerochat;component/Resources/Frames/XSFrameActive.png" />
-                                                </MenuItem.Icon>
+                                                <MenuItem.Icon><Image Width="16" Source="/Aerochat;component/Resources/Frames/XSFrameActive.png" /></MenuItem.Icon>
                                             </MenuItem>
                                             <MenuItem Header="{loc:Loc StatusBusy}" x:Name="Busy" Click="Busy_Click">
-                                                <MenuItem.Icon>
-                                                    <Image Width="16" Source="/Aerochat;component/Resources/Frames/XSFrameDnd.png" />
-                                                </MenuItem.Icon>
+                                                <MenuItem.Icon><Image Width="16" Source="/Aerochat;component/Resources/Frames/XSFrameDnd.png" /></MenuItem.Icon>
                                             </MenuItem>
                                             <MenuItem Header="{loc:Loc StatusAway}" x:Name="Away" Click="Away_Click">
-                                                <MenuItem.Icon>
-                                                    <Image Width="16" Source="/Aerochat;component/Resources/Frames/XSFrameIdle.png" />
-                                                </MenuItem.Icon>
+                                                <MenuItem.Icon><Image Width="16" Source="/Aerochat;component/Resources/Frames/XSFrameIdle.png" /></MenuItem.Icon>
                                             </MenuItem>
                                             <MenuItem Header="{loc:Loc StatusAppearOffline}" x:Name="AppearsOffline" Click="AppearsOffline_Click">
-                                                <MenuItem.Icon>
-                                                    <Image Width="16" Source="/Aerochat;component/Resources/Frames/XSFrameOffline.png" />
-                                                </MenuItem.Icon>
+                                                <MenuItem.Icon><Image Width="16" Source="/Aerochat;component/Resources/Frames/XSFrameOffline.png" /></MenuItem.Icon>
                                             </MenuItem>
                                         </ContextMenu>
                                     </Button.ContextMenu>
@@ -145,28 +119,21 @@
                                 <CheckBox x:Name="RememberMe" Margin="0,0,0,11" IsEnabled="{Binding NotLoggingIn}" IsChecked="True">
                                     <TextBlock Foreground="#333" Text="{loc:Loc RememberMe}" />
                                 </CheckBox>
-                                <CheckBox Margin="0,0,0,14" IsEnabled="False">
-                                    <TextBlock Foreground="#333" Text="{loc:Loc RememberMyPassword}" />
-                                </CheckBox>
                                 <CheckBox IsEnabled="False">
                                     <TextBlock Foreground="#333" Text="{loc:Loc SignInAutomatically}" />
                                 </CheckBox>
                             </StackPanel>
-                            <TextBlock>
-                            <Hyperlink RequestNavigate="OnClickResetPasswordLink" NavigateUri="FAKE URI - HANDLED IN CODEBEHIND"><Run Text="{loc:Loc ForgotPassword}" /></Hyperlink>
-                            </TextBlock>
                         </StackPanel>
                     </Grid>
-                    <Button x:Name="SignIn" Click="SignIn_Click" Content="{loc:Loc SignInButton}" HorizontalAlignment="Center" MinWidth="72" Margin="0,10" Height="23" IsEnabled="True" />
                 </StackPanel>
                 <Grid Grid.Row="1" Margin="12,12" Opacity="0.75">
                     <StackPanel Orientation="Horizontal">
                         <TextBlock>
-                    <Hyperlink RequestNavigate="Hyperlink_RequestNavigate" NavigateUri="https://discord.com/privacy"><Run Text="{loc:Loc PrivacyStatement}" /></Hyperlink>
+                            <Hyperlink RequestNavigate="Hyperlink_RequestNavigate" NavigateUri="https://discord.com/privacy"><Run Text="{loc:Loc PrivacyStatement}" /></Hyperlink>
                         </TextBlock>
                         <TextBlock Margin="8,0" Foreground="#aaa">|</TextBlock>
                         <TextBlock>
-                    <Hyperlink RequestNavigate="Hyperlink_RequestNavigate" NavigateUri="https://discordstatus.com/"><Run Text="{loc:Loc ServerStatus}" /></Hyperlink>
+                            <Hyperlink RequestNavigate="Hyperlink_RequestNavigate" NavigateUri="https://discordstatus.com/"><Run Text="{loc:Loc ServerStatus}" /></Hyperlink>
                         </TextBlock>
                     </StackPanel>
                 </Grid>

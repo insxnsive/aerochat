@@ -2,7 +2,7 @@
 
 ## Project status
 
-This repository contains a visual-only WPF client plus a planned/self-hostable server component, derived from the archived `not-nullptr/Aerochat` project. It preserves the Windows Live Messenger 2009 visual language and assets.
+This repository contains a WPF client plus a self-hostable server component, derived from the archived `not-nullptr/Aerochat` project. It preserves the Windows Live Messenger 2009 visual language and assets while live features land behind explicit connectivity boundaries.
 
 - Primary working branch: `visual-shell`
 - Local project path: `C:/Users/insxn/Documents/chataero.v2`
@@ -43,7 +43,7 @@ generic controls when the existing visual control can be retained.
 - `Aerochat/App.xaml`
   - Global WPF resource dictionaries, button/scrollbar themes, image rendering defaults, and shared styles.
 - `Aerochat/App.xaml.cs`
-  - Minimal startup path: create `DemoData`, create `WindowNavigator`, construct Home, assign `MainWindow`, and show it.
+  - Composition root: create `DemoData`, choose configured or offline authentication, inject retained-window factories into `WindowNavigator`, construct Home, assign `MainWindow`, and show it.
   - It still contains a few no-op compatibility shims for legacy windows. They are not active backend behavior and are intended to disappear as the remaining legacy surfaces are cleaned.
 - `Aerochat/Aerochat.csproj`
   - WPF x64 executable project. Resources are included with wildcards from `Resources`, `Scenes`, `Ads`, and `Icons`.
@@ -55,6 +55,8 @@ generic controls when the existing visual control can be retained.
 - Only this namespace may contain socket/HTTP/data-protection types. Presentation,
   Controls, and Windows code-behind reach connectivity exclusively through
   interfaces injected at the composition root (`App.xaml.cs`).
+- `docs/client-authentication.md` is the desktop OAuth, loopback callback, offline
+  behavior, timeout, and DPAPI-cache contract.
 
 ### Server (Phase 0+)
 
@@ -97,7 +99,7 @@ Retained visual surfaces live under `Aerochat/Windows`:
 - `Chat.xaml` and `Chat.xaml.cs`
   - Local conversation shell. The XAML preserves the original message/toolbar/composer visual system; the code-behind handles local draft, send, reply, edit, drawing, toolbar, and attachment-preview state.
 - `Settings.xaml`, `About.xaml`, `Login.xaml`, `ChangeScene.xaml`
-  - Local visual settings, inert information/login UI, and process-local scene selection.
+  - Local visual settings, information, provider-backed OAuth login UI, and process-local scene selection. Login keeps the WLM frame and reaches networking only through injected `IAuthClient`.
 - `ImagePreviewer.xaml`, `Notification.xaml`, `Dialog.xaml`, `ColorPicker.xaml`, `NonNativeTooltip.xaml`, `AerochatWindow.xaml`
   - Local packaged-resource previews, notifications, dialogs, colors, tooltips, and generic visual host surfaces.
 
@@ -153,8 +155,8 @@ Tests live in `Aerochat.VisualShell.Tests` and use NUnit with WPF targeting.
 Important test files:
 
 - `RepositoryLayoutTests.cs`
-  - Confirms the solution contains only Aerochat and `Aerochat.VisualShell.Tests`.
-  - Confirms the final product source contains no forbidden backend/runtime directories or tokens.
+  - Confirms the solution contains only the approved client, server, and test projects.
+  - Confirms the product source respects the Presentation/Controls purity boundary and keeps connectivity side effects in approved layers.
 - `ResourceIntegrityTests.cs`
   - Checks XAML/code resource references and demo resources exist.
 - `DemoDataTests.cs`
@@ -208,7 +210,7 @@ git diff --check
 git status --short --branch
 ```
 
-The final verified result was 87 passing tests, 0 failures, 0 skips, and a solution build with 0 warnings and 0 errors.
+The Task 5 verified baseline is 125 passing tests, 0 failures, 0 skips, and a solution build with 0 warnings and 0 errors.
 
 ## Launching and runtime checks
 
@@ -224,8 +226,8 @@ For a manual smoke run:
 2. Confirm Home shows the WLM titlebar, sample user, scene/header, search box, contact tree, news controls, and ad region.
 3. Exercise local search, presence/status, personal message, group collapse, scene/settings changes, and local Chat navigation.
 4. Open Chat and exercise local draft/send/reply/edit/attachment-preview controls.
-5. Open Settings, About, Login, ChangeScene, and ImagePreviewer. Login must not read or store credentials. Links must remain inert.
-6. Confirm no `Aerochat.exe` socket appears in `netstat -ano`.
+5. Open Settings, About, Login, ChangeScene, and ImagePreviewer. Login must expose only Google/GitHub/Discord provider actions, never password/MFA/token inputs. Informational links remain inert.
+6. With `AEROCHAT_SERVER_URL` unset, confirm Login reports `Server not configured`, provider actions are disabled, and no `Aerochat.exe` socket appears in `netstat -ano`.
 7. Close/kill the tracked process and confirm no Aerochat process remains.
 
 The final automated smoke launched the real executable, kept it alive long enough for inspection, found zero netstat rows for its PID, and left no orphan process.
@@ -244,14 +246,14 @@ The final automated smoke launched the real executable, kept it alive long enoug
 
 - Scene color/state and local scene switching work. Scene imagery is deliberately not eagerly loaded in Home/secondary XAML because dynamic scene pack binding failed under the real STA resource host; do not reintroduce fragile eager loading without a real smoke test.
 - The normal incremental build can expose old nullable/member-hiding warning noise in legacy retained controls/helpers. The final exact solution build was clean with 0 warnings and 0 errors. New warnings in changed presentation code are not acceptable.
-- The final solution includes only the active Aerochat and visual-shell test projects. A root-level `Aerotest.csproj` remains as an orphan file outside `Aerochat.sln`; it is not an active project and should not be re-added without an explicit decision.
+- The solution includes the active client, server, and their test projects. A root-level `Aerotest.csproj` remains as an orphan file outside `Aerochat.sln`; it is not an active project and should not be re-added without an explicit decision.
 - `docs/superpowers/specs/` and `docs/superpowers/plans/` contain the approved design and implementation plan. `.superpowers/sdd/` contains ignored execution reports and ledgers, not product runtime code.
 - The inherited upstream `README.md` still describes the original Discord client and is not an accurate runtime contract for this shell.
 
 ## Do not do
 
 - Do not add a Discord client or “temporary” fake backend abstraction.
-- Do not add credentials, API keys, tokens, browser login, or persistence.
+- Do not add passwords, API keys, provider secrets, or arbitrary token inputs. Browser login and token persistence are permitted only through the documented OAuth/DPAPI implementation under `Aerochat.Connectivity`; secrets and tokens must never be logged or committed.
 - Do not delete or replace WLM assets to make a binding easier.
 - Do not use Any CPU for tests/builds.
 - Do not weaken boundary/resource tests to make them pass.

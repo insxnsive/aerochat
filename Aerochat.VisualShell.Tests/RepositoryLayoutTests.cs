@@ -20,7 +20,7 @@ public sealed class RepositoryLayoutTests
         string[] forbiddenTokens =
         [
             "DSharpPlus", "Aerovoice", "DiscordProtos", "Google.Protobuf", "WebView2",
-            "Websocket.Client", "HttpClient", "ProtectedData", "NamedPipe", "Process.Start",
+            "Websocket.Client", "HttpClient", "NamedPipe", "Process.Start",
             "ShellExecute", "SettingsManager", "DllImport", "Vanara.PInvoke", "System.Speech",
             "System.Drawing", "File.WriteAll", "File.AppendAll", "Directory.CreateDirectory"
         ];
@@ -33,6 +33,8 @@ public sealed class RepositoryLayoutTests
             .Where(path => path.EndsWith(".cs", StringComparison.OrdinalIgnoreCase)
                         || path.EndsWith(".xaml", StringComparison.OrdinalIgnoreCase)
                         || path.EndsWith(".csproj", StringComparison.OrdinalIgnoreCase))
+            .Where(path => !path.Replace(Path.DirectorySeparatorChar, '/').Contains("Aerochat/Connectivity/", StringComparison.Ordinal)
+                        && !path.Replace(Path.DirectorySeparatorChar, '/').EndsWith("Aerochat/App.xaml.cs", StringComparison.Ordinal))
             .Select(path => new { path, text = File.ReadAllText(path) })
             .SelectMany(file => forbiddenTokens.Where(file.text.Contains)
                 .Select(token => $"{Path.GetRelativePath(Root, file.path)}: {token}"))
@@ -52,7 +54,7 @@ public sealed class RepositoryLayoutTests
             Assert.That(existingDirectories, Is.Empty, string.Join(", ", existingDirectories));
             Assert.That(offenders, Is.Empty, string.Join(Environment.NewLine, offenders));
             Assert.That(projectReferences, Is.Empty);
-            Assert.That(packages, Is.EqualTo(new[] { "XamlAnimatedGif" }));
+            Assert.That(packages, Is.EqualTo(new[] { "System.Security.Cryptography.ProtectedData", "XamlAnimatedGif" }));
             Assert.That(project, Does.Not.Contain("PreferNativeArm64"));
         });
     }
@@ -99,5 +101,28 @@ public sealed class RepositoryLayoutTests
             Assert.That(project, Does.Not.Contain("net8.0-windows"));
             Assert.That(project, Does.Contain("Microsoft.NET.Sdk.Web"));
         });
+    }
+
+    [Test]
+    public void Client_network_and_secret_storage_stay_inside_connectivity()
+    {
+        string connectivityRoot = Path.Combine(Root, "Aerochat", "Connectivity");
+        string compositionRoot = Path.Combine(Root, "Aerochat", "App.xaml.cs");
+        string[] forbiddenTokens =
+        [
+            "System.Net.Http", "System.Net.WebSockets", "TcpListener", "ProtectedData", "Process.Start"
+        ];
+
+        var offenders = Directory.EnumerateFiles(Path.Combine(Root, "Aerochat"), "*.cs", SearchOption.AllDirectories)
+            .Where(path => !path.Contains(Path.DirectorySeparatorChar + "bin" + Path.DirectorySeparatorChar)
+                        && !path.Contains(Path.DirectorySeparatorChar + "obj" + Path.DirectorySeparatorChar))
+            .Where(path => !path.StartsWith(connectivityRoot, StringComparison.OrdinalIgnoreCase)
+                        && !StringComparer.OrdinalIgnoreCase.Equals(path, compositionRoot))
+            .Select(path => new { path, text = File.ReadAllText(path) })
+            .SelectMany(file => forbiddenTokens.Where(file.text.Contains)
+                .Select(token => $"{Path.GetRelativePath(Root, file.path)}: {token}"))
+            .ToArray();
+
+        Assert.That(offenders, Is.Empty, string.Join(Environment.NewLine, offenders));
     }
 }
