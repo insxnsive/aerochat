@@ -67,7 +67,7 @@ public sealed class RepositoryLayoutTests
             .OrderBy(name => name, StringComparer.Ordinal)
             .ToArray();
 
-        Assert.That(names, Is.EqualTo(new[] { "Aerochat", "Aerochat.Server", "Aerochat.VisualShell.Tests" }));
+        Assert.That(names, Is.EqualTo(new[] { "Aerochat", "Aerochat.Server", "Aerochat.Server.Tests", "Aerochat.VisualShell.Tests" }));
     }
 
     [Test]
@@ -83,7 +83,7 @@ public sealed class RepositoryLayoutTests
         {
             Assert.That(projectLines, Has.Some.Contains("\"Aerochat\\Aerochat.csproj\""));
             Assert.That(projectLines, Has.Some.Contains("\"Aerochat.Server\\Aerochat.Server.csproj\""));
-            Assert.That(projectLines, Has.Length.EqualTo(3));
+            Assert.That(projectLines, Has.Length.EqualTo(4));
             Assert.That(projectLines, Has.None.Contains("\"Aerotest.csproj\""));
         });
     }
