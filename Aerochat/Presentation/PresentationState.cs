@@ -156,6 +156,12 @@ public sealed class PresentationState : ObservableObject
 
     public void SelectScene(ScenePresentation scene) => CurrentScene = scene;
 
+    public void CancelTarget(ConversationPresentation conversation)
+    {
+        conversation.TargetMessage = null;
+        conversation.TargetMode = MessageTargetMode.None;
+    }
+
     private bool IsLocalMessage(MessagePresentation message) =>
         message.IsOutgoing && message.Author.Id == CurrentUser.Id;
 

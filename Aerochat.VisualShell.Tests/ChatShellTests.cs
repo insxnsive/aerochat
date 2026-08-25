@@ -1,3 +1,4 @@
+using System.IO;
 using Aerochat.Presentation;
 using Aerochat.Windows;
 
@@ -84,4 +85,122 @@ public sealed class ChatShellTests
         Assert.That(reply.Body, Is.EqualTo("Edited locally"));
         Assert.That(conversation.TargetMode, Is.EqualTo(MessageTargetMode.None));
     }
+
+    [Test]
+    public void Cancel_target_clears_local_reply_or_edit_state()
+    {
+        PresentationState state = DemoData.Create();
+        ConversationPresentation conversation = state.Conversations[0];
+        MessagePresentation target = conversation.Messages[0];
+
+        state.BeginReply(conversation, target);
+        conversation.Draft = "draft";
+        state.CancelTarget(conversation);
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(conversation.TargetMode, Is.EqualTo(MessageTargetMode.None));
+            Assert.That(conversation.TargetMessage, Is.Null);
+            Assert.That(conversation.Draft, Is.EqualTo("draft"));
+        });
+    }
+
+    [Test]
+    public void Chat_xaml_rebinds_to_presentation_state_without_visual_drift()
+    {
+        string xaml = File.ReadAllText(GetChatPath("Chat.xaml"));
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(xaml, Does.Not.Contain("ChatWindowViewModel"));
+            Assert.That(xaml, Does.Not.Contain("xmlns:viewmodels"));
+            Assert.That(xaml, Does.Not.Contain("Theme.Scene"));
+            Assert.That(xaml, Does.Not.Contain("VoiceManager"));
+            Assert.That(xaml, Does.Not.Contain("Channel."));
+            Assert.That(xaml, Does.Not.Contain("Guild."));
+            Assert.That(xaml, Does.Not.Contain("Loading"));
+            Assert.That(xaml, Does.Not.Contain("SettingsManager"));
+            Assert.That(xaml, Does.Not.Contain("TypingString"));
+            Assert.That(xaml, Does.Not.Contain("LastReceivedMessage"));
+            Assert.That(xaml, Does.Not.Contain("MessageEntity"));
+            Assert.That(xaml, Does.Not.Contain("TimestampString"));
+            Assert.That(xaml, Does.Not.Contain("ReplyMessage"));
+            Assert.That(xaml, Does.Not.Contain("ItemsSource=\"{Binding Attachments}\""));
+
+            Assert.That(xaml, Does.Contain("xmlns:presentation=\"clr-namespace:Aerochat.Presentation\""));
+            Assert.That(xaml, Does.Contain("d:DataContext=\"{d:DesignInstance Type=presentation:ConversationPresentation}\""));
+            Assert.That(xaml, Does.Contain("State.CurrentUser"));
+            Assert.That(xaml, Does.Contain("State.CurrentScene"));
+            Assert.That(xaml, Does.Contain("State.Settings"));
+            Assert.That(xaml, Does.Contain("Binding Name"));
+            Assert.That(xaml, Does.Contain("Binding Topic"));
+            Assert.That(xaml, Does.Contain("Binding IsGroup"));
+            Assert.That(xaml, Does.Contain("Binding Recipient"));
+            Assert.That(xaml, Does.Contain("Participants"));
+            Assert.That(xaml, Does.Contain("ItemsSource=\"{Binding Path=Messages"));
+            Assert.That(xaml, Does.Contain("Draft"));
+            Assert.That(xaml, Does.Contain("Binding TypingText"));
+            Assert.That(xaml, Does.Contain("Binding TargetMessage"));
+            Assert.That(xaml, Does.Contain("Binding TargetMode"));
+            Assert.That(xaml, Does.Contain("Binding Body"));
+            Assert.That(xaml, Does.Contain("Binding Author"));
+            Assert.That(xaml, Does.Contain("Binding SentAt"));
+            Assert.That(xaml, Does.Contain("Binding IsOutgoing"));
+            Assert.That(xaml, Does.Contain("Binding AttachmentUri"));
+            Assert.That(xaml, Does.Contain("Binding ReplyTo"));
+
+            Assert.That(xaml, Does.Contain("Height=\"466\" Width=\"587\""));
+            Assert.That(xaml, Does.Contain("/Aerochat;component/Resources/Message/Background.png"));
+            Assert.That(xaml, Does.Contain("/Aerochat;component/Resources/Message/TopBarBg.png"));
+            Assert.That(xaml, Does.Contain("/Aerochat;component/Resources/Message/InputBackground.png"));
+            Assert.That(xaml, Does.Contain("/Aerochat;component/Resources/Message/BottomToolbar.png"));
+            Assert.That(xaml, Does.Contain("x:Name=\"PART_AttachmentEditorGrid\""));
+            Assert.That(xaml, Does.Contain("x:Name=\"PART_ReplyTargetContainer\""));
+            Assert.That(xaml, Does.Contain("x:Name=\"DrawingContainer\""));
+            Assert.That(xaml, Does.Contain("ToolbarClick"));
+            Assert.That(xaml, Does.Contain("MessageTextBox_PreviewKeyDown"));
+            Assert.That(xaml, Does.Contain("DrawOnClickUndo"));
+            Assert.That(xaml, Does.Contain("OpenEmojiFlyout"));
+            Assert.That(xaml, Does.Contain("Window_SizeChanged"));
+
+            string[] forbiddenBindings =
+            [
+                "Loading", "TypingString", "LastReceivedMessage", "MessageEntity",
+                "TimestampString", "ReplyMessage", "IsAuthorCurrentUser",
+                "Ephemeral", "Special", "HiddenInfo", "IsReply", "IsSelectedForUiAction"
+            ];
+            Assert.That(forbiddenBindings.Where(xaml.Contains), Is.Empty,
+                "Stale Chat bindings: " + string.Join(", ", forbiddenBindings.Where(xaml.Contains)));
+        });
+    }
+
+    [Test]
+    public void Chat_xaml_handlers_are_defined_by_the_local_codebehind()
+    {
+        string xaml = File.ReadAllText(GetChatPath("Chat.xaml"));
+        string codeBehind = File.ReadAllText(GetChatPath("Chat.xaml.cs"));
+        string[] attributes =
+        [
+            "Click", "PreviewMouseDown", "PreviewMouseUp", "MouseDown", "MouseUp",
+            "MouseMove", "PreviewMouseMove", "MouseLeftButtonDown", "MouseRightButtonUp",
+            "Drop", "Loaded", "SizeChanged", "PreviewKeyDown", "ScrollChanged",
+            "ContextMenuOpening", "TextChanged", "LostFocus", "Closed"
+        ];
+        var referenced = attributes
+            .SelectMany(attribute => System.Text.RegularExpressions.Regex.Matches(
+                xaml, $@"(?<![\\w]){attribute}=""([A-Za-z_]\\w*)""")
+                .Select(match => match.Groups[1].Value))
+            .Distinct(StringComparer.Ordinal)
+            .ToArray();
+        var missing = referenced.Where(handler => !System.Text.RegularExpressions.Regex.IsMatch(
+            codeBehind, $@"\b(?:private|public|protected|internal)\s+(?:async\s+)?(?:Task|void|bool|[A-Za-z_]\w*[<>?]*)\s+{handler}\s*\("))
+            .ToArray();
+        Assert.That(missing, Is.Empty, "Missing Chat handlers: " + string.Join(", ", missing));
+    }
+
+    private static string GetChatPath(string fileName) =>
+        Path.GetFullPath(Path.Combine(
+            TestContext.CurrentContext.TestDirectory,
+            "../../../../../Aerochat/Windows",
+            fileName));
 }

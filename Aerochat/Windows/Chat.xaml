@@ -7,11 +7,8 @@
         xmlns:controls="clr-namespace:Aerochat.Controls"
         xmlns:scrollbar="clr-namespace:Aerochat.Controls.ScrollBar"
         xmlns:attachmentseditor="clr-namespace:Aerochat.Controls.AttachmentsEditor"
-        xmlns:enums="clr-namespace:Aerochat.Enums"
         xmlns:gif="https://github.com/XamlAnimatedGif/XamlAnimatedGif"
-        xmlns:helpers="clr-namespace:Aerochat.Helpers"
-        xmlns:mdxam="clr-namespace:MdXaml;assembly=MdXaml"
-        xmlns:viewmodels="clr-namespace:Aerochat.ViewModels" d:DataContext="{d:DesignInstance Type=viewmodels:ChatWindowViewModel}"
+        xmlns:presentation="clr-namespace:Aerochat.Presentation" d:DataContext="{d:DesignInstance Type=presentation:ConversationPresentation}"
         xmlns:loc="clr-namespace:Aerochat.Localization"
         mc:Ignorable="d"
         SizeChanged="Window_SizeChanged"
@@ -20,12 +17,12 @@
         MinWidth="365"
         MinHeight="383"
         x:Name="Window"
-        Height="466" Width="587" Background="{Binding Recipient.Scene.Color}">
+        Height="466" Width="587" Background="{Binding State.CurrentScene.Color, RelativeSource={RelativeSource AncestorType=local:Chat}}">
     <Window.Style>
         <Style TargetType="Window" BasedOn="{StaticResource Window}">
-            <Setter Property="Title" Value="Chat - Aerochat" />
+            <Setter Property="Title" Value="{Binding Name}" />
             <Style.Triggers>
-                <DataTrigger Binding="{Binding IsDM}" Value="True">
+                <DataTrigger Binding="{Binding IsGroup}" Value="False">
                     <Setter Property="Title">
                         <Setter.Value>
                             <MultiBinding StringFormat="{}{0} &lt;{1}@aerochat.live&gt;">
@@ -35,18 +32,8 @@
                         </Setter.Value>
                     </Setter>
                 </DataTrigger>
-                <DataTrigger Binding="{Binding IsDM}" Value="False">
-                    <Setter Property="Title">
-                        <Setter.Value>
-                            <MultiBinding StringFormat="{}#{0} &lt;{1}&gt;">
-                                <Binding Path="Channel.Name" />
-                                <Binding Path="Guild.Name" />
-                            </MultiBinding>
-                        </Setter.Value>
-                    </Setter>
-                </DataTrigger>
-                <DataTrigger Binding="{Binding IsGroupChat}" Value="True">
-                    <Setter Property="Title" Value="{Binding Channel.Name}" />
+                <DataTrigger Binding="{Binding IsGroup}" Value="True">
+                    <Setter Property="Title" Value="{Binding Name}" />
                 </DataTrigger>
             </Style.Triggers>
         </Style>
@@ -72,7 +59,7 @@
             <Setter Property="Source" Value="/Aerochat;component/Resources/Dropdown/Dropdown.png" />
             <Setter Property="Opacity" Value="0" />
             <Style.Triggers>
-                <DataTrigger Binding="{Binding IsVisibleProperty}" Value="True">
+                <DataTrigger Binding="{Binding IsGroup}" Value="True">
                     <DataTrigger.EnterActions>
                         <!-- Only fade in the first time it's made visible -->
                         <BeginStoryboard Storyboard="{StaticResource FadeInStoryboard}" />
@@ -89,7 +76,7 @@
                 <MultiDataTrigger>
                     <MultiDataTrigger.Conditions>
                         <Condition Binding="{Binding RelativeSource={RelativeSource Mode=Self}, Path=IsMouseOver}" Value="False" />
-                        <Condition Binding="{Binding Collapsed}" Value="False" />
+                        <Condition Binding="{Binding IsGroup}" Value="False" />
                     </MultiDataTrigger.Conditions>
                     <MultiDataTrigger.Setters>
                         <Setter Property="Source" Value="/Aerochat;component/Resources/Dropdown/DropdownExpanded.png" />
@@ -98,7 +85,7 @@
                 <MultiDataTrigger>
                     <MultiDataTrigger.Conditions>
                         <Condition Binding="{Binding RelativeSource={RelativeSource Mode=Self}, Path=IsMouseOver}" Value="True" />
-                        <Condition Binding="{Binding Collapsed}" Value="False" />
+                        <Condition Binding="{Binding IsGroup}" Value="False" />
                     </MultiDataTrigger.Conditions>
                     <MultiDataTrigger.Setters>
                         <Setter Property="Source" Value="/Aerochat;component/Resources/Dropdown/DropdownExpandedHover.png" />
@@ -124,20 +111,18 @@
                 <Trigger Property="IsMouseOver" Value="True">
                     <Setter Property="TextDecorations" Value="Underline" />
                 </Trigger>
-                <DataTrigger Binding="{Binding IsAuthorCurrentUser}" Value="True">
+                <DataTrigger Binding="{Binding IsOutgoing}" Value="True">
                     <Setter Property="FontWeight" Value="Bold" />
                 </DataTrigger>
             </Style.Triggers>
         </Style>
 
-        <helpers:ImageConverter x:Key="imageConverter"/>
-        <helpers:StatusStringToUserStatusConverter x:Key="StatusStringToUserStatusConverter"/>
     </Window.Resources>
-    <controls:BaseTitlebar Color="{Binding Recipient.Scene.Color}" BlackText="{Binding Recipient.Scene.TextColor}">
+    <controls:BaseTitlebar Color="{Binding State.CurrentScene.Color, RelativeSource={RelativeSource AncestorType=local:Chat}}" BlackText="{Binding State.CurrentScene.TextColor, RelativeSource={RelativeSource AncestorType=local:Chat}}">
         <Grid>
-        <Grid AllowDrop="{Binding Channel.CanAttachFiles}" Drop="OnDropFileIntoChatWindow">
+        <Grid AllowDrop="False" Drop="OnDropFileIntoChatWindow">
             <Grid>
-                <controls:ColorizedNineSlice TintColor="{Binding Recipient.Scene.Color}" Image="/Aerochat;component/Resources/Message/Background.png" />
+                <controls:ColorizedNineSlice TintColor="{Binding State.CurrentScene.Color, RelativeSource={RelativeSource AncestorType=local:Chat}}" Image="/Aerochat;component/Resources/Message/Background.png" />
                 <Grid.RowDefinitions>
                     <RowDefinition Height="*" />
                 </Grid.RowDefinitions>
@@ -151,12 +136,12 @@
                     <RowDefinition Height="*"/>
                     <RowDefinition Height="32" />
                 </Grid.RowDefinitions>
-                <Grid Grid.Row="0" Panel.ZIndex="5" Background="{Binding Recipient.Scene.Color}">
+                <Grid Grid.Row="0" Panel.ZIndex="5" Background="{Binding State.CurrentScene.Color, RelativeSource={RelativeSource AncestorType=local:Chat}}">
                     <Grid.Effect>
                         <DropShadowEffect BlurRadius="4" Opacity="0.25" Direction="270" ShadowDepth="2"/>
                     </Grid.Effect>
                     <controls:NineSlice Image="/Aerochat;component/Resources/Message/TopBarBg.png" Slice="3,3" />
-                    <ItemsControl ItemsSource="{Binding Path=ToolbarItems}" x:Name="ToolbarOverflowPanel">
+                    <ItemsControl ItemsSource="{x:Null}" x:Name="ToolbarOverflowPanel">
                         <ItemsControl.ItemsPanel>
                             <ItemsPanelTemplate>
                                 <controls:OverflowPanel VerticalAlignment="Center" Margin="4,2" />
@@ -167,7 +152,7 @@
                                 <StackPanel Orientation="Horizontal" VerticalAlignment="Stretch">
                                     <Grid Height="27" PreviewMouseUp="ToolbarClick">
                                         <controls:NineSliceButton ToggleButton="RadioToggleButton" ToolTip="{Binding Path=ToolTip}" Hover="/Aerochat;component/Resources/Message/ToolbarHover.png" Pressed="/Aerochat;component/Resources/Message/ToolbarActive.png" Slice="6,6" />
-                                        <TextBlock Foreground="{Binding DataContext.Recipient.Scene.TextColor, RelativeSource={RelativeSource Mode=FindAncestor, AncestorType={x:Type ItemsControl}}}" Margin="8,0,8,1" HorizontalAlignment="Center" VerticalAlignment="Center" IsHitTestVisible="False" Text="{Binding Path=Text}"/>
+                                        <TextBlock Foreground="{Binding State.CurrentScene.TextColor, RelativeSource={RelativeSource AncestorType=local:Chat}}" Margin="8,0,8,1" HorizontalAlignment="Center" VerticalAlignment="Center" IsHitTestVisible="False" Text="{Binding Path=Text}"/>
                                     </Grid>
                                     <Rectangle HorizontalAlignment="Right" Width="9" Height="0" />
                                     <StackPanel.Style>
@@ -175,8 +160,8 @@
                                             <Style.Triggers>
                                                 <MultiDataTrigger>
                                                     <MultiDataTrigger.Conditions>
-                                                        <Condition Binding="{Binding DataContext.IsEyecandy, RelativeSource={RelativeSource TemplatedParent}}" Value="True" />
-                                                        <Condition Binding="{Binding DataContext.ShowEyecandy, RelativeSource={RelativeSource Mode=FindAncestor, AncestorType={x:Type ItemsControl}}}" Value="False" />
+                                                        <Condition Binding="{Binding State.Settings.ShowEyecandy, RelativeSource={RelativeSource AncestorType=local:Chat}}" Value="True" />
+                                                        <Condition Binding="{Binding State.Settings.ShowEyecandy, RelativeSource={RelativeSource AncestorType=local:Chat}}" Value="False" />
                                                     </MultiDataTrigger.Conditions>
                                                     <MultiDataTrigger.Setters>
                                                         <Setter Property="Visibility" Value="Collapsed" />
@@ -207,7 +192,7 @@
                     <attachmentseditor:AttachmentsStrip x:Name="PART_AttachmentsEditor" />
                 </Grid>
                 <Grid Grid.Row="2">
-                    <Rectangle Height="{Binding TopHeight}" VerticalAlignment="Top" Panel.ZIndex="7">
+                    <Rectangle Height="64" VerticalAlignment="Top" Panel.ZIndex="7">
                         <Rectangle.Fill>
                             <LinearGradientBrush EndPoint="0.5,1" StartPoint="0.5,0">
                                 <GradientStop Color="Transparent" />
@@ -218,20 +203,20 @@
                             <Style TargetType="Rectangle">
                                 <Setter Property="Visibility" Value="Collapsed" />
                                 <Style.Triggers>
-                                    <DataTrigger Binding="{Binding Recipient.Scene.Default}" Value="True">
+                                    <DataTrigger Binding="{Binding State.CurrentScene.IsDefault, RelativeSource={RelativeSource AncestorType=local:Chat}}" Value="True">
                                         <Setter Property="Visibility" Value="Visible" />
                                     </DataTrigger>
                                 </Style.Triggers>
                             </Style>
                         </Rectangle.Style>
                     </Rectangle>
-                    <Grid Height="{Binding TopHeight}" VerticalAlignment="Top" Panel.ZIndex="6">
-                        <controls:ColorizedNineSlice Slice="1,1" Image="/Aerochat;component/Resources/top-blue-thing-transparent.png" TintColor="{Binding Recipient.Scene.Color}">
+                    <Grid Height="64" VerticalAlignment="Top" Panel.ZIndex="6">
+                        <controls:ColorizedNineSlice Slice="1,1" Image="/Aerochat;component/Resources/top-blue-thing-transparent.png" TintColor="{Binding State.CurrentScene.Color, RelativeSource={RelativeSource AncestorType=local:Chat}}">
                             <controls:ColorizedNineSlice.Style>
                                 <Style TargetType="controls:ColorizedNineSlice">
                                     <Setter Property="Visibility" Value="Collapsed" />
                                     <Style.Triggers>
-                                        <DataTrigger Binding="{Binding Recipient.Scene.Default}" Value="True">
+                                        <DataTrigger Binding="{Binding State.CurrentScene.IsDefault, RelativeSource={RelativeSource AncestorType=local:Chat}}" Value="True">
                                             <Setter Property="Visibility" Value="Visible" />
                                         </DataTrigger>
                                     </Style.Triggers>
@@ -240,13 +225,13 @@
                         </controls:ColorizedNineSlice>
                         <Grid VerticalAlignment="Stretch">
                             <Grid.Background>
-                                <ImageBrush ImageSource="{Binding Recipient.Scene.File}" Stretch="UniformToFill" />
+                                <ImageBrush ImageSource="{Binding State.CurrentScene.FileUri, RelativeSource={RelativeSource AncestorType=local:Chat}}" Stretch="UniformToFill" />
                             </Grid.Background>
                             <Grid.Style>
                                 <Style TargetType="Grid">
                                     <Setter Property="Visibility" Value="Visible" />
                                     <Style.Triggers>
-                                        <DataTrigger Binding="{Binding Recipient.Scene.Default}" Value="True">
+                                        <DataTrigger Binding="{Binding State.CurrentScene.IsDefault, RelativeSource={RelativeSource AncestorType=local:Chat}}" Value="True">
                                             <Setter Property="Visibility" Value="Collapsed" />
                                         </DataTrigger>
                                     </Style.Triggers>
@@ -254,49 +239,49 @@
                             </Grid.Style>
                         </Grid>
                     </Grid>
-                    <Rectangle Height="{Binding TopHeight}" VerticalAlignment="Top" Panel.ZIndex="4" Fill="{Binding Recipient.Scene.Color}" />
+                    <Rectangle Height="64" VerticalAlignment="Top" Panel.ZIndex="4" Fill="{Binding State.CurrentScene.Color, RelativeSource={RelativeSource AncestorType=local:Chat}}" />
                     <Grid Panel.ZIndex="10" Margin="0,0,0,0">
                         <Grid.ColumnDefinitions>
                             <ColumnDefinition Width="165" />
                             <ColumnDefinition Width="*" />
                         </Grid.ColumnDefinitions>
-                        <Grid Grid.Column="0" Panel.ZIndex="50">
+                        <Grid Grid.Column="0" Panel.ZIndex="50" Visibility="Collapsed">
                             <Grid.Style>
                                 <Style TargetType="Grid">
                                     <Setter Property="Visibility" Value="Collapsed" />
                                     <Style.Triggers>
-                                        <DataTrigger Binding="{Binding IsDM}" Value="True">
+                                        <DataTrigger Binding="{Binding IsGroup}" Value="True">
                                             <Setter Property="Visibility" Value="Visible" />
                                         </DataTrigger>
-                                        <DataTrigger Binding="{Binding IsGroupChat}" Value="True">
+                                        <DataTrigger Binding="{Binding IsGroup}" Value="True">
                                             <Setter Property="Visibility" Value="Collapsed" />
                                         </DataTrigger>
                                     </Style.Triggers>
                                 </Style>
                             </Grid.Style>
                             <Grid HorizontalAlignment="Center" VerticalAlignment="Top">
-                                <controls:ProfilePictureFrame FrameSize="ExtraLarge" UserStatus="{Binding Recipient.Presence.Status}" ProfilePicture="{Binding Recipient.Avatar, Converter={StaticResource imageConverter}}" />
+                                <controls:ProfilePictureFrame FrameSize="ExtraLarge" UserStatus="{Binding Recipient.Presence.Status}" ProfilePicture="{Binding Recipient.Avatar}" />
                             </Grid>
                             <Grid HorizontalAlignment="Center" VerticalAlignment="Bottom">
-                                <controls:ProfilePictureFrame FrameSize="ExtraLarge" UserStatus="{Binding CurrentUser.Presence.Status}" ProfilePicture="{Binding CurrentUser.Avatar}" />
+                                <controls:ProfilePictureFrame FrameSize="ExtraLarge" UserStatus="{Binding State.CurrentUser.Presence.Status, RelativeSource={RelativeSource AncestorType=local:Chat}}" ProfilePicture="{Binding State.CurrentUser.Avatar, RelativeSource={RelativeSource AncestorType=local:Chat}}" />
                             </Grid>
                         </Grid>
-                        <Grid Grid.Column="0" Panel.ZIndex="50">
+                        <Grid Grid.Column="0" Panel.ZIndex="50" Visibility="Collapsed">
                             <Grid.Style>
                                 <Style TargetType="Grid">
                                     <Setter Property="Visibility" Value="Collapsed" />
                                     <Style.Triggers>
-                                        <DataTrigger Binding="{Binding IsDM}" Value="False">
+                                        <DataTrigger Binding="{Binding IsGroup}" Value="False">
                                             <Setter Property="Visibility" Value="Visible" />
                                         </DataTrigger>
-                                        <DataTrigger Binding="{Binding IsGroupChat}" Value="True">
+                                        <DataTrigger Binding="{Binding IsGroup}" Value="True">
                                             <Setter Property="Visibility" Value="Collapsed" />
                                         </DataTrigger>
                                     </Style.Triggers>
                                 </Style>
                             </Grid.Style>
                             <Grid.RowDefinitions>
-                                <RowDefinition Height="{Binding TopHeight}" />
+                                <RowDefinition Height="64" />
                                 <RowDefinition Height="*" />
                             </Grid.RowDefinitions>
                             <Grid Margin="0,0,0,0" Grid.Row="0">
@@ -333,7 +318,7 @@
                                             </Style.Triggers>
                                         </Style>
                                     </ScrollViewer.Style>
-                                    <ItemsControl ItemsSource="{Binding Categories}">
+                                    <ItemsControl ItemsSource="{x:Null}">
                                         <ItemsControl.ItemTemplate>
                                             <DataTemplate>
                                                 <Grid>
@@ -391,7 +376,7 @@
                                                             <Style TargetType="Grid">
                                                                 <Setter Property="Visibility" Value="Collapsed" />
                                                                 <Style.Triggers>
-                                                                    <DataTrigger Binding="{Binding Collapsed}" Value="False">
+                                                                    <DataTrigger Binding="{Binding IsGroup}" Value="False">
                                                                         <Setter Property="Visibility" Value="Visible" />
                                                                     </DataTrigger>
                                                                     <DataTrigger Binding="{Binding Name}" Value="">
@@ -410,7 +395,7 @@
                                                                                 <Setter Property="BorderThickness" Value="1" />
                                                                                 <Setter Property="CornerRadius" Value="2" />
                                                                                 <Style.Triggers>
-                                                                                    <DataTrigger Binding="{Binding ConnectedUsers.Count}" Value="0">
+                                                                                    <DataTrigger Binding="{Binding Participants.Count}" Value="0">
                                                                                         <Setter Property="BorderThickness" Value="0" />
                                                                                     </DataTrigger>
                                                                                 </Style.Triggers>
@@ -424,7 +409,7 @@
                                                                                         <Setter Property="BorderThickness" Value="1" />
                                                                                         <Setter Property="CornerRadius" Value="2" />
                                                                                         <Style.Triggers>
-                                                                                            <DataTrigger Binding="{Binding ConnectedUsers.Count}" Value="0">
+                                                                                            <DataTrigger Binding="{Binding Participants.Count}" Value="0">
                                                                                                 <Setter Property="BorderThickness" Value="0" />
                                                                                             </DataTrigger>
                                                                                         </Style.Triggers>
@@ -436,7 +421,7 @@
                                                                                     <Style TargetType="StackPanel">
                                                                                         <Setter Property="Margin" Value="0,4" />
                                                                                         <Style.Triggers>
-                                                                                            <DataTrigger Binding="{Binding ConnectedUsers.Count}" Value="0">
+                                                                                            <DataTrigger Binding="{Binding Participants.Count}" Value="0">
                                                                                                 <Setter Property="Margin" Value="0" />
                                                                                             </DataTrigger>
                                                                                         </Style.Triggers>
@@ -473,7 +458,7 @@
                                                                                                     <Style TargetType="Grid">
                                                                                                         <Setter Property="Opacity" Value="1" />
                                                                                                         <Style.Triggers>
-                                                                                                            <DataTrigger Binding="{Binding Image}" Value="read">
+                                                                                                            <DataTrigger Binding="{Binding AttachmentUri}" Value="read">
                                                                                                                 <Setter Property="Opacity" Value="0.5" />
                                                                                                             </DataTrigger>
                                                                                                             <DataTrigger Binding="{Binding Presence.Status}" Value="Voice">
@@ -487,7 +472,7 @@
                                                                                         </Grid>
                                                                                     </Grid>
                                                                                 </Button>
-                                                                                <ItemsControl ItemsSource="{Binding ConnectedUsers}">
+                                                                                <ItemsControl ItemsSource="{x:Null}">
                                                                                     <ItemsControl.ItemTemplate>
                                                                                         <DataTemplate>
                                                                                             <Border CornerRadius="3" Padding="0" Margin="0,1,0,1" x:Name="VoiceUserBorder" MouseRightButtonUp="VoiceUserContextMenu_Open">
@@ -536,19 +521,19 @@
                                 </ScrollViewer>
                             </Grid>
                         </Grid>
-                        <Grid Grid.Column="0" Panel.ZIndex="50">
+                        <Grid Grid.Column="0" Panel.ZIndex="50" Visibility="Collapsed">
                             <Grid.Style>
                                 <Style TargetType="Grid">
                                     <Setter Property="Visibility" Value="Collapsed" />
                                     <Style.Triggers>
-                                        <DataTrigger Binding="{Binding IsGroupChat}" Value="True">
+                                        <DataTrigger Binding="{Binding IsGroup}" Value="True">
                                             <Setter Property="Visibility" Value="Visible" />
                                         </DataTrigger>
                                     </Style.Triggers>
                                 </Style>
                             </Grid.Style>
                             <Grid.RowDefinitions>
-                                <RowDefinition Height="{Binding TopHeight}" />
+                                <RowDefinition Height="64" />
                                 <RowDefinition Height="*" />
                             </Grid.RowDefinitions>
                             <Grid Margin="0,0,0,0" Grid.Row="0">
@@ -585,7 +570,7 @@
                                             </Style.Triggers>
                                         </Style>
                                     </ScrollViewer.Style>
-                                    <ItemsControl ItemsSource="{Binding Categories}">
+                                    <ItemsControl ItemsSource="{x:Null}">
                                         <ItemsControl.ItemTemplate>
                                             <DataTemplate>
                                                 <Grid>
@@ -620,7 +605,7 @@
                                                                                         <ColumnDefinition Width="*" />
                                                                                     </Grid.ColumnDefinitions>
                                                                                     <Grid Grid.Column="0">
-                                                                                        <controls:ProfilePictureFrame Margin="4,0,0,0" Panel.ZIndex="5" FrameSize="Small" ProfilePicture="{Binding Image}" UserStatus="{Binding Presence.Status}" />
+                                                                                        <controls:ProfilePictureFrame Margin="4,0,0,0" Panel.ZIndex="5" FrameSize="Small" ProfilePicture="{Binding AttachmentUri}" UserStatus="{Binding Presence.Status}" />
                                                                                     </Grid>
                                                                                     <TextBlock VerticalAlignment="Center" Grid.Column="1" Text="{Binding Name}" Foreground="#333" Margin="4,0,0,0" />
                                                                                 </Grid>
@@ -640,20 +625,20 @@
                         </Grid>
                         <Grid Grid.Column="1">
                             <Grid.RowDefinitions>
-                                <RowDefinition Height="{Binding TopHeight}" />
+                                <RowDefinition Height="64" />
                                 <RowDefinition Height="8" />
                                 <RowDefinition Height="*" />
                                 <RowDefinition Height="Auto" />
-                                <RowDefinition Height="{Binding BottomHeight}" />
+                                <RowDefinition Height="32" />
                             </Grid.RowDefinitions>
                             <Grid Grid.Row="0">
                                 <Grid Cursor="SizeNS" VerticalAlignment="Bottom" x:Name="Separator" PreviewMouseDown="Separator_PreviewMouseDown">
-                                    <controls:ColorizedNineSlice Height="12" Slice="1,1" TintColor="{Binding Recipient.Scene.Color}" Image="/Aerochat;component/Resources/Message/Separator.png">
+                                    <controls:ColorizedNineSlice Height="12" Slice="1,1" TintColor="{Binding State.CurrentScene.Color, RelativeSource={RelativeSource AncestorType=local:Chat}}" Image="/Aerochat;component/Resources/Message/Separator.png">
                                         <controls:ColorizedNineSlice.Style>
                                             <Style TargetType="controls:ColorizedNineSlice">
                                                 <Setter Property="Margin" Value="0,0,0,0" />
                                                 <Style.Triggers>
-                                                    <DataTrigger Binding="{Binding Recipient.Scene.Default}" Value="False">
+                                                    <DataTrigger Binding="{Binding State.CurrentScene.IsDefault, RelativeSource={RelativeSource AncestorType=local:Chat}}" Value="False">
                                                         <Setter Property="Margin" Value="0,0,0,-12" />
                                                     </DataTrigger>
                                                 </Style.Triggers>
@@ -663,12 +648,12 @@
                                 </Grid>
                                 <Grid>
                                     <Grid.Resources>
-                                        <DropShadowEffect x:Key="StockDropShadow" ShadowDepth="0" RenderingBias="Performance" Color="{Binding Recipient.Scene.ShadowColor}" BlurRadius="4" />
+                                        <DropShadowEffect x:Key="StockDropShadow" ShadowDepth="0" RenderingBias="Performance" Color="{Binding State.CurrentScene.ShadowColor, RelativeSource={RelativeSource AncestorType=local:Chat}}" BlurRadius="4" />
                                         <DropShadowEffect x:Key="ForceWhiteDropShadow" ShadowDepth="0" RenderingBias="Performance" Color="White" BlurRadius="6" />
                                         <Style x:Key="Shadow" TargetType="Border">
                                             <Setter Property="Effect" Value="{StaticResource StockDropShadow}" />
                                             <Style.Triggers>
-                                                <DataTrigger Binding="{Binding Recipient.Scene.Default}" Value="True">
+                                                <DataTrigger Binding="{Binding State.CurrentScene.IsDefault, RelativeSource={RelativeSource AncestorType=local:Chat}}" Value="True">
                                                     <Setter Property="Effect" Value="{StaticResource ForceWhiteDropShadow}" />
                                                 </DataTrigger>
                                             </Style.Triggers>
@@ -686,14 +671,14 @@
                                                             <Setter Property="Text">
                                                                 <Setter.Value>
                                                                     <MultiBinding StringFormat="{}#{0}">
-                                                                        <Binding Path="Channel.Name" />
+                                                                        <Binding Path="Name" />
                                                                     </MultiBinding>
                                                                 </Setter.Value>
                                                             </Setter>
-                                                            <Setter Property="Foreground" Value="{Binding Recipient.Scene.TextColor}" />
+                                                            <Setter Property="Foreground" Value="{Binding State.CurrentScene.TextColor, RelativeSource={RelativeSource AncestorType=local:Chat}}" />
                                                             <Setter Property="Margin" Value="0,0,0,0" />
                                                             <Style.Triggers>
-                                                                <DataTrigger Binding="{Binding IsDM}" Value="True">
+                                                                <DataTrigger Binding="{Binding IsGroup}" Value="True">
                                                                     <Setter Property="Text">
                                                                         <Setter.Value>
                                                                             <MultiBinding StringFormat="{}{0}">
@@ -703,11 +688,11 @@
                                                                     </Setter>
                                                                     <Setter Property="VerticalAlignment" Value="Center" />
                                                                 </DataTrigger>
-                                                                <DataTrigger Binding="{Binding IsGroupChat}" Value="True">
-                                                                    <Setter Property="Text" Value="{Binding Channel.Name}" />
+                                                                <DataTrigger Binding="{Binding IsGroup}" Value="True">
+                                                                    <Setter Property="Text" Value="{Binding Name}" />
                                                                     <Setter Property="VerticalAlignment" Value="Center" />
                                                                 </DataTrigger>
-                                                                <DataTrigger Binding="{Binding Recipient.Scene.Default}" Value="True">
+                                                                <DataTrigger Binding="{Binding State.CurrentScene.IsDefault, RelativeSource={RelativeSource AncestorType=local:Chat}}" Value="True">
                                                                     <Setter Property="Foreground" Value="Black" />
                                                                 </DataTrigger>
                                                             </Style.Triggers>
@@ -721,11 +706,11 @@
                                                                 <Setter Property="Source" Value="{x:Null}" />
                                                                 <Setter Property="Margin" Value="0,0,0,0" />
                                                                 <Style.Triggers>
-                                                                    <DataTrigger Binding="{Binding Recipient.Presence.Type}" Value="Playing">
+                                                                    <DataTrigger Binding="{Binding Recipient.Presence.Status}" Value="Playing">
                                                                         <Setter Property="Source" Value="/Aerochat;component/Resources/Status/Playing.png" />
                                                                         <Setter Property="Margin" Value="0,5,4,0" />
                                                                     </DataTrigger>
-                                                                    <DataTrigger Binding="{Binding Recipient.Presence.Type}" Value="ListeningTo">
+                                                                    <DataTrigger Binding="{Binding Recipient.Presence.Status}" Value="ListeningTo">
                                                                         <Setter Property="Source" Value="/Aerochat;component/Resources/Status/Listening.png" />
                                                                         <Setter Property="Margin" Value="0,5,4,0" />
                                                                     </DataTrigger>
@@ -738,58 +723,58 @@
                                                             <Style TargetType="TextBlock">
                                                                 <Setter Property="Visibility" Value="Collapsed" />
                                                                 <Setter Property="Margin" Value="0,0,0,0" />
-                                                                <Setter Property="Foreground" Value="{Binding Recipient.Scene.TextColor}" />
+                                                                <Setter Property="Foreground" Value="{Binding State.CurrentScene.TextColor, RelativeSource={RelativeSource AncestorType=local:Chat}}" />
                                                                 <Style.Triggers>
-                                                                    <DataTrigger Binding="{Binding Path=IsDM}" Value="False">
+                                                                    <DataTrigger Binding="{Binding Path=IsGroup}" Value="False">
                                                                         <Setter Property="Visibility" Value="Visible" />
-                                                                        <Setter Property="Text" Value="{Binding Path=Channel.Topic}" />
+                                                                        <Setter Property="Text" Value="{Binding Path=Topic}" />
                                                                         <Setter Property="Margin" Value="0,2,0,6" />
                                                                     </DataTrigger>
 
-                                                                    <DataTrigger Binding="{Binding Recipient.Presence.Type}" Value="Custom">
+                                                                    <DataTrigger Binding="{Binding Recipient.Presence.Status}" Value="Custom">
                                                                         <Setter Property="Visibility" Value="Visible" />
-                                                                        <Setter Property="Text" Value="{Binding Path=Recipient.Presence.Presence}" />
+                                                                        <Setter Property="Text" Value="{Binding Path=Recipient.Presence.Activity}" />
                                                                         <Setter Property="Margin" Value="0,2,0,6" />
                                                                     </DataTrigger>
 
-                                                                    <DataTrigger Binding="{Binding Recipient.Presence.Type}" Value="Streaming">
+                                                                    <DataTrigger Binding="{Binding Recipient.Presence.Status}" Value="Streaming">
                                                                         <Setter Property="Visibility" Value="Visible" />
-                                                                        <Setter Property="Text" Value="{Binding Path=Recipient.Presence.Presence}" />
+                                                                        <Setter Property="Text" Value="{Binding Path=Recipient.Presence.Activity}" />
                                                                         <Setter Property="Margin" Value="0,2,0,6" />
                                                                     </DataTrigger>
 
-                                                                    <DataTrigger Binding="{Binding Recipient.Presence.Type}" Value="Watching">
+                                                                    <DataTrigger Binding="{Binding Recipient.Presence.Status}" Value="Watching">
                                                                         <Setter Property="Visibility" Value="Visible" />
-                                                                        <Setter Property="Text" Value="{Binding Path=Recipient.Presence.Presence}" />
+                                                                        <Setter Property="Text" Value="{Binding Path=Recipient.Presence.Activity}" />
                                                                         <Setter Property="Margin" Value="0,2,0,6" />
                                                                     </DataTrigger>
 
-                                                                    <DataTrigger Binding="{Binding Recipient.Presence.Type}" Value="Competing">
+                                                                    <DataTrigger Binding="{Binding Recipient.Presence.Status}" Value="Competing">
                                                                         <Setter Property="Visibility" Value="Visible" />
-                                                                        <Setter Property="Text" Value="{Binding Path=Recipient.Presence.Presence}" />
+                                                                        <Setter Property="Text" Value="{Binding Path=Recipient.Presence.Activity}" />
                                                                         <Setter Property="Margin" Value="0,2,0,6" />
                                                                     </DataTrigger>
 
-                                                                    <DataTrigger Binding="{Binding Recipient.Presence.Type}" Value="Playing">
+                                                                    <DataTrigger Binding="{Binding Recipient.Presence.Status}" Value="Playing">
                                                                         <Setter Property="Visibility" Value="Visible" />
-                                                                        <Setter Property="Text" Value="{Binding Path=Recipient.Presence.Presence}" />
+                                                                        <Setter Property="Text" Value="{Binding Path=Recipient.Presence.Activity}" />
                                                                         <Setter Property="Margin" Value="0,5,0,6" />
                                                                     </DataTrigger>
 
-                                                                    <DataTrigger Binding="{Binding Recipient.Presence.Type}" Value="ListeningTo">
+                                                                    <DataTrigger Binding="{Binding Recipient.Presence.Status}" Value="ListeningTo">
                                                                         <Setter Property="Visibility" Value="Visible" />
-                                                                        <Setter Property="Text" Value="{Binding Path=Recipient.Presence.Presence}" />
+                                                                        <Setter Property="Text" Value="{Binding Path=Recipient.Presence.Activity}" />
                                                                         <Setter Property="Margin" Value="0,5,0,6" />
                                                                     </DataTrigger>
 
-                                                                    <DataTrigger Binding="{Binding Recipient.Scene.Default}" Value="True">
+                                                                    <DataTrigger Binding="{Binding State.CurrentScene.IsDefault, RelativeSource={RelativeSource AncestorType=local:Chat}}" Value="True">
                                                                         <Setter Property="Foreground" Value="Black" />
                                                                     </DataTrigger>
 
                                                                     <MultiDataTrigger>
                                                                         <MultiDataTrigger.Conditions>
-                                                                            <Condition Binding="{Binding IsDM}" Value="False" />
-                                                                            <Condition Binding="{Binding Channel.Topic}" Value="" />
+                                                                            <Condition Binding="{Binding IsGroup}" Value="False" />
+                                                                            <Condition Binding="{Binding Topic}" Value="" />
                                                                         </MultiDataTrigger.Conditions>
                                                                         <MultiDataTrigger.Setters>
                                                                             <Setter Property="Visibility" Value="Collapsed" />
@@ -809,7 +794,7 @@
                                 <ItemsControl.Style>
                                     <Style TargetType="ItemsControl">
                                         <Style.Triggers>
-                                            <DataTrigger Binding="{Binding Loading}" Value="True">
+                                            <DataTrigger Binding="{Binding TargetMode}" Value="True">
                                                 <Setter Property="Visibility" Value="Collapsed" />
                                             </DataTrigger>
                                         </Style.Triggers>
@@ -889,7 +874,7 @@
                                                     <Setter Property="Background" Value="Transparent" />
 
                                                     <Style.Triggers>
-                                                        <DataTrigger Binding="{Binding Path=Ephemeral}" Value="True">
+                                                        <DataTrigger Binding="{Binding Path=IsOutgoing}" Value="True">
                                                             <Setter Property="Opacity" Value="0.5" />
                                                         </DataTrigger>
 
@@ -901,7 +886,7 @@
                                                             </Setter>
                                                         </DataTrigger>
 
-                                                        <DataTrigger Binding="{Binding Path=IsSelectedForUiAction}" Value="True">
+                                                        <DataTrigger Binding="{Binding Path=IsOutgoing}" Value="True">
                                                             <Setter Property="Background">
                                                                 <Setter.Value>
                                                                     <SolidColorBrush Color="AliceBlue" Opacity="1" />
@@ -921,10 +906,10 @@
                                                     <Style TargetType="Rectangle">
                                                         <Setter Property="Visibility" Value="Collapsed" />
                                                         <Style.Triggers>
-                                                            <DataTrigger Binding="{Binding Special}" Value="True">
+                                                            <DataTrigger Binding="{Binding IsOutgoing}" Value="True">
                                                                 <Setter Property="Visibility" Value="Visible" />
                                                             </DataTrigger>
-                                                            <DataTrigger Binding="{Binding HiddenInfo}" Value="True">
+                                                            <DataTrigger Binding="{Binding IsOutgoing}" Value="True">
                                                                 <Setter Property="Visibility" Value="Collapsed" />
                                                             </DataTrigger>
                                                         </Style.Triggers>
@@ -936,13 +921,13 @@
                                                     <Style TargetType="StackPanel">
                                                         <Setter Property="Visibility" Value="Visible" />
                                                         <Style.Triggers>
-                                                            <DataTrigger Binding="{Binding HiddenInfo}" Value="True">
+                                                            <DataTrigger Binding="{Binding IsOutgoing}" Value="True">
                                                                 <Setter Property="Visibility" Value="Collapsed" />
                                                             </DataTrigger>
-                                                            <DataTrigger Binding="{Binding Special}" Value="True">
+                                                            <DataTrigger Binding="{Binding IsOutgoing}" Value="True">
                                                                 <Setter Property="Visibility" Value="Collapsed" />
                                                             </DataTrigger>
-                                                            <DataTrigger Binding="{Binding IsReply}" Value="True">
+                                                            <DataTrigger Binding="{Binding ReplyTo}" Value="True">
                                                                 <Setter Property="Visibility" Value="Visible" />
                                                             </DataTrigger>
                                                         </Style.Triggers>
@@ -953,7 +938,7 @@
                                                         <Style TargetType="Grid">
                                                             <Setter Property="Visibility" Value="Collapsed" />
                                                             <Style.Triggers>
-                                                                <DataTrigger Binding="{Binding IsReply}" Value="True">
+                                                                <DataTrigger Binding="{Binding ReplyTo}" Value="True">
                                                                     <Setter Property="Visibility" Value="Visible" />
                                                                 </DataTrigger>
                                                             </Style.Triggers>
@@ -973,9 +958,9 @@
                                                     </Grid>
                                                     <Grid Grid.Column="1" Margin="0,4,0,2" MouseLeftButtonDown="JumpToReply" Cursor="Hand">
                                                         <TextBlock FontSize="9" TextWrapping="Wrap" VerticalAlignment="Top" Margin="0,0,16,0" MaxHeight="24" TextTrimming="CharacterEllipsis">
-                                                            <Run Text="{Binding ReplyMessage.Author.Name}" Foreground="{Binding ReplyMessage.Author.Color}" />
+                                                            <Run Text="{Binding ReplyTo.Author.Name}" Foreground="{Binding ReplyTo.Author.Color}" />
                                                             <Run Text="{loc:Loc ChatReplySaid}" Foreground="#525252" />
-                                                            <Run Text="{Binding ReplyMessage.Message}" Foreground="#525252" />
+                                                            <Run Text="{Binding ReplyTo.Message}" Foreground="#525252" />
                                                         </TextBlock>
                                                     </Grid>
                                                 </Grid>
@@ -984,10 +969,10 @@
                                                         <Style TargetType="StackPanel">
                                                             <Setter Property="Visibility" Value="Visible" />
                                                             <Style.Triggers>
-                                                                <DataTrigger Binding="{Binding HiddenInfo}" Value="True">
+                                                                <DataTrigger Binding="{Binding IsOutgoing}" Value="True">
                                                                     <Setter Property="Visibility" Value="Collapsed" />
                                                                 </DataTrigger>
-                                                                <DataTrigger Binding="{Binding Special}" Value="True">
+                                                                <DataTrigger Binding="{Binding IsOutgoing}" Value="True">
                                                                     <Setter Property="Visibility" Value="Collapsed" />
                                                                 </DataTrigger>
                                                             </Style.Triggers>
@@ -998,7 +983,7 @@
                                                             <TextBlock Text="{Binding Path=Author.Name}" Foreground="{Binding Author.Color}" Style="{StaticResource AuthorNameTextBlockStyle}" />
                                                         </Button.Content>
                                                     </Button>
-                                                    <Image Margin="2,0,0,0" Source="{Binding Author.Image, Converter={StaticResource imageConverter}}" Width="20" Height="20">
+                                                    <Image Margin="2,0,0,0" Source="{Binding Author.Image}" Width="20" Height="20">
                                                         <Image.Style>
                                                             <Style TargetType="Image">
                                                                 <Style.Triggers>
@@ -1013,7 +998,7 @@
                                                         </Image.Style>
                                                     </Image>
                                                     <TextBlock FontSize="13" Grid.Row="0" Text="{loc:Loc ChatEditSaid}" Foreground="#525252" />
-                                                    <TextBlock FontSize="13" Grid.Row="0" Text="{Binding TimestampString}" Foreground="#525252" />
+                                                    <TextBlock FontSize="13" Grid.Row="0" Text="{Binding SentAt}" Foreground="#525252" />
                                                     <TextBlock FontSize="13" Grid.Row="0" Text="{loc:Loc ChatEditSaidClose}" Foreground="#525252" />
                                                 </StackPanel>
                                             </StackPanel>
@@ -1028,55 +1013,55 @@
                                                             <Style TargetType="Rectangle">
                                                                 <Setter Property="Visibility" Value="Visible" />
                                                                 <Style.Triggers>
-                                                                    <DataTrigger Binding="{Binding Special}" Value="True">
+                                                                    <DataTrigger Binding="{Binding IsOutgoing}" Value="True">
                                                                         <Setter Property="Visibility" Value="Collapsed" />
                                                                     </DataTrigger>
                                                                 </Style.Triggers>
                                                             </Style>
                                                         </Rectangle.Style>
                                                     </Rectangle>
-                                                    <controls:MessageParser FontSize="13" Grid.Column="1" HorizontalAlignment="Stretch" Message="{Binding MessageEntity}" HyperlinkClicked="MessageParser_HyperlinkClicked">
+                                                    <controls:MessageParser FontSize="13" Grid.Column="1" HorizontalAlignment="Stretch" Message="{Binding Body}" HyperlinkClicked="MessageParser_HyperlinkClicked">
                                                         <controls:MessageParser.Style>
                                                             <Style TargetType="controls:MessageParser">
                                                                 <Setter Property="Visibility" Value="Visible" />
                                                                 <Style.Triggers>
-                                                                    <DataTrigger Binding="{Binding Special}" Value="True">
+                                                                    <DataTrigger Binding="{Binding IsOutgoing}" Value="True">
                                                                         <Setter Property="Visibility" Value="Collapsed" />
                                                                     </DataTrigger>
                                                                 </Style.Triggers>
                                                             </Style>
                                                         </controls:MessageParser.Style>
                                                     </controls:MessageParser>
-                                                    <TextBlock Margin="0,4,0,0" FontSize="13" Grid.Column="1" HorizontalAlignment="Stretch" TextTrimming="WordEllipsis" Text="{Binding Message}">
+                                                    <TextBlock Margin="0,4,0,0" FontSize="13" Grid.Column="1" HorizontalAlignment="Stretch" TextTrimming="WordEllipsis" Text="{Binding Body}">
                                                         <TextBlock.Style>
                                                             <Style TargetType="TextBlock">
                                                                 <Setter Property="Visibility" Value="Collapsed" />
                                                                 <Style.Triggers>
-                                                                    <DataTrigger Binding="{Binding Special}" Value="True">
+                                                                    <DataTrigger Binding="{Binding IsOutgoing}" Value="True">
                                                                         <Setter Property="Visibility" Value="Visible" />
                                                                     </DataTrigger>
-                                                                    <DataTrigger Binding="{Binding Type}" Value="GuildMemberJoin">
+                                                                    <DataTrigger Binding="{Binding Body}" Value="GuildMemberJoin">
                                                                         <Setter Property="Foreground" Value="Green" />
                                                                     </DataTrigger>
-                                                                    <DataTrigger Binding="{Binding Type}" Value="Call">
+                                                                    <DataTrigger Binding="{Binding Body}" Value="Call">
                                                                         <Setter Property="Foreground" Value="Green" />
                                                                     </DataTrigger>
-                                                                    <DataTrigger Binding="{Binding Type}" Value="RecipientAdd">
+                                                                    <DataTrigger Binding="{Binding Body}" Value="RecipientAdd">
                                                                         <Setter Property="Foreground" Value="Green" />
                                                                     </DataTrigger>
-                                                                    <DataTrigger Binding="{Binding Type}" Value="RecipientRemove">
+                                                                    <DataTrigger Binding="{Binding Body}" Value="RecipientRemove">
                                                                         <Setter Property="Foreground" Value="#800000" />
                                                                     </DataTrigger>
-                                                                    <DataTrigger Binding="{Binding Type}" Value="UserPremiumGuildSubscription">
+                                                                    <DataTrigger Binding="{Binding Body}" Value="UserPremiumGuildSubscription">
                                                                         <Setter Property="Foreground" Value="#bb32c2" />
                                                                     </DataTrigger>
-                                                                    <DataTrigger Binding="{Binding Type}" Value="TierOneUserPremiumGuildSubscription">
+                                                                    <DataTrigger Binding="{Binding Body}" Value="TierOneUserPremiumGuildSubscription">
                                                                         <Setter Property="Foreground" Value="#bb32c2" />
                                                                     </DataTrigger>
-                                                                    <DataTrigger Binding="{Binding Type}" Value="TierTwoUserPremiumGuildSubscription">
+                                                                    <DataTrigger Binding="{Binding Body}" Value="TierTwoUserPremiumGuildSubscription">
                                                                         <Setter Property="Foreground" Value="#bb32c2" />
                                                                     </DataTrigger>
-                                                                    <DataTrigger Binding="{Binding Type}" Value="TierThreeUserPremiumGuildSubscription">
+                                                                    <DataTrigger Binding="{Binding Body}" Value="TierThreeUserPremiumGuildSubscription">
                                                                         <Setter Property="Foreground" Value="#bb32c2" />
                                                                     </DataTrigger>
                                                                 </Style.Triggers>
@@ -1087,14 +1072,14 @@
                                                         <Style TargetType="Grid">
                                                             <Setter Property="Visibility" Value="Visible" />
                                                             <Style.Triggers>
-                                                                <DataTrigger Binding="{Binding Path=Message}" Value="">
+                                                                <DataTrigger Binding="{Binding Path=Body}" Value="">
                                                                     <Setter Property="Visibility" Value="Collapsed" />
                                                                 </DataTrigger>
                                                             </Style.Triggers>
                                                         </Style>
                                                     </Grid.Style>
                                                 </Grid>
-                                                <ItemsControl ItemsSource="{Binding Embeds}">
+                                                <ItemsControl ItemsSource="{Binding Body}">
                                                     <ItemsControl.ItemTemplate>
                                                         <DataTemplate>
                                                             <Border Background="White" BorderBrush="#66000000" BorderThickness="1" CornerRadius="4" Margin="0,0,12,4">
@@ -1110,17 +1095,17 @@
                                                                                 <Style TargetType="TextBlock">
                                                                                     <Setter Property="Visibility" Value="Visible" />
                                                                                     <Style.Triggers>
-                                                                                        <DataTrigger Binding="{Binding Provider}" Value="{x:Null}">
+                                                                                        <DataTrigger Binding="{Binding Body}" Value="{x:Null}">
                                                                                             <Setter Property="Visibility" Value="Collapsed" />
                                                                                         </DataTrigger>
-                                                                                        <DataTrigger Binding="{Binding Provider}" Value="{x:Null}">
+                                                                                        <DataTrigger Binding="{Binding Body}" Value="{x:Null}">
                                                                                             <Setter Property="Visibility" Value="Collapsed" />
                                                                                         </DataTrigger>
                                                                                     </Style.Triggers>
                                                                                 </Style>
                                                                             </TextBlock.Style>
-                                                                            <Hyperlink Click="OnEmbedProviderHyperlinkClicked" Foreground="{x:Static SystemColors.ControlTextBrush}">
-                                                                                <TextBlock Text="{Binding Provider.Name}" />
+                                                                            <Hyperlink Click="OnEmbedBodyHyperlinkClicked" Foreground="{x:Static SystemColors.ControlTextBrush}">
+                                                                                <TextBlock Text="{Binding Body}" />
                                                                             </Hyperlink>
                                                                         </TextBlock>
                                                                         <!-- Embed author -->
@@ -1162,12 +1147,12 @@
                                                                             </Hyperlink>
                                                                         </TextBlock>
                                                                         <!-- Embed description -->
-                                                                        <TextBlock Margin="0,4,0,0" TextWrapping="Wrap" Text="{Binding Description}">
+                                                                        <TextBlock Margin="0,4,0,0" TextWrapping="Wrap" Text="{Binding Body}">
                                                                             <TextBlock.Style>
                                                                                 <Style TargetType="TextBlock">
                                                                                     <Setter Property="Visibility" Value="Visible" />
                                                                                     <Style.Triggers>
-                                                                                        <DataTrigger Binding="{Binding Description}" Value="{x:Null}">
+                                                                                        <DataTrigger Binding="{Binding Body}" Value="{x:Null}">
                                                                                             <Setter Property="Visibility" Value="Collapsed" />
                                                                                         </DataTrigger>
                                                                                     </Style.Triggers>
@@ -1175,12 +1160,12 @@
                                                                             </TextBlock.Style>
                                                                         </TextBlock>
                                                                         <!-- Embed image -->
-                                                                        <Image RenderOptions.BitmapScalingMode="HighQuality" Margin="0,24,0,0" Source="{Binding Image.Url}" MaxWidth="500" MaxHeight="250" Width="{Binding Image.Width}" Height="{Binding Image.Height}" HorizontalAlignment="Left" Cursor="Hand" MouseLeftButtonDown="OpenMediaEmbed" Tag="{Binding Image}">
+                                                                        <Image RenderOptions.BitmapScalingMode="HighQuality" Margin="0,24,0,0" Source="{Binding AttachmentUri}" MaxWidth="500" MaxHeight="250" Width="{Binding Image.Width}" Height="{Binding Image.Height}" HorizontalAlignment="Left" Cursor="Hand" MouseLeftButtonDown="OpenMediaEmbed" Tag="{Binding AttachmentUri}">
                                                                             <Image.Style>
                                                                                 <Style TargetType="Image">
                                                                                     <Setter Property="Visibility" Value="Visible" />
                                                                                     <Style.Triggers>
-                                                                                        <DataTrigger Binding="{Binding Image.Url}" Value="{x:Null}">
+                                                                                        <DataTrigger Binding="{Binding AttachmentUri}" Value="{x:Null}">
                                                                                             <Setter Property="Visibility" Value="Collapsed" />
                                                                                         </DataTrigger>
                                                                                     </Style.Triggers>
@@ -1188,12 +1173,12 @@
                                                                             </Image.Style>
                                                                         </Image>
                                                                         <!-- Embed thumbnail -->
-                                                                        <Image RenderOptions.BitmapScalingMode="HighQuality" Margin="0,24,0,0" Source="{Binding Thumbnail.Url}" MaxWidth="500" MaxHeight="250" Width="{Binding Thumbnail.Width}" Height="{Binding Thumbnail.Height}" HorizontalAlignment="Left" Cursor="Hand" MouseLeftButtonDown="OpenMediaEmbed" Tag="{Binding Thumbnail}">
+                                                                        <Image RenderOptions.BitmapScalingMode="HighQuality" Margin="0,24,0,0" Source="{Binding AttachmentUri}" MaxWidth="500" MaxHeight="250" Width="{Binding Thumbnail.Width}" Height="{Binding Thumbnail.Height}" HorizontalAlignment="Left" Cursor="Hand" MouseLeftButtonDown="OpenMediaEmbed" Tag="{Binding AttachmentUri}">
                                                                             <Image.Style>
                                                                                 <Style TargetType="Image">
                                                                                     <Setter Property="Visibility" Value="Visible" />
                                                                                     <Style.Triggers>
-                                                                                        <DataTrigger Binding="{Binding Thumbnail.Url}" Value="{x:Null}">
+                                                                                        <DataTrigger Binding="{Binding AttachmentUri}" Value="{x:Null}">
                                                                                             <Setter Property="Visibility" Value="Collapsed" />
                                                                                         </DataTrigger>
                                                                                     </Style.Triggers>
@@ -1206,7 +1191,7 @@
                                                         </DataTemplate>
                                                     </ItemsControl.ItemTemplate>
                                                 </ItemsControl>
-                                                <ItemsControl ItemsSource="{Binding Attachments}">
+                                                <ItemsControl ItemsSource="{x:Null}">
                                                     <ItemsControl.ItemTemplate>
                                                         <DataTemplate>
                                                             <StackPanel>
@@ -1216,12 +1201,12 @@
                                                                             <Setter Property="Visibility" Value="Collapsed" />
                                                                             <Setter Property="Source" Value="{x:Null}" />
                                                                             <Style.Triggers>
-                                                                                <DataTrigger Binding="{Binding MediaType}" Value="{x:Static enums:MediaType.Image}">
-                                                                                    <Setter Property="Source" Value="{Binding Url}" />
+                                                                                <DataTrigger Binding="{Binding AttachmentUri}" Value="{x:Null}">
+                                                                                    <Setter Property="Source" Value="{Binding AttachmentUri}" />
                                                                                     <Setter Property="Visibility" Value="Visible" />
                                                                                 </DataTrigger>
-                                                                                <DataTrigger Binding="{Binding MediaType}" Value="{x:Static enums:MediaType.Gif}">
-                                                                                    <Setter Property="gif:AnimationBehavior.SourceUri" Value="{Binding Url}" />
+                                                                                <DataTrigger Binding="{Binding AttachmentUri}" Value="{x:Null}">
+                                                                                    <Setter Property="gif:AnimationBehavior.SourceUri" Value="{Binding AttachmentUri}" />
                                                                                     <Setter Property="Visibility" Value="Visible" />
                                                                                 </DataTrigger>
                                                                             </Style.Triggers>
@@ -1243,8 +1228,8 @@
                                                                         <Style TargetType="controls:AudioPlayer">
                                                                             <Setter Property="Visibility" Value="Collapsed" />
                                                                             <Style.Triggers>
-                                                                                <DataTrigger Binding="{Binding MediaType}" Value="{x:Static enums:MediaType.Audio}">
-                                                                                    <Setter Property="Url" Value="{Binding Url}"/>
+                                                                                <DataTrigger Binding="{Binding AttachmentUri}" Value="{x:Null}">
+                                                                                    <Setter Property="Url" Value="{Binding AttachmentUri}"/>
                                                                                     <Setter Property="Name" Value="{Binding Name}"/>
                                                                                     <Setter Property="Visibility" Value="Visible" />
                                                                                 </DataTrigger>
@@ -1261,7 +1246,7 @@
                                                         <Style TargetType="Rectangle">
                                                             <Setter Property="Visibility" Value="Visible" />
                                                             <Style.Triggers>
-                                                                <DataTrigger Binding="{Binding Attachments.Count}" Value="0">
+                                                                <DataTrigger Binding="{Binding AttachmentUri}" Value="0">
                                                                     <Setter Property="Visibility" Value="Collapsed" />
                                                                 </DataTrigger>
                                                             </Style.Triggers>
@@ -1275,7 +1260,7 @@
                                                     <Style TargetType="Rectangle">
                                                         <Setter Property="Visibility" Value="Collapsed" />
                                                         <Style.Triggers>
-                                                            <DataTrigger Binding="{Binding Special}" Value="True">
+                                                            <DataTrigger Binding="{Binding IsOutgoing}" Value="True">
                                                                 <Setter Property="Visibility" Value="Visible" />
                                                             </DataTrigger>
                                                         </Style.Triggers>
@@ -1291,7 +1276,7 @@
                                 <Grid.Style>
                                     <Style TargetType="Grid">
                                         <Style.Triggers>
-                                            <DataTrigger Binding="{Binding Loading}" Value="False">
+                                            <DataTrigger Binding="{Binding TargetMode}" Value="False">
                                                 <Setter Property="Visibility" Value="Collapsed" />
                                             </DataTrigger>
                                         </Style.Triggers>
@@ -1307,7 +1292,7 @@
                                             <DataTrigger Binding="{Binding Messages.Count}" Value="0">
                                                 <Setter Property="Visibility" Value="Visible" />
                                             </DataTrigger>
-                                            <DataTrigger Binding="{Binding Loading}" Value="True">
+                                            <DataTrigger Binding="{Binding TargetMode}" Value="True">
                                                 <Setter Property="Visibility" Value="Collapsed" />
                                             </DataTrigger>
                                         </Style.Triggers>
@@ -1328,7 +1313,7 @@
                                                 <Style TargetType="controls:AnimatedTileImage">
                                                     <Setter Property="Visibility" Value="Visible" />
                                                     <Style.Triggers>
-                                                        <DataTrigger Binding="{Binding DataContext.TypingString, ElementName=Window}" Value="">
+                                                        <DataTrigger Binding="{Binding TypingText}" Value="">
                                                             <Setter Property="Visibility" Value="Collapsed" />
                                                         </DataTrigger>
 
@@ -1339,25 +1324,25 @@
                                         <TextBlock Grid.Column="1" Foreground="#888888" TextTrimming="CharacterEllipsis">
                                             <TextBlock.Style>
                                                 <Style TargetType="TextBlock">
-                                                    <Setter Property="Text" Value="{Binding TypingString, Mode=OneWay}" />
+                                                    <Setter Property="Text" Value="{Binding TypingText, Mode=OneWay}" />
                                                     <Style.Triggers>
-                                                        <DataTrigger Binding="{Binding TypingString, Mode=OneWay}" Value="">
-                                                            <Setter Property="Text" Value="{Binding LastReceivedMessage.LastMessageReceivedString}"/>
+                                                        <DataTrigger Binding="{Binding TypingText, Mode=OneWay}" Value="">
+                                                            <Setter Property="Text" Value="{Binding SentAt}"/>
                                                         </DataTrigger>
                                                     </Style.Triggers>
                                                 </Style>
                                             </TextBlock.Style>
                                         </TextBlock>
                                     </Grid>
-                                    <controls:ColorizedNineSlice TintColor="{Binding Recipient.Scene.Color}" Cursor="SizeNS" PreviewMouseDown="BottomSeparator_PreviewMouseDown" x:Name="BottomSeparator" Height="8" Slice="64,2" VerticalAlignment="Bottom" HorizontalAlignment="Stretch" Image="/Aerochat;component/Resources/Message/BottomSeparator.png" />
+                                    <controls:ColorizedNineSlice TintColor="{Binding State.CurrentScene.Color, RelativeSource={RelativeSource AncestorType=local:Chat}}" Cursor="SizeNS" PreviewMouseDown="BottomSeparator_PreviewMouseDown" x:Name="BottomSeparator" Height="8" Slice="64,2" VerticalAlignment="Bottom" HorizontalAlignment="Stretch" Image="/Aerochat;component/Resources/Message/BottomSeparator.png" />
                                 </StackPanel>
                             </Grid>
-                            <Grid Grid.Row="4" Margin="0,0,18,0" IsHitTestVisible="{Binding Channel.CanTalk}">
+                            <Grid Grid.Row="4" Margin="0,0,18,0" IsHitTestVisible="True">
                                 <Grid.Style>
                                     <Style TargetType="Grid">
                                         <Setter Property="Opacity" Value="1" />
                                         <Style.Triggers>
-                                            <DataTrigger Binding="{Binding Channel.CanTalk}" Value="False">
+                                            <DataTrigger Binding="{Binding TargetMode}" Value="False">
                                                 <Setter Property="Opacity" Value="0.5" />
                                             </DataTrigger>
                                         </Style.Triggers>
@@ -1373,15 +1358,15 @@
                                 </Grid.RowDefinitions>
                                 <!-- Super huge height to hack around the reused background being cut off: -->
                                 <Grid x:Name="PART_ReplyTargetContainer" Grid.Row="0" Height="100">
-                                    <controls:ColorizedNineSlice HorizontalAlignment="Stretch" VerticalAlignment="Stretch" Image="/Aerochat;component/Resources/Message/InputBackground.png" Slice="16,16" TintColor="{Binding Recipient.Scene.Color}">
+                                    <controls:ColorizedNineSlice HorizontalAlignment="Stretch" VerticalAlignment="Stretch" Image="/Aerochat;component/Resources/Message/InputBackground.png" Slice="16,16" TintColor="{Binding State.CurrentScene.Color, RelativeSource={RelativeSource AncestorType=local:Chat}}">
                                         <controls:ColorizedNineSlice.Style>
                                             <Style TargetType="controls:ColorizedNineSlice">
                                                 <Setter Property="Darken" Value="0.25" />
                                                 <Style.Triggers>
-                                                    <DataTrigger Binding="{Binding Channel.CanTalk}" Value="False">
+                                                    <DataTrigger Binding="{Binding TargetMode}" Value="False">
                                                         <Setter Property="Darken" Value="1" />
                                                     </DataTrigger>
-                                                    <DataTrigger Binding="{Binding IsDM}" Value="true">
+                                                    <DataTrigger Binding="{Binding IsGroup}" Value="true">
                                                         <Setter Property="Darken" Value="0.25" />
                                                     </DataTrigger>
                                                 </Style.Triggers>
@@ -1413,7 +1398,7 @@
                                         <ColumnDefinition Width="16*"/>
                                         <ColumnDefinition Width="65*"/>
                                     </Grid.ColumnDefinitions>
-                                    <RichTextBox Visibility="Visible" ScrollViewer.ScrollChanged="MessageTextBox_SizeChanged" TextChanged="MessageTextBox_TextChanged" IsEnabled="{Binding Channel.CanTalk}" LostFocus="MessageTextBox_LostFocus" IsInactiveSelectionHighlightEnabled="True" VerticalScrollBarVisibility="Auto" AcceptsReturn="True" PreviewKeyDown="MessageTextBox_PreviewKeyDown" Padding="3,4" Background="Transparent" FontSize="14" Panel.ZIndex="10" x:Name="MessageTextBox" Grid.ColumnSpan="2">
+                                    <RichTextBox Visibility="Visible" ScrollViewer.ScrollChanged="MessageTextBox_SizeChanged" TextChanged="MessageTextBox_TextChanged" IsEnabled="True" LostFocus="MessageTextBox_LostFocus" IsInactiveSelectionHighlightEnabled="True" VerticalScrollBarVisibility="Auto" AcceptsReturn="True" PreviewKeyDown="MessageTextBox_PreviewKeyDown" Padding="3,4" Background="Transparent" FontSize="14" Panel.ZIndex="10" x:Name="MessageTextBox" Grid.ColumnSpan="2" Tag="{Binding Draft}">
                                         <RichTextBox.Style>
                                             <Style BasedOn="{x:Null}" TargetType="{x:Type RichTextBox}">
                                                 <Style.Resources>
@@ -1444,15 +1429,15 @@
                                             <Button x:Name="CanvasButton" Click="CanvasButton_Click" IsDefault="True" Width="72" Content="{loc:Loc ChatSendButton}" />
                                         </Grid>
                                     </Grid>
-                                    <controls:ColorizedNineSlice Image="/Aerochat;component/Resources/Message/InputBackground.png" Slice="16,16" TintColor="{Binding Recipient.Scene.Color}" Grid.ColumnSpan="2">
+                                    <controls:ColorizedNineSlice Image="/Aerochat;component/Resources/Message/InputBackground.png" Slice="16,16" TintColor="{Binding State.CurrentScene.Color, RelativeSource={RelativeSource AncestorType=local:Chat}}" Grid.ColumnSpan="2">
                                         <controls:ColorizedNineSlice.Style>
                                             <Style TargetType="controls:ColorizedNineSlice">
                                                 <Setter Property="Darken" Value="0.25" />
                                                 <Style.Triggers>
-                                                    <DataTrigger Binding="{Binding Channel.CanTalk}" Value="False">
+                                                    <DataTrigger Binding="{Binding TargetMode}" Value="False">
                                                         <Setter Property="Darken" Value="1" />
                                                     </DataTrigger>
-                                                    <DataTrigger Binding="{Binding IsDM}" Value="true">
+                                                    <DataTrigger Binding="{Binding IsGroup}" Value="true">
                                                         <Setter Property="Darken" Value="0.25" />
                                                     </DataTrigger>
                                                 </Style.Triggers>
@@ -1464,10 +1449,10 @@
                                             <Style TargetType="TextBlock">
                                                 <Setter Property="Visibility" Value="Collapsed" />
                                                 <Style.Triggers>
-                                                    <DataTrigger Binding="{Binding IsDM}" Value="True">
+                                                    <DataTrigger Binding="{Binding IsGroup}" Value="True">
                                                         <Setter Property="Visibility" Value="Hidden" />
                                                     </DataTrigger>
-                                                    <DataTrigger Binding="{Binding Channel.CanTalk}" Value="False">
+                                                    <DataTrigger Binding="{Binding TargetMode}" Value="False">
                                                         <Setter Property="Visibility" Value="Visible" />
                                                     </DataTrigger>
                                                 </Style.Triggers>
@@ -1475,15 +1460,15 @@
                                         </TextBlock.Style>
                                     </TextBlock>
                                 </Grid>
-                                <controls:ColorizedNineSlice Image="/Aerochat;component/Resources/Message/SpeechBubbleArrow.png" Slice="4,4" Panel.ZIndex="12" Grid.Row="1"  UseLayoutRounding="False" Width="12" Height="13" HorizontalAlignment="Left" VerticalAlignment="Bottom" Margin="-12,0,0,0" TintColor="{Binding Recipient.Scene.Color}">
+                                <controls:ColorizedNineSlice Image="/Aerochat;component/Resources/Message/SpeechBubbleArrow.png" Slice="4,4" Panel.ZIndex="12" Grid.Row="1"  UseLayoutRounding="False" Width="12" Height="13" HorizontalAlignment="Left" VerticalAlignment="Bottom" Margin="-12,0,0,0" TintColor="{Binding State.CurrentScene.Color, RelativeSource={RelativeSource AncestorType=local:Chat}}">
                                     <controls:ColorizedNineSlice.Style>
                                         <Style TargetType="controls:ColorizedNineSlice">
                                             <Setter Property="Darken" Value="0.25" />
                                             <Style.Triggers>
-                                                <DataTrigger Binding="{Binding Channel.CanTalk}" Value="False">
+                                                <DataTrigger Binding="{Binding TargetMode}" Value="False">
                                                     <Setter Property="Darken" Value="1" />
                                                 </DataTrigger>
-                                                <DataTrigger Binding="{Binding IsDM}" Value="true">
+                                                <DataTrigger Binding="{Binding IsGroup}" Value="true">
                                                     <Setter Property="Darken" Value="0.25" />
                                                 </DataTrigger>
                                             </Style.Triggers>
@@ -1495,15 +1480,15 @@
                                         <ColumnDefinition Width="12*"/>
                                         <ColumnDefinition Width="89*"/>
                                     </Grid.ColumnDefinitions>
-                                    <controls:ColorizedNineSlice Image="/Aerochat;component/Resources/Message/BottomToolbar.png" TintColor="{Binding Recipient.Scene.Color}" Margin="-1,-1,0,-1" Grid.ColumnSpan="2">
+                                    <controls:ColorizedNineSlice Image="/Aerochat;component/Resources/Message/BottomToolbar.png" TintColor="{Binding State.CurrentScene.Color, RelativeSource={RelativeSource AncestorType=local:Chat}}" Margin="-1,-1,0,-1" Grid.ColumnSpan="2">
                                         <controls:ColorizedNineSlice.Style>
                                             <Style TargetType="controls:ColorizedNineSlice">
                                                 <Setter Property="Darken" Value="0.25" />
                                                 <Style.Triggers>
-                                                    <DataTrigger Binding="{Binding Channel.CanTalk}" Value="False">
+                                                    <DataTrigger Binding="{Binding TargetMode}" Value="False">
                                                         <Setter Property="Darken" Value="1" />
                                                     </DataTrigger>
-                                                    <DataTrigger Binding="{Binding IsDM}" Value="true">
+                                                    <DataTrigger Binding="{Binding IsGroup}" Value="true">
                                                         <Setter Property="Darken" Value="0.25" />
                                                     </DataTrigger>
                                                 </Style.Triggers>
@@ -1674,7 +1659,7 @@
                                                                 <Style TargetType="{x:Type controls:NineSliceButton}">
                                                                     <Setter Property="Visibility" Value="Visible" />
                                                                     <Style.Triggers>
-                                                                        <DataTrigger Binding="{Binding DrawingTool}" Value="Pen">
+                                                                        <DataTrigger Binding="{Binding DrawingTool, RelativeSource={RelativeSource AncestorType=local:Chat}}" Value="Pen">
                                                                             <Setter Property="Visibility" Value="Hidden" />
                                                                         </DataTrigger>
                                                                     </Style.Triggers>
@@ -1686,7 +1671,7 @@
                                                                 <Style TargetType="{x:Type controls:NineSlice}">
                                                                     <Setter Property="Visibility" Value="Hidden" />
                                                                     <Style.Triggers>
-                                                                        <DataTrigger Binding="{Binding DrawingTool}" Value="Pen">
+                                                                        <DataTrigger Binding="{Binding DrawingTool, RelativeSource={RelativeSource AncestorType=local:Chat}}" Value="Pen">
                                                                             <Setter Property="Visibility" Value="Visible" />
                                                                         </DataTrigger>
                                                                     </Style.Triggers>
@@ -1705,7 +1690,7 @@
                                                                 <Style TargetType="{x:Type controls:NineSliceButton}">
                                                                     <Setter Property="Visibility" Value="Visible" />
                                                                     <Style.Triggers>
-                                                                        <DataTrigger Binding="{Binding DrawingTool}" Value="Kesigomu">
+                                                                        <DataTrigger Binding="{Binding DrawingTool, RelativeSource={RelativeSource AncestorType=local:Chat}}" Value="Kesigomu">
                                                                             <Setter Property="Visibility" Value="Hidden" />
                                                                         </DataTrigger>
                                                                     </Style.Triggers>
@@ -1717,7 +1702,7 @@
                                                                 <Style TargetType="{x:Type controls:NineSlice}">
                                                                     <Setter Property="Visibility" Value="Hidden" />
                                                                     <Style.Triggers>
-                                                                        <DataTrigger Binding="{Binding DrawingTool}" Value="Kesigomu">
+                                                                        <DataTrigger Binding="{Binding DrawingTool, RelativeSource={RelativeSource AncestorType=local:Chat}}" Value="Kesigomu">
                                                                             <Setter Property="Visibility" Value="Visible" />
                                                                         </DataTrigger>
                                                                     </Style.Triggers>
@@ -1744,7 +1729,7 @@
                                                                 <Style TargetType="{x:Type controls:NineSliceButton}">
                                                                     <Setter Property="Visibility" Value="Visible" />
                                                                     <Style.Triggers>
-                                                                        <DataTrigger Binding="{Binding UndoEnabled}" Value="false">
+                                                                        <DataTrigger Binding="{Binding UndoEnabled, RelativeSource={RelativeSource AncestorType=local:Chat}}" Value="false">
                                                                             <Setter Property="Visibility" Value="Hidden" />
                                                                         </DataTrigger>
                                                                     </Style.Triggers>
@@ -1758,7 +1743,7 @@
                                                                 <Style TargetType="{x:Type Image}">
                                                                     <Setter Property="Source" Value="/Aerochat;component/Resources/Message/Undo.png" />
                                                                     <Style.Triggers>
-                                                                        <DataTrigger Binding="{Binding UndoEnabled}" Value="false">
+                                                                        <DataTrigger Binding="{Binding UndoEnabled, RelativeSource={RelativeSource AncestorType=local:Chat}}" Value="false">
                                                                             <Setter Property="Source" Value="/Aerochat;component/Resources/Message/UndoInactive.png" />
                                                                         </DataTrigger>
                                                                     </Style.Triggers>
@@ -1774,7 +1759,7 @@
                                                                 <Style TargetType="{x:Type controls:NineSliceButton}">
                                                                     <Setter Property="Visibility" Value="Visible" />
                                                                     <Style.Triggers>
-                                                                        <DataTrigger Binding="{Binding RedoEnabled}" Value="false">
+                                                                        <DataTrigger Binding="{Binding RedoEnabled, RelativeSource={RelativeSource AncestorType=local:Chat}}" Value="false">
                                                                             <Setter Property="Visibility" Value="Hidden" />
                                                                         </DataTrigger>
                                                                     </Style.Triggers>
@@ -1789,7 +1774,7 @@
                                                                 <Style TargetType="{x:Type Image}">
                                                                     <Setter Property="Source" Value="/Aerochat;component/Resources/Message/Redo.png" />
                                                                     <Style.Triggers>
-                                                                        <DataTrigger Binding="{Binding RedoEnabled}" Value="false">
+                                                                        <DataTrigger Binding="{Binding RedoEnabled, RelativeSource={RelativeSource AncestorType=local:Chat}}" Value="false">
                                                                             <Setter Property="Source" Value="/Aerochat;component/Resources/Message/RedoInactive.png" />
                                                                         </DataTrigger>
                                                                     </Style.Triggers>
@@ -1854,25 +1839,8 @@
                             <TextBlock HorizontalAlignment="Stretch" Text="{loc:Loc ChatAttribution}" />
                         </Hyperlink>
                     </TextBlock>
-                    <StackPanel Margin="0,2,4,0" Orientation="Horizontal" Grid.Column="1" Height="24">
-                        <StackPanel.Style>
-                            <Style TargetType="StackPanel">
-                                <Setter Property="Visibility" Value="Visible" />
-                                <Style.Triggers>
-                                    <DataTrigger Binding="{Binding VoiceManager.ChannelVM}" Value="{x:Null}">
-                                        <Setter Property="Visibility" Value="Collapsed" />
-                                    </DataTrigger>
-                                </Style.Triggers>
-                            </Style>
-                        </StackPanel.Style>
-                        <TextBlock Foreground="#333333" FontWeight="Bold" VerticalAlignment="Center">
-                            <TextBlock.Text>
-                                <MultiBinding StringFormat="Connected to {0} in {1}">
-                                    <Binding Path="VoiceManager.ChannelVM.Name" />
-                                    <Binding Path="VoiceManager.ChannelVM.Guild.Name" />
-                                </MultiBinding>
-                            </TextBlock.Text>
-                        </TextBlock>
+                    <StackPanel Margin="0,2,4,0" Orientation="Horizontal" Grid.Column="1" Height="24" Visibility="Collapsed">
+                        <TextBlock Foreground="#333333" FontWeight="Bold" VerticalAlignment="Center" Text="Voice unavailable in local preview." />
                         <Image UseLayoutRounding="True" Margin="8,0,0,0" x:Name="LeaveCallButton" PreviewMouseLeftButtonUp="LeaveCallButton_PreviewMouseLeftButtonUp" Cursor="Hand" Source="/Aerochat;component/Resources/Message/LeaveCall.png" Width="16" Height="16" />
                     </StackPanel>
                 </Grid>
@@ -1891,15 +1859,15 @@
                 <Border.Effect>
                     <DropShadowEffect BlurRadius="12" ShadowDepth="2" Opacity="0.3"/>
                 </Border.Effect>
-                <Border Margin="2" Padding="16" CornerRadius="4" BorderThickness="1" BorderBrush="#70000000" Background="{Binding Scene.Color}">
+                <Border Margin="2" Padding="16" CornerRadius="4" BorderThickness="1" BorderBrush="#70000000" Background="{Binding State.CurrentScene.Color, RelativeSource={RelativeSource AncestorType=local:Chat}}">
                     <StackPanel>
                     <Grid Margin="0,0,0,12">
                         <controls:ProfilePictureFrame FrameSize="Large" HorizontalAlignment="Center"
-                            UserStatus="{Binding Author.Presence.Status, Converter={StaticResource StatusStringToUserStatusConverter}}"
-                            ProfilePicture="{Binding Author.Avatar, Converter={StaticResource imageConverter}}" />
+                            UserStatus="{Binding Author.Presence.Status}"
+                            ProfilePicture="{Binding Author.Avatar}" />
                     </Grid>
-                    <TextBlock FontSize="15" FontWeight="Bold" Foreground="{Binding Scene.TextColor}" Text="{Binding Author.Name}" TextTrimming="CharacterEllipsis" HorizontalAlignment="Center" />
-                    <TextBox FontSize="12" Foreground="{Binding Scene.TextColor}" Opacity="0.85" Margin="0,2,0,0" HorizontalAlignment="Center"
+                    <TextBlock FontSize="15" FontWeight="Bold" Foreground="{Binding State.CurrentScene.TextColor, RelativeSource={RelativeSource AncestorType=local:Chat}}" Text="{Binding Author.Name}" TextTrimming="CharacterEllipsis" HorizontalAlignment="Center" />
+                    <TextBox FontSize="12" Foreground="{Binding State.CurrentScene.TextColor, RelativeSource={RelativeSource AncestorType=local:Chat}}" Opacity="0.85" Margin="0,2,0,0" HorizontalAlignment="Center"
                         IsReadOnly="True" Background="Transparent" BorderThickness="0" Padding="0" Cursor="IBeam" MinWidth="120"
                         HorizontalContentAlignment="Center">
                         <TextBox.Text>
