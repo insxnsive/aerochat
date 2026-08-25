@@ -2,22 +2,23 @@ using System.Security.Cryptography;
 using Aerochat.Server.Auth;
 using Aerochat.Server.Auth.OAuth;
 using Aerochat.Server.Data;
+using Aerochat.Server.Rest;
 using Microsoft.Data.Sqlite;
 using Microsoft.EntityFrameworkCore;
 
 var builder = WebApplication.CreateBuilder(args);
 string publicBaseUrl = builder.Configuration["PublicBaseUrl"] ?? "http://localhost:5080";
-byte[] sessionSigningKey = ReadSessionSigningKey(builder.Configuration);
-var sessionService = new SessionService(sessionSigningKey, TimeProvider.System);
 var providers = CreateProviderDefinitions(builder.Configuration);
 string chatConnectionString = ResolveChatConnectionString(builder.Configuration);
 
-builder.Services.AddSingleton(TimeProvider.System);
+builder.Services.AddSingleton<TimeProvider>(TimeProvider.System);
 builder.Services.AddSingleton<IReadOnlyDictionary<string, OAuthProviderDefinition>>(providers);
+builder.Services.AddSingleton(sp => new SessionService(
+    ReadSessionSigningKey(builder.Configuration),
+    sp.GetRequiredService<TimeProvider>()));
 builder.Services.AddSingleton<OAuthFlowStore>();
 builder.Services.AddDbContext<ChatDb>(options => options.UseSqlite(chatConnectionString));
 builder.Services.AddScoped<IExternalUserStore, EfExternalUserStore>();
-builder.Services.AddSingleton(sessionService);
 builder.Services.AddHttpClient<IOAuthProviderClient, OAuthProviderClient>();
 builder.Services.AddScoped(sp => new OAuthFlowService(
     sp.GetRequiredService<IReadOnlyDictionary<string, OAuthProviderDefinition>>(),
@@ -36,6 +37,7 @@ using (IServiceScope scope = app.Services.CreateScope())
 
 app.MapGet("/health", () => Results.Json(new { status = "ok" }));
 app.MapOAuthEndpoints();
+app.MapConversationEndpoints();
 app.Run();
 
 static Dictionary<string, OAuthProviderDefinition> CreateProviderDefinitions(IConfiguration configuration)
