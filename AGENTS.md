@@ -92,6 +92,25 @@ generic controls when the existing visual control can be retained.
   payloads. Control events: `gateway.ready`, `gateway.resync_required`
   (`reason`: `cursor_too_old` | `server_restarted`).
 
+#### Server GIF proxy (Task 11a, implemented)
+
+- `Gifs/TenorProxyService.cs` + `Gifs/GifEndpoints.cs` — `GET /gifs/search?q=`.
+  Bearer-authenticated like REST; Tenor API key read from `Tenor:ApiKey`
+  (server-side only, never in responses/logs); configurable Tenor base URL
+  (default `https://tenor.googleapis.com/v2`); safe contentfilter default;
+  returns id/previewUrl/url plus Tenor attribution fields for picker footer
+  rendering (ToS requirement). Missing key → `503 gif_unavailable`; upstream
+  failure → `502 gif_upstream_failed`. Tests use a fake HTTP handler only.
+
+#### RTC feasibility (Task 12, spike complete)
+
+- Verdict: **conditional proceed** with SIPSorcery on .NET 8 — see
+  `docs/superpowers/specs/webrtc-spike-results.md`. Pins that build:
+  SIPSorcery/SIPSorceryMedia.Windows/SIPSorceryMedia.Encoders all at **8.0.14**,
+  TFMs raised to `net8.0-windows10.0.17763+`. Known high advisories are patched
+  only in the net10 line; VP8 comes from SIPSorceryMedia.Encoders (not the
+  net10-only SIPSorcery.VP8). Client RTC tasks must include the TFM-raise smoke.
+
 ### Presentation state
 
 Everything new should depend on `Aerochat.Presentation`, not legacy service/model namespaces.
