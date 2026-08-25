@@ -2,7 +2,13 @@ namespace Aerochat.Server.Auth.OAuth;
 
 public interface IExternalUserStore
 {
-    ExternalUser Upsert(ExternalIdentity identity, DateTimeOffset now);
+    Task<ExternalUser> UpsertAsync(
+        ExternalIdentity identity,
+        DateTimeOffset now,
+        CancellationToken cancellationToken = default);
 
-    bool TryGet(string provider, string providerUserId, out ExternalUser? user);
+    Task<ExternalUser?> FindAsync(
+        string provider,
+        string providerUserId,
+        CancellationToken cancellationToken = default);
 }

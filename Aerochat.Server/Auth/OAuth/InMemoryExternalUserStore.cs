@@ -6,6 +6,25 @@ public sealed class InMemoryExternalUserStore : IExternalUserStore
 {
     private readonly ConcurrentDictionary<ExternalUserKey, ExternalUser> _users = new(ExternalUserKeyComparer.Instance);
 
+    public Task<ExternalUser> UpsertAsync(
+        ExternalIdentity identity,
+        DateTimeOffset now,
+        CancellationToken cancellationToken = default)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        return Task.FromResult(Upsert(identity, now));
+    }
+
+    public Task<ExternalUser?> FindAsync(
+        string provider,
+        string providerUserId,
+        CancellationToken cancellationToken = default)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        TryGet(provider, providerUserId, out ExternalUser? user);
+        return Task.FromResult(user);
+    }
+
     public ExternalUser Upsert(ExternalIdentity identity, DateTimeOffset now)
     {
         ArgumentNullException.ThrowIfNull(identity);

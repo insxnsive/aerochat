@@ -111,7 +111,7 @@ public sealed class OAuthFlowService
         }
 
         identity = identity with { Provider = normalizedProvider };
-        ExternalUser user = _externalUsers.Upsert(identity, _clock.GetUtcNow());
+        ExternalUser user = await _externalUsers.UpsertAsync(identity, _clock.GetUtcNow(), cancellationToken);
         string accessToken = _sessions.Issue(
             new Identity(user.Provider, user.ProviderUserId, user.DisplayName));
         string handoffCode;
