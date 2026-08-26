@@ -162,6 +162,75 @@ public sealed class PresentationState : ObservableObject
         conversation.TargetMode = MessageTargetMode.None;
     }
 
+    public void ApplyRemotePresence(ulong userId, PresenceStatus status)
+    {
+        PersonPresentation? person = FindPerson(userId);
+        if (person is not null)
+            person.Presence.Status = status;
+    }
+
+    public void ApplyRemoteMessage(
+        ulong conversationId,
+        Guid messageId,
+        ulong authorId,
+        string body,
+        DateTimeOffset createdAt)
+    {
+        ConversationPresentation conversation = EnsureConversation(conversationId, authorId);
+        if (conversation.Messages.Any(message => message.Id == messageId))
+            return;
+
+        PersonPresentation author = FindPerson(authorId) ?? CurrentUser;
+        conversation.Messages.Add(new MessagePresentation
+        {
+            Id = messageId,
+            Author = author,
+            SentAt = createdAt,
+            IsOutgoing = author.Id == CurrentUser.Id,
+            Body = body
+        });
+    }
+
+    private ConversationPresentation EnsureConversation(ulong conversationId, ulong authorId)
+    {
+        ConversationPresentation? existing = Conversations.FirstOrDefault(item => item.Id == conversationId);
+        if (existing is not null)
+            return existing;
+
+        PersonPresentation author = FindPerson(authorId) ?? new PersonPresentation
+        {
+            Id = authorId,
+            Name = $"User {authorId}",
+            Username = $"user.{authorId}",
+            Avatar = "",
+            Presence = new PresencePresentation { Status = PresenceStatus.Online }
+        };
+        ConversationPresentation conversation = new()
+        {
+            Id = conversationId,
+            Name = author.Name,
+            Topic = "",
+            IsGroup = false,
+            Recipient = author
+        };
+        conversation.Participants.Add(CurrentUser);
+        if (author.Id != CurrentUser.Id)
+            conversation.Participants.Add(author);
+        Conversations.Add(conversation);
+        return conversation;
+    }
+
+    private PersonPresentation? FindPerson(ulong id)
+    {
+        if (CurrentUser.Id == id)
+            return CurrentUser;
+
+        return Conversations
+            .SelectMany(conversation => conversation.Participants)
+            .Concat(ContactGroups.SelectMany(group => group.Items.Select(item => item.Person)))
+            .FirstOrDefault(person => person.Id == id);
+    }
+
     private bool IsLocalMessage(MessagePresentation message) =>
         message.IsOutgoing && message.Author.Id == CurrentUser.Id;
 

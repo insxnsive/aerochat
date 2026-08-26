@@ -1,3 +1,4 @@
+using System.Net.Http;
 using System.Windows;
 using Aerochat.Connectivity;
 using Aerochat.Connectivity.Auth;
@@ -33,8 +34,20 @@ public partial class App : Application
             action => Dispatcher.Invoke(action));
         WindowNavigator navigator = new(
             state,
-            (currentState, currentNavigator) => new Login(currentState, currentNavigator, authClient));
-        MainWindow = new Home(state, navigator);
+            (currentState, currentNavigator) => new Login(currentState, currentNavigator, authClient),
+            (currentState, conversation, currentNavigator) => new Chat(
+                currentState,
+                conversation,
+                currentNavigator,
+                CreateMessageClient(authClient)));
+        MainWindow = new Home(
+            state,
+            navigator,
+            _chatTransport,
+            TryGetConfiguredServer(out Uri? configuredServer) ? configuredServer : null,
+            tokenLoader: authClient is OAuthAuthClient oauth
+                ? oauth.LoadCachedTokenAsync
+                : null);
         MainWindow.Closed += (_, _) => _ = DisposeConnectivityAsync();
         MainWindow.Show();
     }
@@ -51,6 +64,15 @@ public partial class App : Application
         TryGetConfiguredServer(out _)
             ? new GatewayClient()
             : new NullTransport();
+
+    private static ChatMessageClient? CreateMessageClient(IAuthClient authClient)
+    {
+        if (!TryGetConfiguredServer(out Uri? server) || server is null)
+            return null;
+        return authClient is OAuthAuthClient oauth
+            ? new ChatMessageClient(new HttpClient(), server, oauth.LoadCachedTokenAsync)
+            : null;
+    }
 
     private static bool TryGetConfiguredServer(out Uri? serverUri)
     {

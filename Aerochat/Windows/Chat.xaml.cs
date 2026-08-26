@@ -5,6 +5,7 @@ using System.Windows.Controls.Primitives;
 using System.Windows.Input;
 using System.Windows.Threading;
 using Aerochat.Controls;
+using Aerochat.Connectivity;
 using Aerochat.Presentation;
 
 namespace Aerochat.Windows;
@@ -12,10 +13,20 @@ namespace Aerochat.Windows;
 public partial class Chat : Window
 {
     public Chat(PresentationState state, ConversationPresentation conversation, WindowNavigator navigator)
+        : this(state, conversation, navigator, null)
+    {
+    }
+
+    public Chat(
+        PresentationState state,
+        ConversationPresentation conversation,
+        WindowNavigator navigator,
+        ChatMessageClient? liveMessages)
     {
         State = state ?? throw new ArgumentNullException(nameof(state));
         Conversation = conversation ?? throw new ArgumentNullException(nameof(conversation));
         Navigator = navigator ?? throw new ArgumentNullException(nameof(navigator));
+        LiveMessages = liveMessages;
         InitializeComponent();
         DataContext = Conversation;
         UpdateLocalVisualState();
@@ -28,6 +39,7 @@ public partial class Chat : Window
     public bool UndoEnabled { get; private set; }
     public bool RedoEnabled { get; private set; }
     public bool IsShowingAttachmentEditor { get; private set; }
+    public ChatMessageClient? LiveMessages { get; }
 
     public void OpenAttachmentsFilePicker()
     {
@@ -48,7 +60,7 @@ public partial class Chat : Window
         IsShowingAttachmentEditor = false;
     }
 
-    private void SendDraft()
+    public async Task SendDraftAsync(CancellationToken cancellationToken = default)
     {
         if (Conversation.TargetMode == MessageTargetMode.Edit)
         {
@@ -56,9 +68,31 @@ public partial class Chat : Window
             return;
         }
 
+        if (LiveMessages is not null && Conversation.IsServerBacked)
+        {
+            string body = Conversation.Draft.Trim();
+            if (body.Length == 0)
+                return;
+            try
+            {
+                if (await LiveMessages.SendAsync(Conversation.Id.ToString(), body, cancellationToken))
+                {
+                    Conversation.Draft = "";
+                    State.CancelTarget(Conversation);
+                }
+            }
+            catch (Exception) when (true)
+            {
+                // A live server is optional; retain the draft when it is unavailable.
+            }
+            return;
+        }
+
         State.SendDraft(Conversation,
             new DateTimeOffset(2026, 8, 24, 12, 0, 0, TimeSpan.Zero));
     }
+
+    private void SendDraft() => _ = SendDraftAsync();
 
     private void Window_SizeChanged(object sender, SizeChangedEventArgs e) { }
     private void Window_PreviewMouseMove(object sender, MouseEventArgs e) { }

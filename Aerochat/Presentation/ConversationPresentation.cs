@@ -12,6 +12,7 @@ public sealed class ConversationPresentation : ObservableObject
     public required string Name { get; init; }
     public required string Topic { get; init; }
     public required bool IsGroup { get; init; }
+    public bool IsServerBacked { get; init; }
     public PersonPresentation? Recipient { get; init; }
     public ObservableCollection<PersonPresentation> Participants { get; } = [];
     public ObservableCollection<MessagePresentation> Messages { get; } = [];

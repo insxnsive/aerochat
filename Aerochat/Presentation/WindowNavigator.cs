@@ -6,13 +6,16 @@ namespace Aerochat.Presentation;
 public sealed class WindowNavigator
 {
     private readonly Func<PresentationState, WindowNavigator, Login> _loginFactory;
+    private readonly Func<PresentationState, ConversationPresentation, WindowNavigator, Chat>? _chatFactory;
 
     public WindowNavigator(
         PresentationState state,
-        Func<PresentationState, WindowNavigator, Login>? loginFactory = null)
+        Func<PresentationState, WindowNavigator, Login>? loginFactory = null,
+        Func<PresentationState, ConversationPresentation, WindowNavigator, Chat>? chatFactory = null)
     {
         State = state ?? throw new ArgumentNullException(nameof(state));
         _loginFactory = loginFactory ?? ((currentState, navigator) => new Login(currentState, navigator));
+        _chatFactory = chatFactory;
     }
 
     public PresentationState State { get; }
@@ -20,7 +23,8 @@ public sealed class WindowNavigator
     public Window Create(ShellRoute route, object? payload = null) => route switch
     {
         ShellRoute.Home => new Home(State, this),
-        ShellRoute.Chat => new Chat(State, payload as ConversationPresentation ?? State.Conversations[0], this),
+        ShellRoute.Chat => _chatFactory?.Invoke(State, payload as ConversationPresentation ?? State.Conversations[0], this)
+            ?? new Chat(State, payload as ConversationPresentation ?? State.Conversations[0], this),
         ShellRoute.Settings => new Aerochat.Windows.Settings(State),
         ShellRoute.About => new About(),
         ShellRoute.Login => _loginFactory(State, this),

@@ -1,4 +1,5 @@
 using Aerochat.Presentation;
+using Aerochat.Connectivity;
 using Aerochat.Windows;
 using System.Diagnostics;
 using System.IO;
@@ -8,6 +9,43 @@ namespace Aerochat.VisualShell.Tests;
 
 public sealed class HomeShellTests
 {
+    [Test]
+    public void Home_live_transport_applies_presence_and_routes_messages()
+    {
+        WpfTestHost.Run(() =>
+        {
+            PresentationState state = DemoData.Create();
+            var transport = new FakeTransport();
+            var home = new Home(state, new WindowNavigator(state), transport,
+                new Uri("http://localhost:5080/"), "test-token");
+
+            home.ConnectLiveAsync().GetAwaiter().GetResult();
+            transport.RaisePresence("1001", "Busy");
+            transport.RaiseMessage("9001", Guid.NewGuid().ToString(), "1001", "Live hello");
+
+            Assert.That(transport.Connected, Is.True);
+            Assert.That(state.ContactGroups.SelectMany(group => group.Items)
+                .Single(item => item.Person.Id == 1001).Person.Presence.Status, Is.EqualTo(PresenceStatus.Busy));
+            Assert.That(state.Conversations.Single(item => item.Id == 9001).Messages.Single().Body,
+                Is.EqualTo("Live hello"));
+            home.Close();
+        });
+    }
+
+    private sealed class FakeTransport : IChatTransport
+    {
+        public event EventHandler<MessageCreatedEventArgs>? MessageCreated;
+        public event EventHandler<PresenceUpdatedEventArgs>? PresenceUpdated;
+        public bool Connected { get; private set; }
+        public Task ConnectAsync(Uri server, string token, CancellationToken cancellationToken = default)
+        { Connected = true; return Task.CompletedTask; }
+        public Task SendAsync(string conversationId, string body, CancellationToken cancellationToken = default) => Task.CompletedTask;
+        public Task SetTypingAsync(string conversationId, CancellationToken cancellationToken = default) => Task.CompletedTask;
+        public ValueTask DisposeAsync() => ValueTask.CompletedTask;
+        public void RaisePresence(string id, string status) => PresenceUpdated?.Invoke(this, new(id, status));
+        public void RaiseMessage(string conversation, string message, string author, string body) =>
+            MessageCreated?.Invoke(this, new(conversation, message, author, body, DateTimeOffset.UtcNow));
+    }
     [Test]
     public void Home_constructs_from_demo_state_without_backend_services()
     {

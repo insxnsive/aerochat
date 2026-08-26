@@ -4,30 +4,94 @@ using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Input;
 using System.Windows.Media.Imaging;
+using Aerochat.Connectivity;
 
 namespace Aerochat.Windows;
 
 public partial class Home : Window
 {
     private string _pendingPersonalMessage = "";
+    private readonly IChatTransport _transport;
+    private readonly Uri? _server;
+    private readonly string? _token;
+    private readonly Func<CancellationToken, Task<string?>>? _tokenLoader;
 
     public Home()
     {
         State = DemoData.Create();
         Navigator = new WindowNavigator(State);
+        _transport = new NullTransport();
         InitializePresentation();
     }
 
     public Home(PresentationState state, WindowNavigator navigator)
+        : this(state, navigator, new NullTransport())
+    {
+    }
+
+    public Home(
+        PresentationState state,
+        WindowNavigator navigator,
+        IChatTransport transport,
+        Uri? server = null,
+        string? token = null,
+        Func<CancellationToken, Task<string?>>? tokenLoader = null)
     {
         State = state ?? throw new ArgumentNullException(nameof(state));
         Navigator = navigator ?? throw new ArgumentNullException(nameof(navigator));
+        _transport = transport ?? throw new ArgumentNullException(nameof(transport));
+        _server = server;
+        _token = token;
+        _tokenLoader = tokenLoader;
         InitializePresentation();
+        _transport.PresenceUpdated += OnPresenceUpdated;
+        _transport.MessageCreated += OnMessageCreated;
+        if (Application.Current is not null)
+            Loaded += async (_, _) => await ConnectLiveAsync();
     }
 
     public PresentationState State { get; }
     public WindowNavigator Navigator { get; }
     public int AdIndex { get; private set; }
+
+    public async Task ConnectLiveAsync(CancellationToken cancellationToken = default)
+    {
+        if (_transport is NullTransport || _server is null)
+            return;
+
+        try
+        {
+            string? token = _tokenLoader is null ? _token : await _tokenLoader(cancellationToken);
+            if (!string.IsNullOrWhiteSpace(token))
+                await _transport.ConnectAsync(_server, token, cancellationToken);
+        }
+        catch (Exception) when (true)
+        {
+            // Live connectivity is optional; keep the visual shell usable offline.
+        }
+    }
+
+    private void OnPresenceUpdated(object? sender, PresenceUpdatedEventArgs update)
+    {
+        Dispatcher.Invoke(() =>
+        {
+            if (ulong.TryParse(update.UserId, out ulong userId)
+                && Enum.TryParse(update.Status, true, out PresenceStatus status)
+                && Enum.IsDefined(status))
+                State.ApplyRemotePresence(userId, status);
+        });
+    }
+
+    private void OnMessageCreated(object? sender, MessageCreatedEventArgs message)
+    {
+        Dispatcher.Invoke(() =>
+        {
+            if (ulong.TryParse(message.ConversationId, out ulong conversationId)
+                && Guid.TryParse(message.MessageId, out Guid messageId)
+                && ulong.TryParse(message.AuthorId, out ulong authorId))
+                State.ApplyRemoteMessage(conversationId, messageId, authorId, message.Body, message.CreatedAt);
+        });
+    }
 
     private void InitializePresentation()
     {

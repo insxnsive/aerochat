@@ -62,6 +62,9 @@ public sealed class OAuthAuthClient : IAuthClient
 
     public bool IsAvailable => true;
 
+    public Task<string?> LoadCachedTokenAsync(CancellationToken cancellationToken = default) =>
+        _tokenCache.LoadAsync(cancellationToken);
+
     public static OAuthAuthClient Create(Uri serverUri) =>
         new(
             new HttpClient(),

@@ -1,11 +1,60 @@
 using System.IO;
 using Aerochat.Presentation;
+using Aerochat.Connectivity;
+using System.Net;
+using System.Net.Http;
+using System.Text.Json;
 using Aerochat.Windows;
 
 namespace Aerochat.VisualShell.Tests;
 
 public sealed class ChatShellTests
 {
+    [Test]
+    public async Task Chat_live_send_posts_rest_body_without_optimistic_append()
+    {
+        await Task.Run(() => WpfTestHost.Run(() =>
+        {
+            PresentationState state = DemoData.Create();
+            ConversationPresentation source = state.Conversations[0];
+            ConversationPresentation conversation = new()
+            {
+                Id = source.Id,
+                Name = source.Name,
+                Topic = source.Topic,
+                IsGroup = source.IsGroup,
+                IsServerBacked = true,
+                Recipient = source.Recipient
+            };
+            conversation.Participants.Add(state.CurrentUser);
+            var handler = new RecordingHandler();
+            var client = new ChatMessageClient(new HttpClient(handler),
+                new Uri("http://localhost:5080/"), "session-token");
+            var chat = new Chat(state, conversation, new WindowNavigator(state), client);
+            conversation.Draft = "sent live";
+
+            chat.SendDraftAsync().GetAwaiter().GetResult();
+
+            Assert.That(handler.Request, Is.Not.Null);
+            Assert.That(handler.Request!.Headers.Authorization!.Parameter, Is.EqualTo("session-token"));
+            Assert.That(handler.Body, Does.Contain("\"body\":\"sent live\""));
+            Assert.That(handler.Body, Does.Contain("\"kind\":\"message\""));
+            Assert.That(conversation.Messages, Is.Empty);
+            chat.Close();
+        }));
+    }
+
+    private sealed class RecordingHandler : HttpMessageHandler
+    {
+        public HttpRequestMessage? Request { get; private set; }
+        public string Body { get; private set; } = "";
+        protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
+        {
+            Request = request;
+            Body = await request.Content!.ReadAsStringAsync(cancellationToken);
+            return new HttpResponseMessage(HttpStatusCode.Created);
+        }
+    }
     [Test]
     public void Chat_constructs_with_sample_messages_without_network_client()
     {

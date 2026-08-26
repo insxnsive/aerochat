@@ -32,20 +32,7 @@ public sealed class PresentationAdapter : IDisposable
             return;
         }
 
-        ConversationPresentation? conversation = _state.Conversations
-            .FirstOrDefault(item => item.Id == conversationId);
-        PersonPresentation? author = FindPerson(authorId);
-        if (conversation is null || author is null || conversation.Messages.Any(item => item.Id == messageId))
-            return;
-
-        conversation.Messages.Add(new MessagePresentation
-        {
-            Id = messageId,
-            Author = author,
-            SentAt = message.CreatedAt,
-            IsOutgoing = author.Id == _state.CurrentUser.Id,
-            Body = message.Body
-        });
+        _state.ApplyRemoteMessage(conversationId, messageId, authorId, message.Body, message.CreatedAt);
     }
 
     public void ApplyPresenceUpdated(PresenceUpdatedEventArgs update)
@@ -58,11 +45,7 @@ public sealed class PresentationAdapter : IDisposable
             return;
         }
 
-        PersonPresentation? person = FindPerson(userId);
-        if (person is not null)
-        {
-            person.Presence.Status = status;
-        }
+        _state.ApplyRemotePresence(userId, status);
     }
 
     public void Dispose()
@@ -81,14 +64,4 @@ public sealed class PresentationAdapter : IDisposable
     private void OnPresenceUpdated(object? sender, PresenceUpdatedEventArgs update) =>
         _dispatch(() => ApplyPresenceUpdated(update));
 
-    private PersonPresentation? FindPerson(ulong id)
-    {
-        if (_state.CurrentUser.Id == id)
-            return _state.CurrentUser;
-
-        return _state.Conversations
-            .SelectMany(conversation => conversation.Participants)
-            .Concat(_state.ContactGroups.SelectMany(group => group.Items.Select(item => item.Person)))
-            .FirstOrDefault(person => person.Id == id);
-    }
 }
