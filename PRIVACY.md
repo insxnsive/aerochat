@@ -4,7 +4,7 @@
 
 ## Resumo em português (Brasil)
 
-A Lei Geral de Proteção de Dados Pessoais (LGPD), Lei nº 13.709/2018, protege dados pessoais tratados inclusive em meios digitais e define como controlador quem toma as decisões sobre esse tratamento.[1]
+A Lei Geral de Proteção de Dados Pessoais (LGPD), Lei nº 13.709/2018, protege dados pessoais tratados inclusive em meios digitais e define como controlador quem toma as decisões sobre esse tratamento.[8]
 
 ### Quem é o controlador
 
@@ -41,7 +41,7 @@ Você pode solicitar confirmação de tratamento, acesso, correção, eliminaç�
 
 This notice describes the declared Aerochat data contract for a self-hosted deployment. It is not a promise that every operator configures the same infrastructure. Before going live, the operator must update it for actual hosting, logs, backups, subprocessors, retention schedules, legal bases, international transfers, and contact channels.
 
-This notice is designed with Brazil's Lei Geral de Proteção de Dados Pessoais (LGPD), Law No. 13.709/2018, in mind. The LGPD covers processing of personal data, including in digital environments, and identifies the controller as the person or entity making decisions about processing.[1] This document is operational guidance, not legal advice or a determination of the operator's legal bases.
+This notice is designed with Brazil's Lei Geral de Proteção de Dados Pessoais (LGPD), Law No. 13.709/2018, in mind. The LGPD covers processing of personal data, including in digital environments, and identifies the controller as the person or entity making decisions about processing.[8] This document is operational guidance, not legal advice or a determination of the operator's legal bases.
 
 ## 2. Controller and contacts
 
@@ -105,9 +105,9 @@ Aerochat does not require a user to provide a password to the operator. Provider
 
 ### Tenor GIF search
 
-GIF search is an optional proxied feature. When a user searches for a GIF, the search query and request metadata needed for that search are sent to Tenor. Do not send an operator's Tenor API key to the desktop client. Tenor's API is governed by Google/Tenor terms rather than an open-source license; its terms prohibit altering or reordering results and require compliance with its policies.[2]
+GIF search is an optional proxied feature. When a user searches for a GIF, the search query and request metadata needed for that search are sent to Tenor. Do not send an operator's Tenor API key to the desktop client. Tenor's API is governed by Google/Tenor terms rather than an open-source license; its terms prohibit altering or reordering results and require compliance with its policies.[6]
 
-Tenor's documentation requires attribution for retrieved content and documents content filtering parameters.[3] The deployment must use a suitable safety/content-filter setting and render the applicable Tenor attribution where GIF results are shown. The operator should tell users that their GIF search terms leave the self-hosted server for this purpose.
+Tenor's documentation requires attribution for retrieved content and documents content filtering parameters.[7] The deployment must use a suitable safety/content-filter setting and render the applicable Tenor attribution where GIF results are shown. The operator should tell users that their GIF search terms leave the self-hosted server for this purpose.
 
 ### Hosting, storage, logs, and backups
 
@@ -156,8 +156,8 @@ The operator must review this notice whenever it enables a new provider, API, lo
 
 ## Sources
 
-[1] [Lei nº 13.709/2018 (LGPD), Planalto](https://www.planalto.gov.br/ccivil_03/_ato2015-2018/2018/lei/l13709.htm)
+[6] [Tenor API Terms of Service](https://developers.google.com/tenor/guides/api-terms)
 
-[2] [Tenor API Terms of Service](https://developers.google.com/tenor/guides/api-terms)
+[7] [Tenor API documentation: content filtering and attribution](https://tenor.com/gifapi/documentation)
 
-[3] [Tenor API documentation: content filtering and attribution](https://tenor.com/gifapi/documentation)
+[8] [Lei nº 13.709/2018 (LGPD), Planalto](https://www.planalto.gov.br/ccivil_03/_ato2015-2018/2018/lei/l13709.htm)

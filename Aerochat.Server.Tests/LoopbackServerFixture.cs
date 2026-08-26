@@ -39,7 +39,8 @@ public sealed class LoopbackServerFixture : IAsyncDisposable, IDisposable
     public static async Task<LoopbackServerFixture> StartAsync(
         string? instanceId = null,
         int? replayCapacity = null,
-        int? queueCapacity = null)
+        int? queueCapacity = null,
+        string? allowedOrigins = null)
     {
         var options = new WebApplicationOptions { EnvironmentName = "Testing" };
         var builder = WebApplication.CreateBuilder(options);
@@ -60,6 +61,11 @@ public sealed class LoopbackServerFixture : IAsyncDisposable, IDisposable
         {
             builder.Configuration["Gateway:QueueCapacity"] =
                 queueCapacity.Value.ToString(System.Globalization.CultureInfo.InvariantCulture);
+        }
+
+        if (allowedOrigins is not null)
+        {
+            builder.Configuration["Gateway:AllowedOrigins"] = allowedOrigins;
         }
 
         var connection = new SqliteConnection("Data Source=:memory:");

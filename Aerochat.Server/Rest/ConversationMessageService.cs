@@ -4,6 +4,7 @@ using Aerochat.Server.Auth.OAuth;
 using Aerochat.Server.Data;
 using Aerochat.Server.Data.Entities;
 using Aerochat.Server.Gateway;
+using Aerochat.Server.Hardening;
 using Microsoft.EntityFrameworkCore;
 
 namespace Aerochat.Server.Rest;
@@ -31,9 +32,17 @@ public sealed class ConversationMessageService(
             return ConversationAuth.Unauthorized(httpContext);
         }
 
-        if (!Guid.TryParse(conversationId, out Guid conversationGuid)
-            || request is null
-            || string.IsNullOrWhiteSpace(request.Body)
+        if (!Guid.TryParse(conversationId, out Guid conversationGuid) || request is null)
+        {
+            return ConversationAuth.InvalidRequest();
+        }
+
+        if (request.Body is not null && !MessageRequestValidator.IsBodyWithinLimit(request.Body))
+        {
+            return Results.Json(new ErrorDto("body_too_long"), statusCode: StatusCodes.Status400BadRequest);
+        }
+
+        if (string.IsNullOrWhiteSpace(request.Body)
             || request.Kind is null
             || !MessageKinds.Contains(request.Kind))
         {

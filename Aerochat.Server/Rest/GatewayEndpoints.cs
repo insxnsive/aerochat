@@ -4,6 +4,7 @@ using System.Text;
 using Aerochat.Server.Auth;
 using Aerochat.Server.Auth.OAuth;
 using Aerochat.Server.Gateway;
+using Aerochat.Server.Hardening;
 
 namespace Aerochat.Server.Rest;
 
@@ -28,6 +29,11 @@ public static class GatewayEndpoints
         if (user is null)
         {
             return ConversationAuth.Unauthorized(httpContext);
+        }
+
+        if (!GatewayOriginPolicy.IsAllowed(httpContext.Request.Headers.Origin, options.AllowedOrigins))
+        {
+            return Results.Json(new ErrorDto("origin_not_allowed"), statusCode: StatusCodes.Status403Forbidden);
         }
 
         if (!httpContext.WebSockets.IsWebSocketRequest)

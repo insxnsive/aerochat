@@ -5,6 +5,7 @@ using Aerochat.Server.Calls;
 using Aerochat.Server.Data;
 using Aerochat.Server.Gateway;
 using Aerochat.Server.Gifs;
+using Aerochat.Server.Hardening;
 using Aerochat.Server.Rest;
 using Microsoft.Data.Sqlite;
 using Microsoft.EntityFrameworkCore;
@@ -24,12 +25,23 @@ internal static class ServerComposition
         string chatConnectionString = ResolveChatConnectionString(builder.Configuration);
 
         builder.Services.AddSingleton<TimeProvider>(TimeProvider.System);
+        RateLimitOptions rateLimitOptions = new()
+        {
+            Limit = builder.Configuration.GetValue("RateLimit:Limit", 30),
+            Window = TimeSpan.FromSeconds(builder.Configuration.GetValue("RateLimit:WindowSeconds", 60))
+        };
+        builder.Services.AddSingleton(rateLimitOptions);
+        builder.Services.AddSingleton(sp => new FixedWindowRateLimiter(
+            rateLimitOptions.Limit,
+            rateLimitOptions.Window,
+            sp.GetRequiredService<TimeProvider>()));
         GatewayOptions gatewayOptions = new()
         {
             InstanceId = builder.Configuration["Gateway:InstanceId"],
             QueueCapacity = builder.Configuration.GetValue("Gateway:QueueCapacity", 256),
             ReplayCapacity = builder.Configuration.GetValue("Gateway:ReplayCapacity", 4096),
-            MaxFrameBytes = builder.Configuration.GetValue("Gateway:MaxFrameBytes", GatewayJson.DefaultMaxFrameBytes)
+            MaxFrameBytes = builder.Configuration.GetValue("Gateway:MaxFrameBytes", GatewayJson.DefaultMaxFrameBytes),
+            AllowedOrigins = ParseAllowedOrigins(builder.Configuration["Gateway:AllowedOrigins"])
         };
         builder.Services.AddSingleton(gatewayOptions);
         builder.Services.AddSingleton<GatewayHub>();
@@ -63,6 +75,7 @@ internal static class ServerComposition
 
     internal static void MapEndpoints(WebApplication app)
     {
+        app.UseMiddleware<RateLimitingMiddleware>();
         app.MapGet("/health", () => Results.Json(new { status = "ok" }));
         app.MapOAuthEndpoints();
         app.MapConversationEndpoints();
@@ -101,6 +114,11 @@ internal static class ServerComposition
                 ["identify", "email"])
         };
     }
+
+    private static IReadOnlySet<string> ParseAllowedOrigins(string? configured) =>
+        new HashSet<string>(
+            (configured ?? string.Empty).Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries),
+            StringComparer.OrdinalIgnoreCase);
 
     private static byte[] ReadSessionSigningKey(IConfiguration configuration)
     {

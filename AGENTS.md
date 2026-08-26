@@ -36,16 +36,6 @@ Preserve the WLM 2009 visual design mandate: do not modernize the layout, replac
 the art direction, flatten the titlebars, remove the scene system, or substitute
 generic controls when the existing visual control can be retained.
 
-## OSS packaging status
-
-Root-level docs now carry the contribution and distribution obligations:
-`CONTRIBUTING.md` (build/test contract), `THIRD_PARTY_NOTICES.md` (upstream
-not-nullptr/Aerochat MPL-2.0, XamlAnimatedGif 2.3.0 Apache-2.0, planned
-SIPSorcery BSD-3-Clause, Tenor API terms), and operator-facing `PRIVACY.md` /
-`TERMS.md` templates (LGPD-aware, PT-BR summary first). Standing debt: inherited
-Microsoft WLM 2009 art/emoji/sound assets stay private/dev-use only and must be
-replaced before any public binary distribution.
-
 ## Repository map
 
 ### Application

@@ -28,6 +28,12 @@ public sealed class ApiWebApplicationFactory : WebApplicationFactory<Program>
 
     public Func<HttpRequestMessage, HttpResponseMessage>? TenorRequestHandler { get; set; }
 
+    public TimeProvider? Clock { get; set; }
+
+    public int? RateLimit { get; set; }
+
+    public int? RateLimitWindowSeconds { get; set; }
+
     public ApiWebApplicationFactory()
     {
         _connection.Open();
@@ -38,6 +44,15 @@ public sealed class ApiWebApplicationFactory : WebApplicationFactory<Program>
         builder.UseEnvironment("Testing");
         builder.UseSetting("ConnectionStrings:Chat", "Data Source=:memory:");
         builder.UseSetting("Auth:SessionSigningKey", Convert.ToBase64String(TestSigningKey));
+        if (RateLimit is not null)
+        {
+            builder.UseSetting("RateLimit:Limit", RateLimit.Value.ToString());
+        }
+
+        if (RateLimitWindowSeconds is not null)
+        {
+            builder.UseSetting("RateLimit:WindowSeconds", RateLimitWindowSeconds.Value.ToString());
+        }
         if (TenorApiKey is not null)
         {
             builder.UseSetting("Tenor:ApiKey", TenorApiKey);
@@ -45,6 +60,13 @@ public sealed class ApiWebApplicationFactory : WebApplicationFactory<Program>
 
         builder.ConfigureServices(services =>
         {
+            if (Clock is not null)
+            {
+                TimeProvider clock = Clock;
+                services.RemoveAll<TimeProvider>();
+                services.AddSingleton(clock);
+            }
+
             services.RemoveAll<DbContextOptions<ChatDb>>();
             services.RemoveAll<ChatDb>();
             services.AddDbContext<ChatDb>(options => options

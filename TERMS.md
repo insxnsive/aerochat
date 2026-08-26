@@ -58,13 +58,13 @@ The operator does not endorse user content merely because it is stored or delive
 
 OAuth authentication depends on the provider selected by the operator. Google, GitHub, Discord, and other enabled providers are independent services with their own terms and privacy policies; an outage, suspension, or policy decision by a provider may prevent login.
 
-If the operator enables Tenor GIF search, search queries and necessary request metadata are sent to Tenor. The operator must keep the API key server-side, use the required content-safety settings, preserve Tenor's links/branding, and display the required Tenor attribution where GIF results are shown. Tenor's API terms prohibit altering or reordering search results and impose additional content restrictions.[1][2]
+If the operator enables Tenor GIF search, search queries and necessary request metadata are sent to Tenor. The operator must keep the API key server-side, use the required content-safety settings, preserve Tenor's links/branding, and display the required Tenor attribution where GIF results are shown. Tenor's API terms prohibit altering or reordering search results and impose additional content restrictions.[6][7]
 
 The operator may disable or replace a third-party integration at any time. Third-party content and services are not guaranteed by the Aerochat source repository or by these Terms.
 
 ## 8. Privacy and LGPD
 
-The operator is generally the controller for the personal data processed by its deployment and must publish a deployment-specific privacy notice. The Brazilian LGPD (Lei nº 13.709/2018) governs personal-data processing in the circumstances defined by that law.[3] Read [PRIVACY.md](PRIVACY.md) for the operator's data inventory, retention, third-party disclosures, contact route, and the current roadmap status of `DELETE /me`.
+The operator is generally the controller for the personal data processed by its deployment and must publish a deployment-specific privacy notice. The Brazilian LGPD (Lei nº 13.709/2018) governs personal-data processing in the circumstances defined by that law.[8] Read [PRIVACY.md](PRIVACY.md) for the operator's data inventory, retention, third-party disclosures, contact route, and the current roadmap status of `DELETE /me`.
 
 Nothing in these Terms removes rights or duties that cannot lawfully be waived. The operator must select and document its legal bases, respond to applicable data-subject requests, protect data, and update the Privacy Notice when its deployment changes.
 
@@ -109,8 +109,8 @@ If a provision is held unenforceable, it should be limited or replaced only to t
 
 ## Sources
 
-[1] [Lei nº 13.709/2018 (LGPD), Planalto](https://www.planalto.gov.br/ccivil_03/_ato2015-2018/2018/lei/l13709.htm)
+[6] [Tenor API Terms of Service](https://developers.google.com/tenor/guides/api-terms)
 
-[2] [Tenor API Terms of Service](https://developers.google.com/tenor/guides/api-terms)
+[7] [Tenor API documentation: content filtering and attribution](https://tenor.com/gifapi/documentation)
 
-[3] [Tenor API documentation: content filtering and attribution](https://tenor.com/gifapi/documentation)
+[8] [Lei nº 13.709/2018 (LGPD), Planalto](https://www.planalto.gov.br/ccivil_03/_ato2015-2018/2018/lei/l13709.htm)

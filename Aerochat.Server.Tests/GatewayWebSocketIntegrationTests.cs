@@ -41,6 +41,31 @@ public sealed class GatewayWebSocketIntegrationTests
     }
 
     [Test]
+    public async Task Configured_gateway_origin_mismatch_is_rejected_before_upgrade()
+    {
+        using LoopbackServerFixture fixture = await LoopbackServerFixture.StartAsync(
+            allowedOrigins: "https://allowed.example");
+        (_, string token) = await CreateUserAsync(fixture, "origin-rejected");
+
+        Assert.ThrowsAsync<WebSocketException>(async () =>
+            await ConnectAsync(fixture.BaseUrl, token, origin: "https://blocked.example"));
+    }
+
+    [Test]
+    public async Task Gateway_allows_configured_origin_and_missing_origin()
+    {
+        using LoopbackServerFixture fixture = await LoopbackServerFixture.StartAsync(
+            allowedOrigins: "https://allowed.example");
+        (_, string token) = await CreateUserAsync(fixture, "origin-allowed");
+
+        using WebSocket allowed = await ConnectAsync(fixture.BaseUrl, token, origin: "https://allowed.example");
+        Assert.That((await ReceiveTextFrameAsync(allowed)), Does.Contain("gateway.ready"));
+        allowed.Abort();
+        using WebSocket absent = await ConnectAsync(fixture.BaseUrl, token);
+        Assert.That((await ReceiveTextFrameAsync(absent)), Does.Contain("gateway.ready"));
+    }
+
+    [Test]
     public async Task Authenticated_real_socket_gets_ready_and_inbound_text_is_closed_as_policy_violation()
     {
         using LoopbackServerFixture fixture = await LoopbackServerFixture.StartAsync();
@@ -323,9 +348,17 @@ public sealed class GatewayWebSocketIntegrationTests
         return conversationId;
     }
 
-    private static async Task<WebSocket> ConnectAsync(string baseUrl, string token, string? lastEventId = null)
+    private static async Task<WebSocket> ConnectAsync(
+        string baseUrl,
+        string token,
+        string? lastEventId = null,
+        string? origin = null)
     {
         var client = new ClientWebSocket();
+        if (origin is not null)
+        {
+            client.Options.SetRequestHeader("Origin", origin);
+        }
         string wsBase = baseUrl.StartsWith("http://", StringComparison.Ordinal)
             ? string.Concat("ws://", baseUrl.AsSpan("http://".Length))
             : baseUrl;
