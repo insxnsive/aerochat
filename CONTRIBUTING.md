@@ -58,7 +58,7 @@ git diff --check
 git status --short --branch
 ```
 
-The checked baseline is a full x64 suite with 125 passing tests, 0 failures, 0 skips, and a solution build with 0 warnings and 0 errors. A change is not complete because it compiles: visual changes also need a real executable smoke check.
+The checked baseline is a full x64 suite with 0 failures, 0 skips, and a solution build with 0 warnings and 0 errors. Take current test totals from the suite output rather than a number recorded here, because the suite grows as phases land. A change is not complete because it compiles: visual changes also need a real executable smoke check.
 
 ### Server smoke notes
 
