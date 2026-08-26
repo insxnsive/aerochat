@@ -37,6 +37,17 @@ namespace Aerochat.Controls
                 ["❤️"] = "Heart.png",
             };
 
+        private static readonly IReadOnlyDictionary<string, string> ShortcodeEmojiMap =
+            new Dictionary<string, string>(StringComparer.Ordinal)
+            {
+                [":)"] = "Smile.png",
+                [":D"] = "Grin.png",
+                [":("] = "Frown.png",
+                [":P"] = "Tongue.png",
+                [";)"] = "Wink.png",
+                [":O"] = "Surprise.png",
+            };
+
         public static readonly DependencyProperty MessageProperty =
             DependencyProperty.Register(nameof(Message), typeof(object), typeof(MessageParser), new PropertyMetadata(null, OnMessageChanged));
 
@@ -256,6 +267,12 @@ namespace Aerochat.Controls
             if (UnicodeEmojiMap.TryGetValue(text, out string? unicodeFile))
             {
                 fileName = unicodeFile;
+                return true;
+            }
+
+            if (ShortcodeEmojiMap.TryGetValue(text, out string? shortcodeFile))
+            {
+                fileName = shortcodeFile;
                 return true;
             }
 

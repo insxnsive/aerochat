@@ -311,6 +311,45 @@ public sealed class PresentationControlTests
             Does.Contain("🦄"));
     }
 
+    [TestCase(":)", "/Smile.png")]
+    [TestCase(":D", "/Grin.png")]
+    [TestCase(":(", "/Frown.png")]
+    [TestCase(":P", "/Tongue.png")]
+    [TestCase(";)", "/Wink.png")]
+    [TestCase(":O", "/Surprise.png")]
+    [Apartment(ApartmentState.STA)]
+    public void Wlm_shortcode_uses_matching_packaged_asset(string shortcode, string expectedSuffix)
+    {
+        EnsureWpfApplication();
+        var parser = new MessageParser
+        {
+            Message = new MessageModel($"hello {shortcode}"),
+        };
+
+        Image image = RenderedText(parser).Inlines.OfType<InlineUIContainer>()
+            .Select(container => container.Child).OfType<Image>().Single();
+
+        Assert.That(((BitmapImage)image.Source!).UriSource.AbsoluteUri, Does.EndWith(expectedSuffix));
+        Assert.That(image.ToolTip, Is.EqualTo(shortcode));
+    }
+
+    [TestCase(":d")]
+    [TestCase(":unknown:")]
+    [Apartment(ApartmentState.STA)]
+    public void Unknown_or_non_table_case_shortcode_remains_visible_text(string shortcode)
+    {
+        EnsureWpfApplication();
+        var parser = new MessageParser
+        {
+            Message = new MessageModel($"hello {shortcode}"),
+        };
+
+        TextBlock textBlock = RenderedText(parser);
+        Assert.That(textBlock.Inlines.OfType<InlineUIContainer>(), Is.Empty);
+        Assert.That(string.Concat(textBlock.Inlines.OfType<Run>().Select(run => run.Text)),
+            Does.Contain(shortcode));
+    }
+
     [Test]
     public void Shared_controls_do_not_reference_backend_or_native_packages()
     {
