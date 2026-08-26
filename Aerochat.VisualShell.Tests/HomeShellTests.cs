@@ -36,7 +36,9 @@ public sealed class HomeShellTests
     {
         public event EventHandler<MessageCreatedEventArgs>? MessageCreated;
         public event EventHandler<PresenceUpdatedEventArgs>? PresenceUpdated;
+#pragma warning disable CS0067 // interface member; raised by real transports only
         public event EventHandler<CallSignalEventArgs>? CallSignalReceived;
+#pragma warning restore CS0067
         public bool Connected { get; private set; }
         public Task ConnectAsync(Uri server, string token, CancellationToken cancellationToken = default)
         { Connected = true; return Task.CompletedTask; }

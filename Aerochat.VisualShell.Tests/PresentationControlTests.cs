@@ -1,4 +1,5 @@
 using Aerochat.Controls;
+using Aerochat.Connectivity;
 using Aerochat.Presentation;
 using System;
 using System.IO;
@@ -294,6 +295,78 @@ public sealed class PresentationControlTests
 
         Assert.That(source.UriSource.AbsoluteUri, Does.EndWith("/Smile.png"));
         Assert.That(image.ToolTip, Is.EqualTo("😀"));
+    }
+
+    [Test, Apartment(ApartmentState.STA)]
+    public void Sticker_message_renders_large_packaged_resource_image()
+    {
+        EnsureWpfApplication();
+        StickerPresentation sticker = StickerCatalog.Items[0];
+        var parser = new MessageParser
+        {
+            Message = new MessagePresentation
+            {
+                Id = Guid.NewGuid(),
+                Author = DemoData.Create().CurrentUser,
+                SentAt = DateTimeOffset.UtcNow,
+                IsOutgoing = true,
+                Body = sticker.ResourceName,
+                Kind = "sticker",
+                RefPayloadJson = sticker.RefPayloadJson
+            }
+        };
+
+        Image image = parser.MainPanel.Children.OfType<Image>().Single();
+        Assert.Multiple(() =>
+        {
+            Assert.That(((BitmapImage)image.Source!).UriSource.AbsoluteUri, Is.EqualTo(sticker.ResourceUri));
+            Assert.That(image.Width, Is.EqualTo(160));
+        });
+    }
+
+    [Test, Apartment(ApartmentState.STA)]
+    public void Locally_sent_shortcode_renders_through_the_message_presentation_body()
+    {
+        EnsureWpfApplication();
+        PresentationState state = DemoData.Create();
+        ConversationPresentation conversation = state.Conversations[0];
+        conversation.Draft = ":)";
+
+        MessagePresentation sent = state.SendDraft(
+            conversation,
+            new DateTimeOffset(2026, 8, 25, 12, 0, 0, TimeSpan.Zero))!;
+        var parser = new MessageParser { Message = sent };
+
+        Image image = RenderedText(parser).Inlines.OfType<InlineUIContainer>()
+            .Select(container => container.Child).OfType<Image>().Single();
+
+        Assert.That(((BitmapImage)image.Source!).UriSource.AbsoluteUri, Does.EndWith("/Smile.png"));
+    }
+
+    [Test, Apartment(ApartmentState.STA)]
+    public void Gateway_shortcode_maps_into_presentation_and_renders_packaged_emoticon()
+    {
+        EnsureWpfApplication();
+        PresentationState state = DemoData.Create();
+        using var adapter = new PresentationAdapter(state, new NullTransport());
+        ConversationPresentation conversation = state.Conversations.Single(item => item.Id == 2001);
+
+        const string wire =
+            "{\"t\":\"message.created\",\"eventId\":\"hub:99\",\"d\":{\"conversationId\":\"2001\",\"message\":{\"id\":\"10000000-0000-0000-0000-000000000099\",\"authorId\":\"1001\",\"body\":\":D\",\"kind\":\"message\",\"createdAt\":\"2026-08-25T12:00:00+00:00\"}}}";
+        Assert.That(GatewayProtocol.TryParseFrame(wire, out GatewayFrame? frame), Is.True);
+        Assert.That(GatewayProtocol.TryParseMessage(frame!.Data, out MessageCreatedEventArgs? incoming), Is.True);
+        adapter.ApplyMessageCreated(incoming!);
+
+        MessagePresentation received = conversation.Messages[^1];
+        var parser = new MessageParser { Message = received };
+        Image image = RenderedText(parser).Inlines.OfType<InlineUIContainer>()
+            .Select(container => container.Child).OfType<Image>().Single();
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(received.Body, Is.EqualTo(":D"));
+            Assert.That(((BitmapImage)image.Source!).UriSource.AbsoluteUri, Does.EndWith("/Grin.png"));
+        });
     }
 
     [Test, Apartment(ApartmentState.STA)]

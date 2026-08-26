@@ -1,4 +1,5 @@
 using System.Text.Json;
+using System.Globalization;
 
 namespace Aerochat.Connectivity;
 
@@ -63,10 +64,43 @@ public static class GatewayProtocol
         return true;
     }
 
-    private static bool TryGetString(JsonElement element, string name, out string? value)
+    public static bool TryParseMessage(
+        JsonElement data,
+        out MessageCreatedEventArgs? message)
+    {
+        message = null;
+        if (!TryGetString(data, "conversationId", out string? conversationId)
+            || !data.TryGetProperty("message", out JsonElement payload)
+            || payload.ValueKind != JsonValueKind.Object
+            || !TryGetString(payload, "id", out string? messageId)
+            || !TryGetString(payload, "authorId", out string? authorId)
+            || !TryGetString(payload, "body", out string? body)
+            || !TryGetString(payload, "createdAt", out string? createdAtText)
+            || !DateTimeOffset.TryParse(
+                createdAtText!,
+                CultureInfo.InvariantCulture,
+                DateTimeStyles.RoundtripKind,
+                out DateTimeOffset createdAt))
+        {
+            return false;
+        }
+
+        string kind = TryGetString(payload, "kind", out string? parsedKind)
+            ? parsedKind!
+            : "message";
+        string? refPayloadJson = payload.TryGetProperty("refPayload", out JsonElement refPayload)
+            && refPayload.ValueKind != JsonValueKind.Null
+            ? refPayload.GetRawText()
+            : null;
+        message = new MessageCreatedEventArgs(
+            conversationId!, messageId!, authorId!, body!, createdAt, kind, refPayloadJson);
+        return true;
+    }
+
+    private static bool TryGetString(JsonElement element, string propertyName, out string? value)
     {
         value = null;
-        return element.TryGetProperty(name, out JsonElement property)
+        return element.TryGetProperty(propertyName, out JsonElement property)
             && property.ValueKind == JsonValueKind.String
             && (value = property.GetString()) is not null;
     }

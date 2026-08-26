@@ -30,6 +30,18 @@ public sealed class ChatMessageClient
     }
 
     public async Task<bool> SendAsync(string conversationId, string body, CancellationToken cancellationToken = default)
+        => await SendCoreAsync(conversationId, body, "message", null, cancellationToken).ConfigureAwait(false);
+
+    public async Task<bool> SendStickerAsync(string conversationId, string resourceName, CancellationToken cancellationToken = default)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(conversationId);
+        ArgumentException.ThrowIfNullOrWhiteSpace(resourceName);
+        if (!Aerochat.Presentation.StickerCatalog.TryGet(resourceName, out Aerochat.Presentation.StickerPresentation? sticker))
+            throw new ArgumentException("Sticker is not in the installed sticker pack.", nameof(resourceName));
+        return await SendCoreAsync(conversationId, resourceName, "sticker", sticker.RefPayloadJson, cancellationToken).ConfigureAwait(false);
+    }
+
+    private async Task<bool> SendCoreAsync(string conversationId, string body, string kind, string? refPayloadJson, CancellationToken cancellationToken)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(conversationId);
         ArgumentException.ThrowIfNullOrWhiteSpace(body);
@@ -39,7 +51,7 @@ public sealed class ChatMessageClient
         using HttpRequestMessage request = new(HttpMethod.Post,
             new Uri(_server, $"conversations/{Uri.EscapeDataString(conversationId)}/messages"));
         request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", token);
-        request.Content = JsonContent.Create(new { body, kind = "message" });
+        request.Content = JsonContent.Create(new { body, kind, refPayloadJson });
         using HttpResponseMessage response = await _httpClient.SendAsync(request, cancellationToken).ConfigureAwait(false);
         response.EnsureSuccessStatusCode();
         return true;

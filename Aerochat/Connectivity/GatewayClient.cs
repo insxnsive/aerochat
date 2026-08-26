@@ -2,7 +2,6 @@ using System.IO;
 using System.Net.WebSockets;
 using System.Text;
 using System.Text.Json;
-using System.Globalization;
 
 namespace Aerochat.Connectivity;
 
@@ -246,7 +245,7 @@ public sealed class GatewayClient : IChatTransport
         switch (frame.Type)
         {
             case "message.created":
-                if (TryReadMessage(frame.Data, out MessageCreatedEventArgs? message))
+                if (GatewayProtocol.TryParseMessage(frame.Data, out MessageCreatedEventArgs? message))
                     MessageCreated?.Invoke(this, message!);
                 break;
             case "presence.updated":
@@ -262,35 +261,6 @@ public sealed class GatewayClient : IChatTransport
                     CallSignalReceived?.Invoke(this, call!);
                 break;
         }
-    }
-
-    private static bool TryReadMessage(
-        JsonElement data,
-        out MessageCreatedEventArgs? message)
-    {
-        message = null;
-        if (!TryGetString(data, "conversationId", out string? conversationId)
-            || !data.TryGetProperty("message", out JsonElement payload)
-            || payload.ValueKind != JsonValueKind.Object
-            || !TryGetString(payload, "id", out string? messageId)
-            || !TryGetString(payload, "authorId", out string? authorId)
-            || !TryGetString(payload, "body", out string? body)
-            || !TryGetString(payload, "createdAt", out string? createdAtText)
-            || !DateTimeOffset.TryParse(
-                createdAtText!,
-                CultureInfo.InvariantCulture,
-                DateTimeStyles.RoundtripKind,
-                out DateTimeOffset createdAt))
-        {
-            return false;
-        }
-
-        string kind = TryGetString(payload, "kind", out string? parsedKind)
-            ? parsedKind!
-            : "message";
-        message = new MessageCreatedEventArgs(
-            conversationId!, messageId!, authorId!, body!, createdAt, kind);
-        return true;
     }
 
     private static bool TryReadPresence(

@@ -14,6 +14,7 @@
         SizeChanged="Window_SizeChanged"
         PreviewMouseMove="Window_PreviewMouseMove"
         PreviewMouseUp="Window_PreviewMouseUp"
+        PreviewKeyDown="Window_PreviewKeyDown"
         MinWidth="365"
         MinHeight="383"
         x:Name="Window"
@@ -1020,13 +1021,16 @@
                                                             </Style>
                                                         </Rectangle.Style>
                                                     </Rectangle>
-                                                    <controls:MessageParser FontSize="13" Grid.Column="1" HorizontalAlignment="Stretch" Message="{Binding Body}" HyperlinkClicked="MessageParser_HyperlinkClicked">
+                                                    <controls:MessageParser FontSize="13" Grid.Column="1" HorizontalAlignment="Stretch" Message="{Binding}" HyperlinkClicked="MessageParser_HyperlinkClicked">
                                                         <controls:MessageParser.Style>
                                                             <Style TargetType="controls:MessageParser">
                                                                 <Setter Property="Visibility" Value="Visible" />
                                                                 <Style.Triggers>
                                                                     <DataTrigger Binding="{Binding IsOutgoing}" Value="True">
                                                                         <Setter Property="Visibility" Value="Collapsed" />
+                                                                    </DataTrigger>
+                                                                    <DataTrigger Binding="{Binding IsSticker}" Value="True">
+                                                                        <Setter Property="Visibility" Value="Visible" />
                                                                     </DataTrigger>
                                                                 </Style.Triggers>
                                                             </Style>
@@ -1039,6 +1043,9 @@
                                                                 <Style.Triggers>
                                                                     <DataTrigger Binding="{Binding IsOutgoing}" Value="True">
                                                                         <Setter Property="Visibility" Value="Visible" />
+                                                                    </DataTrigger>
+                                                                    <DataTrigger Binding="{Binding IsSticker}" Value="True">
+                                                                        <Setter Property="Visibility" Value="Collapsed" />
                                                                     </DataTrigger>
                                                                     <DataTrigger Binding="{Binding Body}" Value="GuildMemberJoin">
                                                                         <Setter Property="Foreground" Value="Green" />
@@ -1501,6 +1508,25 @@
                                             <ColumnDefinition Width="Auto" />
                                         </Grid.ColumnDefinitions>
                                         <StackPanel Grid.Column="0" Orientation="Horizontal">
+                                            <Popup x:Name="StickerFlyout" StaysOpen="False" Placement="Bottom" PlacementTarget="{Binding ElementName=StickerButtonGrid}">
+                                                <Border BorderBrush="#dedede" BorderThickness="1" Background="White" Width="274" Padding="6">
+                                                    <StackPanel>
+                                                        <TextBlock Text="Stickers" Foreground="#333333" FontWeight="Bold" Margin="3,2,3,6" />
+                                                        <ItemsControl x:Name="StickerItemsControl">
+                                                            <ItemsControl.ItemsPanel>
+                                                                <ItemsPanelTemplate><UniformGrid Columns="4" /></ItemsPanelTemplate>
+                                                            </ItemsControl.ItemsPanel>
+                                                            <ItemsControl.ItemTemplate>
+                                                                <DataTemplate>
+                                                                    <Button Click="StickerBox_Click" Tag="{Binding ResourceName}" ToolTip="{Binding Label}" Background="White" BorderBrush="#dedede" BorderThickness="1" Margin="2" Padding="4" Width="58" Height="58">
+                                                                        <Image Source="{Binding ResourceUri}" Width="42" Height="42" Stretch="Uniform" />
+                                                                    </Button>
+                                                                </DataTemplate>
+                                                            </ItemsControl.ItemTemplate>
+                                                        </ItemsControl>
+                                                    </StackPanel>
+                                                </Border>
+                                            </Popup>
                                             <Popup x:Name="EmojiFlyout" Closed="EmojiFlyout_Closed" StaysOpen="False" Placement="Bottom" PlacementTarget="{Binding ElementName=EmojiButtonGrid}">
                                                 <Border BorderBrush="#dedede" BorderThickness="1px" Background="White" Width="375px" Height="248px">
                                                     <StackPanel>
@@ -1794,6 +1820,10 @@
                                             <Grid Height="30" MouseUp="OpenEmojiFlyout">
                                                 <controls:NineSliceButton x:Name="EmojiButtonGrid" ToolTip="{loc:Loc ChatSelectEmoticon}" ToggleButton="CheckToggleButton" Hover="/Aerochat;component/Resources/Message/ToolbarHover.png" Pressed="/Aerochat;component/Resources/Message/ToolbarActive.png" Slice="6,6" />
                                                 <Image Margin="8,0" Source="/Aerochat;component/Resources/Emoji/Smile.png" HorizontalAlignment="Center" VerticalAlignment="Stretch" IsHitTestVisible="False" Width="16" Height="16" />
+                                            </Grid>
+                                            <Grid Height="30" MouseUp="OpenStickerFlyout">
+                                                <controls:NineSliceButton x:Name="StickerButtonGrid" ToolTip="Stickers" Hover="/Aerochat;component/Resources/Message/ToolbarHover.png" Pressed="/Aerochat;component/Resources/Message/ToolbarActive.png" Slice="6,6" />
+                                                <Image Margin="6,0" Source="/Aerochat;component/Resources/Emoji/Heart.png" HorizontalAlignment="Center" VerticalAlignment="Stretch" IsHitTestVisible="False" Width="18" Height="18" />
                                             </Grid>
                                             <Grid Height="30" MouseUp="RunNudge">
                                                 <controls:NineSliceButton Hover="/Aerochat;component/Resources/Message/ToolbarHover.png" Pressed="/Aerochat;component/Resources/Message/ToolbarActive.png" Slice="6,6" />

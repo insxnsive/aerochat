@@ -1,3 +1,4 @@
+using System.Text.Json;
 using Aerochat.Connectivity;
 using Aerochat.Presentation;
 
@@ -64,6 +65,26 @@ public sealed class GatewayTransportTests
             Assert.That(frame!.Type, Is.EqualTo("message.created"));
             Assert.That(frame.EventId, Is.EqualTo("instance:7"));
             Assert.That(frame.Data.GetProperty("value").GetInt32(), Is.EqualTo(42));
+        });
+    }
+
+    [Test]
+    public void Gateway_protocol_preserves_sticker_attachment_payload()
+    {
+        const string json =
+            "{\"t\":\"message.created\",\"eventId\":\"hub:98\",\"d\":{\"conversationId\":\"2001\",\"message\":{\"id\":\"10000000-0000-0000-0000-000000000098\",\"authorId\":\"1001\",\"body\":\"Smile.png\",\"kind\":\"sticker\",\"refPayload\":{\"sticker\":\"Smile.png\",\"url\":\"/sticker-packs/wlm/Smile.png\",\"contentType\":\"image/png\"},\"createdAt\":\"2026-08-25T12:00:00+00:00\"}}}";
+
+        Assert.That(GatewayProtocol.TryParseFrame(json, out GatewayFrame? frame), Is.True);
+        Assert.That(GatewayProtocol.TryParseMessage(frame!.Data, out MessageCreatedEventArgs? message), Is.True);
+
+        using JsonDocument payload = JsonDocument.Parse(message!.RefPayloadJson!);
+        Assert.Multiple(() =>
+        {
+            Assert.That(message.Kind, Is.EqualTo("sticker"));
+            Assert.That(payload.RootElement.GetProperty("url").GetString(),
+                Is.EqualTo("/sticker-packs/wlm/Smile.png"));
+            Assert.That(payload.RootElement.GetProperty("contentType").GetString(),
+                Is.EqualTo("image/png"));
         });
     }
 

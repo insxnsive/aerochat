@@ -44,6 +44,37 @@ public sealed class ChatShellTests
         }));
     }
 
+    [Test]
+    public async Task Chat_live_sticker_posts_kind_and_ref_payload_without_optimistic_append()
+    {
+        await Task.Run(() => WpfTestHost.Run(() =>
+        {
+            PresentationState state = DemoData.Create();
+            ConversationPresentation source = state.Conversations[0];
+            var conversation = new ConversationPresentation
+            {
+                Id = source.Id, Name = source.Name, Topic = source.Topic, IsGroup = source.IsGroup,
+                IsServerBacked = true, Recipient = source.Recipient
+            };
+            var handler = new RecordingHandler();
+            var client = new ChatMessageClient(new HttpClient(handler), new Uri("http://localhost:5080/"), "session-token");
+            var chat = new Chat(state, conversation, new WindowNavigator(state), client);
+
+            chat.SelectStickerAsync(StickerCatalog.Items[0]).GetAwaiter().GetResult();
+
+            using JsonDocument request = JsonDocument.Parse(handler.Body);
+            JsonElement root = request.RootElement;
+            Assert.Multiple(() =>
+            {
+                Assert.That(root.GetProperty("kind").GetString(), Is.EqualTo("sticker"));
+                Assert.That(root.GetProperty("refPayloadJson").GetString(),
+                    Is.EqualTo(StickerCatalog.Items[0].RefPayloadJson));
+                Assert.That(conversation.Messages, Is.Empty);
+            });
+            chat.Close();
+        }));
+    }
+
     private sealed class RecordingHandler : HttpMessageHandler
     {
         public HttpRequestMessage? Request { get; private set; }
@@ -197,6 +228,7 @@ public sealed class ChatShellTests
             Assert.That(xaml, Does.Contain("Binding IsOutgoing"));
             Assert.That(xaml, Does.Contain("Binding AttachmentUri"));
             Assert.That(xaml, Does.Contain("Binding ReplyTo"));
+            Assert.That(xaml, Does.Contain("Message=\"{Binding}\""));
 
             Assert.That(xaml, Does.Contain("Height=\"466\" Width=\"587\""));
             Assert.That(xaml, Does.Contain("/Aerochat;component/Resources/Message/Background.png"));
@@ -210,6 +242,12 @@ public sealed class ChatShellTests
             Assert.That(xaml, Does.Contain("MessageTextBox_PreviewKeyDown"));
             Assert.That(xaml, Does.Contain("DrawOnClickUndo"));
             Assert.That(xaml, Does.Contain("OpenEmojiFlyout"));
+            Assert.That(xaml, Does.Contain("StickerFlyout"));
+            Assert.That(xaml, Does.Contain("StickerItemsControl"));
+            Assert.That(xaml, Does.Contain("StickerButtonGrid"));
+            Assert.That(xaml, Does.Contain("StickerBox_Click"));
+            Assert.That(xaml, Does.Contain("OpenStickerFlyout"));
+            Assert.That(xaml, Does.Contain("Resources/Emoji/Heart.png"));
             Assert.That(xaml, Does.Contain("Window_SizeChanged"));
 
             string[] forbiddenBindings =

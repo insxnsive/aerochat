@@ -25,7 +25,7 @@ public sealed record MessagePageDto(
     IReadOnlyList<MessageDto> Items,
     string? NextBefore);
 
-public sealed record SendMessageRequest(string? Body, string? Kind);
+public sealed record SendMessageRequest(string? Body, string? Kind, string? RefPayloadJson = null);
 
 public sealed record CallSignalRequest(string? Sdp, string? Candidate, string? Reason);
 

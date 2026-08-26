@@ -26,7 +26,8 @@ public sealed class MessageCreatedEventArgs : EventArgs
         string authorId,
         string body,
         DateTimeOffset createdAt,
-        string kind = "message")
+        string kind = "message",
+        string? refPayloadJson = null)
     {
         ConversationId = conversationId;
         MessageId = messageId;
@@ -34,6 +35,7 @@ public sealed class MessageCreatedEventArgs : EventArgs
         Body = body;
         CreatedAt = createdAt;
         Kind = kind;
+        RefPayloadJson = refPayloadJson;
     }
 
     public string ConversationId { get; }
@@ -42,6 +44,7 @@ public sealed class MessageCreatedEventArgs : EventArgs
     public string Body { get; }
     public DateTimeOffset CreatedAt { get; }
     public string Kind { get; }
+    public string? RefPayloadJson { get; }
 }
 
 public sealed class PresenceUpdatedEventArgs : EventArgs

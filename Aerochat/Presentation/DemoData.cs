@@ -205,11 +205,20 @@ public static class DemoData
             false,
             "I saved the scene reference here.",
             "/Aerochat;component/Scenes/Aerochat.png");
+        MessagePresentation fifth = CreateMessage(
+            "00000001-0000-0000-0000-000000000005",
+            recipient,
+            At(2026, 8, 24, 9, 15),
+            false,
+            StickerCatalog.Items[0].ResourceName,
+            kind: "sticker",
+            refPayloadJson: StickerCatalog.Items[0].RefPayloadJson);
 
         conversation.Messages.Add(first);
         conversation.Messages.Add(second);
         conversation.Messages.Add(third);
         conversation.Messages.Add(fourth);
+        conversation.Messages.Add(fifth);
         return conversation;
     }
 
@@ -287,7 +296,9 @@ public static class DemoData
         bool isOutgoing,
         string body,
         string? attachmentUri = null,
-        MessagePresentation? replyTo = null) => new()
+        MessagePresentation? replyTo = null,
+        string kind = "message",
+        string? refPayloadJson = null) => new()
     {
         Id = Guid.Parse(id),
         Author = author,
@@ -295,7 +306,9 @@ public static class DemoData
         IsOutgoing = isOutgoing,
         Body = body,
         AttachmentUri = attachmentUri,
-        ReplyTo = replyTo
+        ReplyTo = replyTo,
+        Kind = kind,
+        RefPayloadJson = refPayloadJson
     };
 
     private static DateTimeOffset At(int year, int month, int day, int hour, int minute) =>

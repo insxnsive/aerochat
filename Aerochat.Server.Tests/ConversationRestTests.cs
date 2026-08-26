@@ -656,6 +656,105 @@ public sealed class ConversationRestTests
     }
 
     [Test]
+    public async Task Authenticated_member_can_send_and_persist_valid_sticker_attachment()
+    {
+        using var factory = new ApiWebApplicationFactory();
+        (Guid conversationId, Guid userId) =
+            await SeedMemberConversationAsync(factory, "sticker-valid");
+        using HttpClient client = CreateAuthorizedClient(factory, "sticker-valid");
+        const string payload =
+            "{\"sticker\":\"Smile.png\",\"url\":\"/sticker-packs/wlm/Smile.png\",\"contentType\":\"image/png\"}";
+        string requestJson = JsonSerializer.Serialize(new
+        {
+            body = "Smile.png",
+            kind = "sticker",
+            refPayloadJson = payload
+        });
+
+        using HttpResponseMessage response = await client.PostAsync(
+            $"/conversations/{conversationId}/messages",
+            new StringContent(requestJson, Encoding.UTF8, "application/json"));
+        MessageDto? message = JsonSerializer.Deserialize<MessageDto>(
+            await response.Content.ReadAsStringAsync(),
+            new JsonSerializerOptions(JsonSerializerDefaults.Web));
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(response.StatusCode, Is.EqualTo(HttpStatusCode.Created));
+            Assert.That(message, Is.Not.Null);
+            Assert.That(message!.AuthorId, Is.EqualTo(userId));
+            Assert.That(message.Kind, Is.EqualTo("sticker"));
+            Assert.That(message.RefPayloadJson, Is.EqualTo(payload));
+        });
+
+        await using AsyncServiceScope scope = factory.Services.CreateAsyncScope();
+        ChatDb db = scope.ServiceProvider.GetRequiredService<ChatDb>();
+        MessageEntity persisted = await db.Messages.SingleAsync(row => row.Id == message!.Id);
+        Assert.That(persisted.RefPayloadJson, Is.EqualTo(payload));
+    }
+
+    [Test]
+    public async Task Authenticated_member_can_send_and_persist_valid_gif_sticker_attachment()
+    {
+        using var factory = new ApiWebApplicationFactory();
+        (Guid conversationId, _) =
+            await SeedMemberConversationAsync(factory, "sticker-gif-valid");
+        using HttpClient client = CreateAuthorizedClient(factory, "sticker-gif-valid");
+        const string payload =
+            "{\"sticker\":\"Wave.gif\",\"url\":\"/sticker-packs/wlm/Wave.gif\",\"contentType\":\"image/gif\"}";
+        string requestJson = JsonSerializer.Serialize(new
+        {
+            body = "Wave.gif",
+            kind = "sticker",
+            refPayloadJson = payload
+        });
+
+        using HttpResponseMessage response = await client.PostAsync(
+            $"/conversations/{conversationId}/messages",
+            new StringContent(requestJson, Encoding.UTF8, "application/json"));
+        MessageDto? message = JsonSerializer.Deserialize<MessageDto>(
+            await response.Content.ReadAsStringAsync(),
+            new JsonSerializerOptions(JsonSerializerDefaults.Web));
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(response.StatusCode, Is.EqualTo(HttpStatusCode.Created));
+            Assert.That(message, Is.Not.Null);
+            Assert.That(message!.Kind, Is.EqualTo("sticker"));
+            Assert.That(message.RefPayloadJson, Is.EqualTo(payload));
+        });
+    }
+
+    [TestCase("{not-json")]
+    [TestCase("{\"sticker\":\"Smile.exe\",\"url\":\"/sticker-packs/wlm/Smile.exe\",\"contentType\":\"application/octet-stream\"}")]
+    [TestCase("{\"sticker\":\"Smile.png\",\"url\":\"https://evil.example/sticker-packs/wlm/Smile.png\",\"contentType\":\"image/png\"}")]
+    [TestCase("{\"sticker\":\"Smile.png\",\"url\":\"/other/Smile.png\",\"contentType\":\"image/png\"}")]
+    [TestCase("{\"sticker\":\"Smile.png\",\"url\":\"/sticker-packs/wlm/Smile.png/../Smile.png\",\"contentType\":\"image/png\"}")]
+    [TestCase("{\"sticker\":\"Smile.png\",\"url\":\"/sticker-packs/wlm/Smile.png\",\"contentType\":\"image/jpeg\"}")]
+    public async Task Sticker_with_invalid_attachment_payload_returns_400_without_persisting(string payload)
+    {
+        using var factory = new ApiWebApplicationFactory();
+        (Guid conversationId, _) =
+            await SeedMemberConversationAsync(factory, "sticker-invalid");
+        using HttpClient client = CreateAuthorizedClient(factory, "sticker-invalid");
+        string requestJson = JsonSerializer.Serialize(new
+        {
+            body = "Smile.png",
+            kind = "sticker",
+            refPayloadJson = payload
+        });
+
+        using HttpResponseMessage response = await client.PostAsync(
+            $"/conversations/{conversationId}/messages",
+            new StringContent(requestJson, Encoding.UTF8, "application/json"));
+
+        Assert.That(response.StatusCode, Is.EqualTo(HttpStatusCode.BadRequest));
+        await using AsyncServiceScope scope = factory.Services.CreateAsyncScope();
+        ChatDb db = scope.ServiceProvider.GetRequiredService<ChatDb>();
+        Assert.That(await db.Messages.CountAsync(message => message.ConversationId == conversationId), Is.Zero);
+    }
+
+    [Test]
     public async Task Authenticated_user_gets_only_member_conversations_in_deterministic_order()
     {
         using var factory = new ApiWebApplicationFactory();
@@ -774,6 +873,37 @@ public sealed class ConversationRestTests
         });
 
         return (conversationId, now);
+    }
+
+    private static async Task<(Guid ConversationId, Guid UserId)> SeedMemberConversationAsync(
+        ApiWebApplicationFactory factory,
+        string providerUserId)
+    {
+        Guid userId = Guid.NewGuid();
+        Guid conversationId = Guid.NewGuid();
+        DateTimeOffset now = new(2026, 8, 25, 12, 0, 0, TimeSpan.Zero);
+        await factory.SeedAsync(db =>
+        {
+            db.Users.Add(new ExternalUserEntity
+            {
+                Id = userId,
+                Provider = "github",
+                ProviderUserId = providerUserId,
+                DisplayName = providerUserId,
+                CreatedAt = now,
+                UpdatedAt = now
+            });
+            db.Conversations.Add(new ConversationEntity
+            {
+                Id = conversationId,
+                Kind = "dm",
+                CreatedAt = now,
+                Participants = { new ParticipantEntity { UserId = userId, JoinedAt = now } }
+            });
+            return Task.CompletedTask;
+        });
+
+        return (conversationId, userId);
     }
 
     private static string DecodeCursor(string value)

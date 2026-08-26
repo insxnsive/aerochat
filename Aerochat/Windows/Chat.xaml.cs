@@ -30,6 +30,7 @@ public partial class Chat : Window
         LiveMessages = liveMessages;
         InitializeComponent();
         DataContext = Conversation;
+        StickerItemsControl.ItemsSource = StickerCatalog.Items;
         UpdateLocalVisualState();
     }
 
@@ -43,6 +44,7 @@ public partial class Chat : Window
     public ChatMessageClient? LiveMessages { get; }
     public CallSignalingClient? LiveCalls { get; private set; }
     public RtcPeerEngine? CallEngine { get; private set; }
+    public bool IsStickerPickerOpen => StickerFlyout.IsOpen;
 
     public Chat(
         PresentationState state,
@@ -97,7 +99,7 @@ public partial class Chat : Window
                     State.CancelTarget(Conversation);
                 }
             }
-            catch (Exception) when (true)
+            catch (Exception)
             {
                 // A live server is optional; retain the draft when it is unavailable.
             }
@@ -113,6 +115,14 @@ public partial class Chat : Window
     private void Window_SizeChanged(object sender, SizeChangedEventArgs e) { }
     private void Window_PreviewMouseMove(object sender, MouseEventArgs e) { }
     private void Window_PreviewMouseUp(object sender, MouseButtonEventArgs e) { }
+    private void Window_PreviewKeyDown(object sender, KeyEventArgs e)
+    {
+        if (e.Key == Key.Escape && StickerFlyout.IsOpen)
+        {
+            StickerFlyout.IsOpen = false;
+            e.Handled = true;
+        }
+    }
     private void OnDropFileIntoChatWindow(object sender, DragEventArgs e) => e.Handled = true;
     private void ToolbarClick(object sender, MouseButtonEventArgs e) { }
     private void HiddenItemsClick(object sender, MouseButtonEventArgs e) { }
@@ -216,6 +226,39 @@ public partial class Chat : Window
 
     private void ShowColorMenu(object sender, MouseButtonEventArgs e) { }
     private void OpenEmojiFlyout(object sender, MouseButtonEventArgs e) { }
+    private void OpenStickerFlyout(object sender, MouseButtonEventArgs e)
+    {
+        StickerFlyout.IsOpen = true;
+        e.Handled = true;
+    }
+
+    public async Task SelectStickerAsync(StickerPresentation sticker, CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(sticker);
+        StickerFlyout.IsOpen = false;
+
+        if (LiveMessages is not null && Conversation.IsServerBacked)
+        {
+            try
+            {
+                await LiveMessages.SendStickerAsync(Conversation.Id.ToString(), sticker.ResourceName, cancellationToken);
+            }
+            catch (Exception)
+            {
+                // A live server is optional; the picker remains usable offline.
+            }
+            return;
+        }
+
+        State.SendSticker(Conversation, sticker,
+            new DateTimeOffset(2026, 8, 24, 12, 0, 0, TimeSpan.Zero));
+    }
+
+    private void StickerBox_Click(object sender, RoutedEventArgs e)
+    {
+        if ((sender as Button)?.DataContext is StickerPresentation sticker)
+            _ = SelectStickerAsync(sticker);
+    }
     private void RunNudge(object sender, MouseButtonEventArgs e) { }
 
     private void SwitchToDraw_MouseUp(object sender, MouseButtonEventArgs e)

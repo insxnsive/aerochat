@@ -33,7 +33,8 @@ public sealed class PresentationAdapter : IDisposable
             return;
         }
 
-        _state.ApplyRemoteMessage(conversationId, messageId, authorId, message.Body, message.CreatedAt);
+        _state.ApplyRemoteMessage(conversationId, messageId, authorId, message.Body, message.CreatedAt,
+            message.Kind, message.RefPayloadJson);
     }
 
     public void ApplyPresenceUpdated(PresenceUpdatedEventArgs update)

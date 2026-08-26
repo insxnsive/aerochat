@@ -115,6 +115,30 @@ public sealed class PresentationState : ObservableObject
         return message;
     }
 
+    public MessagePresentation SendSticker(
+        ConversationPresentation conversation,
+        StickerPresentation sticker,
+        DateTimeOffset sentAt)
+    {
+        ArgumentNullException.ThrowIfNull(conversation);
+        ArgumentNullException.ThrowIfNull(sticker);
+
+        int ordinal = conversation.Messages.Count + 1;
+        MessagePresentation message = new()
+        {
+            Id = CreateMessageId(conversation.Id, ordinal),
+            Author = CurrentUser,
+            SentAt = sentAt,
+            IsOutgoing = true,
+            Body = sticker.ResourceName,
+            Kind = "sticker",
+            RefPayloadJson = sticker.RefPayloadJson
+        };
+        conversation.Messages.Add(message);
+        ClearTarget(conversation);
+        return message;
+    }
+
     public void BeginReply(
         ConversationPresentation conversation,
         MessagePresentation message)
@@ -175,7 +199,9 @@ public sealed class PresentationState : ObservableObject
         Guid messageId,
         ulong authorId,
         string body,
-        DateTimeOffset createdAt)
+        DateTimeOffset createdAt,
+        string kind = "message",
+        string? refPayloadJson = null)
     {
         ConversationPresentation conversation = EnsureConversation(conversationId, authorId);
         if (conversation.Messages.Any(message => message.Id == messageId))
@@ -188,7 +214,9 @@ public sealed class PresentationState : ObservableObject
             Author = author,
             SentAt = createdAt,
             IsOutgoing = author.Id == CurrentUser.Id,
-            Body = body
+            Body = body,
+            Kind = kind,
+            RefPayloadJson = refPayloadJson
         });
     }
 

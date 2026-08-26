@@ -30,6 +30,26 @@ public sealed class DemoDataTests
     }
 
     [Test]
+    public void Create_includes_valid_sticker_kind_fixture()
+    {
+        PresentationState state = DemoData.Create();
+        MessagePresentation[] stickers = state.Conversations
+            .SelectMany(conversation => conversation.Messages)
+            .Where(message => message.Kind == "sticker")
+            .ToArray();
+
+        Assert.That(stickers, Is.Not.Empty);
+        Assert.Multiple(() =>
+        {
+            Assert.That(stickers, Has.All.Matches<MessagePresentation>(message => message.IsSticker));
+            Assert.That(stickers, Has.All.Matches<MessagePresentation>(message => message.StickerUri is not null));
+            Assert.That(stickers.Select(message => message.RefPayloadJson),
+                Has.All.EqualTo(
+                    "{\"sticker\":\"Smile.png\",\"url\":\"/sticker-packs/wlm/Smile.png\",\"contentType\":\"image/png\"}"));
+        });
+    }
+
+    [Test]
     public void Create_returns_fresh_independent_object_graphs()
     {
         PresentationState first = DemoData.Create();
@@ -218,6 +238,26 @@ public sealed class DemoDataTests
             Assert.That(sent.SentAt, Is.EqualTo(sentAt));
             Assert.That(sent.IsOutgoing, Is.True);
             Assert.That(conversation.Draft, Is.Empty);
+        });
+    }
+
+    [Test]
+    public void SendSticker_appends_a_local_sticker_message_with_catalog_payload()
+    {
+        PresentationState state = DemoData.Create();
+        ConversationPresentation conversation = state.Conversations[0];
+        StickerPresentation sticker = StickerCatalog.Items[0];
+
+        MessagePresentation sent = state.SendSticker(conversation, sticker,
+            new DateTimeOffset(2026, 8, 24, 12, 0, 0, TimeSpan.Zero));
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(sent.Kind, Is.EqualTo("sticker"));
+            Assert.That(sent.RefPayloadJson, Is.EqualTo(
+                "{\"sticker\":\"Smile.png\",\"url\":\"/sticker-packs/wlm/Smile.png\",\"contentType\":\"image/png\"}"));
+            Assert.That(sent.StickerUri, Is.EqualTo(sticker.ResourceUri));
+            Assert.That(sent.IsSticker, Is.True);
         });
     }
 

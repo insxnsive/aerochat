@@ -80,6 +80,23 @@ namespace Aerochat.Controls
             if (Message is null)
                 return;
 
+            if (string.Equals(ReadString(Message, "Kind"), "sticker", StringComparison.Ordinal)
+                && Uri.TryCreate(ReadString(Message, "StickerUri"), UriKind.Absolute, out Uri? stickerUri))
+            {
+                var sticker = new Image
+                {
+                    Source = new BitmapImage(stickerUri),
+                    Width = 160,
+                    Height = 160,
+                    MaxWidth = 220,
+                    MaxHeight = 220,
+                    Stretch = Stretch.Uniform,
+                    ToolTip = "Sticker"
+                };
+                MainPanel.Children.Add(sticker);
+                return;
+            }
+
 #if FEATURE_SELECTABLE_MESSAGE_TEXT
             var textBlock = new SelectableTextBlock();
 #else
@@ -87,7 +104,10 @@ namespace Aerochat.Controls
 #endif
             textBlock.TextWrapping = TextWrapping.Wrap;
 
-            string content = ReadString(Message, "Content") ?? Message as string ?? string.Empty;
+            string content = ReadString(Message, "Content")
+                ?? ReadString(Message, "Body")
+                ?? Message as string
+                ?? string.Empty;
             AppendContent(textBlock, content, Message);
             MainPanel.Children.Add(FormatFullText(textBlock));
         }
