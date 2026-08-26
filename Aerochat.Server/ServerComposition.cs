@@ -1,6 +1,7 @@
 using System.Security.Cryptography;
 using Aerochat.Server.Auth;
 using Aerochat.Server.Auth.OAuth;
+using Aerochat.Server.Calls;
 using Aerochat.Server.Data;
 using Aerochat.Server.Gateway;
 using Aerochat.Server.Gifs;
@@ -32,6 +33,7 @@ internal static class ServerComposition
         };
         builder.Services.AddSingleton(gatewayOptions);
         builder.Services.AddSingleton<GatewayHub>();
+        builder.Services.AddSingleton<CallRegistry>();
         builder.Services.AddSingleton<IReadOnlyDictionary<string, OAuthProviderDefinition>>(providers);
         builder.Services.AddSingleton(sp => new SessionService(
             ReadSessionSigningKey(builder.Configuration),
@@ -64,6 +66,7 @@ internal static class ServerComposition
         app.MapGet("/health", () => Results.Json(new { status = "ok" }));
         app.MapOAuthEndpoints();
         app.MapConversationEndpoints();
+        app.MapCallEndpoints();
         app.MapGifEndpoints();
         app.MapGatewayEndpoints();
     }

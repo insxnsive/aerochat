@@ -27,6 +27,8 @@ public sealed record MessagePageDto(
 
 public sealed record SendMessageRequest(string? Body, string? Kind);
 
+public sealed record CallSignalRequest(string? Sdp, string? Candidate, string? Reason);
+
 public sealed record ErrorDto(string Error);
 
 internal sealed record MessageCursor(Guid ConversationId, DateTimeOffset CreatedAt, Guid Id);

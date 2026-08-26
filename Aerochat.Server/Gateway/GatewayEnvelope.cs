@@ -9,6 +9,11 @@ public static class GatewayEventType
     public const string MessageCreated = "message.created";
     public const string PresenceUpdated = "presence.updated";
     public const string TypingStarted = "typing.started";
+    public const string CallRing = "call.ring";
+    public const string CallOffer = "call.offer";
+    public const string CallAnswer = "call.answer";
+    public const string CallIce = "call.ice";
+    public const string CallHangup = "call.hangup";
     public const string Ready = "gateway.ready";
     public const string ResyncRequired = "gateway.resync_required";
 }
@@ -146,6 +151,12 @@ public static class GatewayJson
                 ValidateValue(typing.ConversationId, visited);
                 ValidateValue(typing.UserId, visited);
                 return;
+            case CallSignalData call:
+                ValidateValue(call.ConversationId, visited);
+                ValidateValue(call.Sdp, visited);
+                ValidateValue(call.Candidate, visited);
+                ValidateValue(call.Reason, visited);
+                return;
             case GatewayReadyData ready:
                 ValidateValue(ready.UserId, visited);
                 ValidateValue(ready.InstanceId, visited);
@@ -205,6 +216,12 @@ public sealed record MessageCreatedData(Guid ConversationId, GatewayMessageData 
 public sealed record PresenceUpdatedData(Guid UserId, string Status);
 
 public sealed record TypingStartedData(Guid ConversationId, Guid UserId);
+
+public sealed record CallSignalData(
+    Guid ConversationId,
+    string? Sdp,
+    string? Candidate,
+    string? Reason);
 
 public sealed record GatewayReadyData(
     Guid UserId,
