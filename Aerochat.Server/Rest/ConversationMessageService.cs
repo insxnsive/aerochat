@@ -45,6 +45,14 @@ public sealed class ConversationMessageService(
             return Results.Json(new ErrorDto("body_too_long"), statusCode: StatusCodes.Status400BadRequest);
         }
 
+        if (request.RefPayloadJson is not null
+            && request.RefPayloadJson.Length > MessageRequestValidator.MaxRefPayloadJsonCharacters)
+        {
+            return Results.Json(
+                new ErrorDto("ref_payload_too_long"),
+                statusCode: StatusCodes.Status400BadRequest);
+        }
+
         if (string.IsNullOrWhiteSpace(request.Body)
             || request.Kind is null
             || !MessageKinds.Contains(request.Kind))

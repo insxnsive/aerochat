@@ -1,4 +1,3 @@
-using System.Globalization;
 using Aerochat.Presentation;
 
 namespace Aerochat.Connectivity;
@@ -26,9 +25,9 @@ public sealed class PresentationAdapter : IDisposable
     public void ApplyMessageCreated(MessageCreatedEventArgs message)
     {
         ArgumentNullException.ThrowIfNull(message);
-        if (!ulong.TryParse(message.ConversationId, NumberStyles.None, CultureInfo.InvariantCulture, out ulong conversationId)
+        if (!StableIdMapper.TryMap(message.ConversationId, out ulong conversationId)
             || !Guid.TryParse(message.MessageId, out Guid messageId)
-            || !ulong.TryParse(message.AuthorId, NumberStyles.None, CultureInfo.InvariantCulture, out ulong authorId))
+            || !StableIdMapper.TryMap(message.AuthorId, out ulong authorId))
         {
             return;
         }
@@ -40,7 +39,7 @@ public sealed class PresentationAdapter : IDisposable
     public void ApplyPresenceUpdated(PresenceUpdatedEventArgs update)
     {
         ArgumentNullException.ThrowIfNull(update);
-        if (!ulong.TryParse(update.UserId, NumberStyles.None, CultureInfo.InvariantCulture, out ulong userId)
+        if (!StableIdMapper.TryMap(update.UserId, out ulong userId)
             || !Enum.TryParse(update.Status, ignoreCase: true, out PresenceStatus status)
             || !Enum.IsDefined(status))
         {

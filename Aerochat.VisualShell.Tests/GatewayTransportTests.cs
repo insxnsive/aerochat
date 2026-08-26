@@ -88,6 +88,54 @@ public sealed class GatewayTransportTests
         });
     }
 
+    [Test]
+    public void Presentation_adapter_maps_server_guid_ids_onto_stable_local_objects()
+    {
+        PresentationState state = DemoData.Create();
+        using var adapter = new PresentationAdapter(state, new NullTransport());
+        int originalConversationCount = state.Conversations.Count;
+
+        var wireConversationId = Guid.Parse("3f2a1111-2222-3333-4444-555566667777");
+        var wireAuthorId = Guid.Parse("aaaa0000-0000-0000-0000-000000000001");
+        ulong expectedConversationId = StableIdMapper.Map(wireConversationId);
+        ulong expectedAuthorId = StableIdMapper.Map(wireAuthorId);
+
+        adapter.ApplyMessageCreated(new MessageCreatedEventArgs(
+            wireConversationId.ToString(),
+            Guid.NewGuid().ToString(),
+            wireAuthorId.ToString(),
+            "hello from server",
+            new DateTimeOffset(2026, 8, 25, 12, 0, 0, TimeSpan.Zero)));
+
+        ConversationPresentation? conversation = state.Conversations
+            .SingleOrDefault(item => item.Id == expectedConversationId);
+        Assert.Multiple(() =>
+        {
+            Assert.That(state.Conversations, Has.Count.EqualTo(originalConversationCount + 1));
+            Assert.That(conversation, Is.Not.Null, "server-guid conversation was dropped");
+            Assert.That(conversation!.Messages, Has.Count.EqualTo(1));
+            Assert.That(conversation.Messages[0].Body, Is.EqualTo("hello from server"));
+            Assert.That(conversation.Messages[0].Author.Id, Is.EqualTo(expectedAuthorId));
+        });
+    }
+
+    [Test]
+    public void Stable_id_mapper_is_deterministic_and_accepts_both_id_shapes()
+    {
+        Guid id = Guid.Parse("01234567-89ab-cdef-0123-456789abcdef");
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(StableIdMapper.Map(id), Is.EqualTo(StableIdMapper.Map(id)));
+            Assert.That(StableIdMapper.TryMap("2001", out ulong numeric), Is.True);
+            Assert.That(numeric, Is.EqualTo(2001UL));
+            Assert.That(StableIdMapper.TryMap(id.ToString(), out ulong mapped), Is.True);
+            Assert.That(mapped, Is.EqualTo(StableIdMapper.Map(id)));
+            Assert.That(StableIdMapper.TryMap("not-an-id", out _), Is.False);
+            Assert.That(StableIdMapper.TryMap(null, out _), Is.False);
+        });
+    }
+
     [TestCase("")]
     [TestCase("{}")]
     [TestCase("{\"t\":\"message.created\",\"eventId\":null,\"d\":null}")]

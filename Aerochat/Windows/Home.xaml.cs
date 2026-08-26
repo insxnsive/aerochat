@@ -75,7 +75,7 @@ public partial class Home : Window
     {
         Dispatcher.Invoke(() =>
         {
-            if (ulong.TryParse(update.UserId, out ulong userId)
+            if (StableIdMapper.TryMap(update.UserId, out ulong userId)
                 && Enum.TryParse(update.Status, true, out PresenceStatus status)
                 && Enum.IsDefined(status))
                 State.ApplyRemotePresence(userId, status);
@@ -86,9 +86,9 @@ public partial class Home : Window
     {
         Dispatcher.Invoke(() =>
         {
-            if (ulong.TryParse(message.ConversationId, out ulong conversationId)
+            if (StableIdMapper.TryMap(message.ConversationId, out ulong conversationId)
                 && Guid.TryParse(message.MessageId, out Guid messageId)
-                && ulong.TryParse(message.AuthorId, out ulong authorId))
+                && StableIdMapper.TryMap(message.AuthorId, out ulong authorId))
                 State.ApplyRemoteMessage(conversationId, messageId, authorId, message.Body, message.CreatedAt);
         });
     }

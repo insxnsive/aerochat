@@ -755,6 +755,67 @@ public sealed class ConversationRestTests
     }
 
     [Test]
+    public async Task Message_with_oversized_ref_payload_is_rejected_without_persisting()
+    {
+        using var factory = new ApiWebApplicationFactory();
+        (Guid conversationId, _) =
+            await SeedMemberConversationAsync(factory, "refpayload-cap");
+        using HttpClient client = CreateAuthorizedClient(factory, "refpayload-cap");
+        string oversized = "{\"blob\":\"" + new string('x', Aerochat.Server.Hardening.MessageRequestValidator.MaxRefPayloadJsonCharacters) + "\"}";
+        string requestJson = JsonSerializer.Serialize(new
+        {
+            body = "hello",
+            kind = "message",
+            refPayloadJson = oversized
+        });
+
+        using HttpResponseMessage response = await client.PostAsync(
+            $"/conversations/{conversationId}/messages",
+            new StringContent(requestJson, Encoding.UTF8, "application/json"));
+
+        Assert.That(response.StatusCode, Is.EqualTo(HttpStatusCode.BadRequest));
+        await using AsyncServiceScope scope2 = factory.Services.CreateAsyncScope();
+        ChatDb db2 = scope2.ServiceProvider.GetRequiredService<ChatDb>();
+        Assert.That(await db2.Messages.CountAsync(message => message.ConversationId == conversationId), Is.Zero);
+    }
+
+    [Test]
+    public async Task Message_with_ref_payload_at_exact_limit_still_persists()
+    {
+        using var factory = new ApiWebApplicationFactory();
+        (Guid conversationId, Guid userId) =
+            await SeedMemberConversationAsync(factory, "refpayload-edge");
+        using HttpClient client = CreateAuthorizedClient(factory, "refpayload-edge");
+        int blobLength = Aerochat.Server.Hardening.MessageRequestValidator.MaxRefPayloadJsonCharacters
+            - "{\"blob\":\"\"}".Length;
+        string atLimit = "{\"blob\":\"" + new string('y', blobLength) + "\"}";
+        Assert.That(atLimit.Length,
+            Is.EqualTo(Aerochat.Server.Hardening.MessageRequestValidator.MaxRefPayloadJsonCharacters));
+        string requestJson = JsonSerializer.Serialize(new
+        {
+            body = "hello",
+            kind = "message",
+            refPayloadJson = atLimit
+        });
+
+        using HttpResponseMessage response = await client.PostAsync(
+            $"/conversations/{conversationId}/messages",
+            new StringContent(requestJson, Encoding.UTF8, "application/json"));
+
+        Assert.That(response.StatusCode, Is.EqualTo(HttpStatusCode.Created));
+        await using AsyncServiceScope scope = factory.Services.CreateAsyncScope();
+        ChatDb db = scope.ServiceProvider.GetRequiredService<ChatDb>();
+        MessageEntity? persisted = await db.Messages
+            .SingleOrDefaultAsync(message => message.ConversationId == conversationId);
+        Assert.Multiple(() =>
+        {
+            Assert.That(persisted, Is.Not.Null);
+            Assert.That(persisted!.AuthorId, Is.EqualTo(userId));
+            Assert.That(persisted.RefPayloadJson, Is.EqualTo(atLimit));
+        });
+    }
+
+    [Test]
     public async Task Authenticated_user_gets_only_member_conversations_in_deterministic_order()
     {
         using var factory = new ApiWebApplicationFactory();
