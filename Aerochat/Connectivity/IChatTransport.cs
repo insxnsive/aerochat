@@ -4,6 +4,7 @@ public interface IChatTransport : IAsyncDisposable
 {
     event EventHandler<MessageCreatedEventArgs>? MessageCreated;
     event EventHandler<PresenceUpdatedEventArgs>? PresenceUpdated;
+    event EventHandler<CallSignalEventArgs>? CallSignalReceived;
 
     Task ConnectAsync(Uri server, string token, CancellationToken cancellationToken = default);
 
@@ -53,4 +54,27 @@ public sealed class PresenceUpdatedEventArgs : EventArgs
 
     public string UserId { get; }
     public string Status { get; }
+}
+
+public sealed class CallSignalEventArgs : EventArgs
+{
+    public CallSignalEventArgs(
+        string eventType,
+        string conversationId,
+        string? sdp = null,
+        string? candidate = null,
+        string? reason = null)
+    {
+        EventType = eventType;
+        ConversationId = conversationId;
+        Sdp = sdp;
+        Candidate = candidate;
+        Reason = reason;
+    }
+
+    public string EventType { get; }
+    public string ConversationId { get; }
+    public string? Sdp { get; }
+    public string? Candidate { get; }
+    public string? Reason { get; }
 }

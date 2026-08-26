@@ -54,7 +54,14 @@ public sealed class RepositoryLayoutTests
             Assert.That(existingDirectories, Is.Empty, string.Join(", ", existingDirectories));
             Assert.That(offenders, Is.Empty, string.Join(Environment.NewLine, offenders));
             Assert.That(projectReferences, Is.Empty);
-            Assert.That(packages, Is.EqualTo(new[] { "System.Security.Cryptography.ProtectedData", "XamlAnimatedGif" }));
+            Assert.That(packages, Is.EqualTo(new[]
+            {
+                "SIPSorcery",
+                "SIPSorceryMedia.Encoders",
+                "SIPSorceryMedia.Windows",
+                "System.Security.Cryptography.ProtectedData",
+                "XamlAnimatedGif"
+            }));
             Assert.That(project, Does.Not.Contain("PreferNativeArm64"));
         });
     }

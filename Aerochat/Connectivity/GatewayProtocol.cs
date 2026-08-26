@@ -9,6 +9,9 @@ public sealed record GatewayFrame(
 
 public static class GatewayProtocol
 {
+    private static readonly string[] CallTypes =
+    ["call.ring", "call.offer", "call.answer", "call.ice", "call.hangup"];
+
     public static bool TryParseFrame(string json, out GatewayFrame? frame)
     {
         frame = null;
@@ -42,5 +45,29 @@ public static class GatewayProtocol
         {
             return false;
         }
+    }
+
+    public static bool TryParseCallSignal(GatewayFrame frame, out CallSignalEventArgs? call)
+    {
+        call = null;
+        if (!CallTypes.Contains(frame.Type, StringComparer.Ordinal)
+            || !TryGetString(frame.Data, "conversationId", out string? conversationId))
+            return false;
+
+        call = new CallSignalEventArgs(
+            frame.Type,
+            conversationId!,
+            TryGetString(frame.Data, "sdp", out string? sdp) ? sdp : null,
+            TryGetString(frame.Data, "candidate", out string? candidate) ? candidate : null,
+            TryGetString(frame.Data, "reason", out string? reason) ? reason : null);
+        return true;
+    }
+
+    private static bool TryGetString(JsonElement element, string name, out string? value)
+    {
+        value = null;
+        return element.TryGetProperty(name, out JsonElement property)
+            && property.ValueKind == JsonValueKind.String
+            && (value = property.GetString()) is not null;
     }
 }

@@ -6,6 +6,7 @@ using System.Windows.Input;
 using System.Windows.Threading;
 using Aerochat.Controls;
 using Aerochat.Connectivity;
+using Aerochat.Connectivity.Rtc;
 using Aerochat.Presentation;
 
 namespace Aerochat.Windows;
@@ -40,6 +41,21 @@ public partial class Chat : Window
     public bool RedoEnabled { get; private set; }
     public bool IsShowingAttachmentEditor { get; private set; }
     public ChatMessageClient? LiveMessages { get; }
+    public CallSignalingClient? LiveCalls { get; private set; }
+    public RtcPeerEngine? CallEngine { get; private set; }
+
+    public Chat(
+        PresentationState state,
+        ConversationPresentation conversation,
+        WindowNavigator navigator,
+        ChatMessageClient? liveMessages,
+        CallSignalingClient? liveCalls,
+        RtcPeerEngine? callEngine)
+        : this(state, conversation, navigator, liveMessages)
+    {
+        LiveCalls = liveCalls;
+        CallEngine = callEngine;
+    }
 
     public void OpenAttachmentsFilePicker()
     {
@@ -214,6 +230,17 @@ public partial class Chat : Window
     }
 
     private void LeaveCallButton_PreviewMouseLeftButtonUp(object sender, MouseButtonEventArgs e) => e.Handled = true;
+
+    public async Task HangupCallAsync(CancellationToken cancellationToken = default)
+    {
+        if (LiveCalls is not null)
+            await LiveCalls.HangupAsync(Conversation.Id.ToString(), "local hangup", cancellationToken);
+        if (CallEngine is not null)
+            await CallEngine.Hangup();
+        State.GetOrCreateCallSession(Conversation.Id.ToString()).SetLocalState(CallSessionState.Ended);
+    }
+
+    private void MuteCallButton_Click(object sender, RoutedEventArgs e) => CallEngine?.Mute();
 
     private void NotifyVisualState(params string[] names)
     {

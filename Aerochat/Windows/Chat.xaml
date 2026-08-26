@@ -1839,8 +1839,10 @@
                             <TextBlock HorizontalAlignment="Stretch" Text="{loc:Loc ChatAttribution}" />
                         </Hyperlink>
                     </TextBlock>
-                    <StackPanel Margin="0,2,4,0" Orientation="Horizontal" Grid.Column="1" Height="24" Visibility="Collapsed">
-                        <TextBlock Foreground="#333333" FontWeight="Bold" VerticalAlignment="Center" Text="Voice unavailable in local preview." />
+                    <StackPanel x:Name="CallBar" Margin="0,2,4,0" Orientation="Horizontal" Grid.Column="1" Height="24" Visibility="Collapsed">
+                        <TextBlock Foreground="#333333" FontWeight="Bold" VerticalAlignment="Center" Text="Voice call" />
+                        <controls:AudioPlayer Width="90" Height="24" Margin="6,0,0,0" />
+                        <Button Content="Mute" Margin="8,0,4,0" Padding="5,0" Click="MuteCallButton_Click" />
                         <Image UseLayoutRounding="True" Margin="8,0,0,0" x:Name="LeaveCallButton" PreviewMouseLeftButtonUp="LeaveCallButton_PreviewMouseLeftButtonUp" Cursor="Hand" Source="/Aerochat;component/Resources/Message/LeaveCall.png" Width="16" Height="16" />
                     </StackPanel>
                 </Grid>

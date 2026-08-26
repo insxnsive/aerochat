@@ -13,7 +13,7 @@ Time-boxed feasibility spike in isolated `task12-rtc-spike` worktree. Scratch pr
 |---|---|---|
 | `SIPSorcery` | **8.0.14** (8.x line) | 8.0.23 exists but pulls nothing newer for net8 media; **GHSA-jwjp-4649-v8jp (high, SCTP SACK OOB DoS)** affects <= 10.0.13, first patched in 10.0.14 (.NET 10 only); 8.0.14 additionally flagged by **GHSA-28gm-jrmw-xx93 (high)** |
 | `SIPSorceryMedia.Windows` | **8.0.14** | requires TFM >= `net8.0-windows10.0.17763`; every 10.x release targets net10.0 only |
-| `SIPSorceryMedia.Encoders` | **8.0.14** | the net8-era VP8/Vorbis encoder companion (`SIPSorcery.VP8` standalone package is net10-only, all versions) |
+| `SIPSorceryMedia.Encoders` | **8.0.7** (8.x line; **8.0.14 was never published** — the earlier "8.0.14" row here was wrong and caused a silent NU1603 float to 10.0.4) | the net8-era VP8/Vorbis encoder companion (`SIPSorcery.VP8` standalone package is net10-only, all versions) |
 | `SIPSorcery.VP8` | none | net10.0 only across its entire published range |
 
 ## Build verification (performed by orchestrator, real nuget.org access)
@@ -53,5 +53,5 @@ Task 13 (call signaling state machine) carries none of these risks — it is pur
 ```xml
 <PackageReference Include="SIPSorcery" Version="8.0.14" />
 <PackageReference Include="SIPSorceryMedia.Windows" Version="8.0.14" />   <!-- TFM net8.0-windows10.0.17763+ -->
-<PackageReference Include="SIPSorceryMedia.Encoders" Version="8.0.14" />  <!-- VP8 on net8 -->
+<PackageReference Include="SIPSorceryMedia.Encoders" Version="8.0.7" />   <!-- VP8 on net8; 8.0.14 does NOT exist for this package -->
 ```

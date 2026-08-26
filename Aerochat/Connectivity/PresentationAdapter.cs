@@ -20,6 +20,7 @@ public sealed class PresentationAdapter : IDisposable
         _dispatch = dispatch ?? (action => action());
         _transport.MessageCreated += OnMessageCreated;
         _transport.PresenceUpdated += OnPresenceUpdated;
+        _transport.CallSignalReceived += OnCallSignalReceived;
     }
 
     public void ApplyMessageCreated(MessageCreatedEventArgs message)
@@ -45,7 +46,13 @@ public sealed class PresentationAdapter : IDisposable
             return;
         }
 
-        _state.ApplyRemotePresence(userId, status);
+            _state.ApplyRemotePresence(userId, status);
+    }
+
+    public void ApplyCallSignal(CallSignalEventArgs call)
+    {
+        ArgumentNullException.ThrowIfNull(call);
+        _state.ApplyCallSignal(call.EventType, call.ConversationId, call.Sdp, call.Candidate, call.Reason);
     }
 
     public void Dispose()
@@ -55,6 +62,7 @@ public sealed class PresentationAdapter : IDisposable
 
         _transport.MessageCreated -= OnMessageCreated;
         _transport.PresenceUpdated -= OnPresenceUpdated;
+        _transport.CallSignalReceived -= OnCallSignalReceived;
         _disposed = true;
     }
 
@@ -63,5 +71,8 @@ public sealed class PresentationAdapter : IDisposable
 
     private void OnPresenceUpdated(object? sender, PresenceUpdatedEventArgs update) =>
         _dispatch(() => ApplyPresenceUpdated(update));
+
+    private void OnCallSignalReceived(object? sender, CallSignalEventArgs call) =>
+        _dispatch(() => ApplyCallSignal(call));
 
 }

@@ -2,6 +2,7 @@ using System.Net.Http;
 using System.Windows;
 using Aerochat.Connectivity;
 using Aerochat.Connectivity.Auth;
+using Aerochat.Connectivity.Rtc;
 using Aerochat.Presentation;
 using Aerochat.Windows;
 
@@ -39,7 +40,9 @@ public partial class App : Application
                 currentState,
                 conversation,
                 currentNavigator,
-                CreateMessageClient(authClient)));
+                CreateMessageClient(authClient),
+                CreateCallClient(authClient),
+                TryGetConfiguredServer(out _) ? new RtcPeerEngine() : null));
         MainWindow = new Home(
             state,
             navigator,
@@ -72,6 +75,14 @@ public partial class App : Application
         return authClient is OAuthAuthClient oauth
             ? new ChatMessageClient(new HttpClient(), server, oauth.LoadCachedTokenAsync)
             : null;
+    }
+
+    private static CallSignalingClient? CreateCallClient(IAuthClient authClient)
+    {
+        if (!TryGetConfiguredServer(out Uri? server) || server is null
+            || authClient is not OAuthAuthClient oauth)
+            return null;
+        return new CallSignalingClient(new HttpClient(), server, oauth.LoadCachedTokenAsync);
     }
 
     private static bool TryGetConfiguredServer(out Uri? serverUri)

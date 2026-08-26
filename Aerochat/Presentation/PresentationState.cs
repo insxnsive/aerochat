@@ -29,6 +29,7 @@ public sealed class PresentationState : ObservableObject
     public ObservableCollection<NoticePresentation> Notices { get; } = [];
     public ObservableCollection<AdPresentation> Ads { get; } = [];
     public ObservableCollection<PreviewImagePresentation> PreviewImages { get; } = [];
+    public ObservableCollection<CallSessionPresentation> CallSessions { get; } = [];
     public VisualSettingsPresentation Settings { get; }
 
     public ScenePresentation CurrentScene
@@ -189,6 +190,37 @@ public sealed class PresentationState : ObservableObject
             IsOutgoing = author.Id == CurrentUser.Id,
             Body = body
         });
+    }
+
+    public CallSessionPresentation GetOrCreateCallSession(string conversationId)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(conversationId);
+        return CallSessions.FirstOrDefault(session => session.ConversationId == conversationId)
+            ?? AddCallSession(conversationId);
+    }
+
+    public void ApplyCallSignal(
+        string eventType,
+        string conversationId,
+        string? sdp,
+        string? candidate,
+        string? reason)
+    {
+        GetOrCreateCallSession(conversationId).Apply(eventType, sdp, candidate, reason);
+    }
+
+    public CallSessionPresentation BeginOutgoingCall(string conversationId)
+    {
+        CallSessionPresentation session = GetOrCreateCallSession(conversationId);
+        session.SetLocalState(CallSessionState.Ringing);
+        return session;
+    }
+
+    private CallSessionPresentation AddCallSession(string conversationId)
+    {
+        CallSessionPresentation session = new() { ConversationId = conversationId };
+        CallSessions.Add(session);
+        return session;
     }
 
     private ConversationPresentation EnsureConversation(ulong conversationId, ulong authorId)

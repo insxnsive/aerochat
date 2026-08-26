@@ -30,6 +30,7 @@ public sealed class GatewayClient : IChatTransport
 
     public event EventHandler<MessageCreatedEventArgs>? MessageCreated;
     public event EventHandler<PresenceUpdatedEventArgs>? PresenceUpdated;
+    public event EventHandler<CallSignalEventArgs>? CallSignalReceived;
 
     public string? LastEventId => Volatile.Read(ref _lastEventId);
 
@@ -251,6 +252,14 @@ public sealed class GatewayClient : IChatTransport
             case "presence.updated":
                 if (TryReadPresence(frame.Data, out PresenceUpdatedEventArgs? presence))
                     PresenceUpdated?.Invoke(this, presence!);
+                break;
+            case "call.ring":
+            case "call.offer":
+            case "call.answer":
+            case "call.ice":
+            case "call.hangup":
+                if (GatewayProtocol.TryParseCallSignal(frame, out CallSignalEventArgs? call))
+                    CallSignalReceived?.Invoke(this, call!);
                 break;
         }
     }

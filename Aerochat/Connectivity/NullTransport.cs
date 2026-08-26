@@ -14,6 +14,12 @@ public sealed class NullTransport : IChatTransport
         remove { }
     }
 
+    public event EventHandler<CallSignalEventArgs>? CallSignalReceived
+    {
+        add { }
+        remove { }
+    }
+
     public Task ConnectAsync(Uri server, string token, CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(server);

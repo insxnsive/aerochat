@@ -36,6 +36,7 @@ public sealed class HomeShellTests
     {
         public event EventHandler<MessageCreatedEventArgs>? MessageCreated;
         public event EventHandler<PresenceUpdatedEventArgs>? PresenceUpdated;
+        public event EventHandler<CallSignalEventArgs>? CallSignalReceived;
         public bool Connected { get; private set; }
         public Task ConnectAsync(Uri server, string token, CancellationToken cancellationToken = default)
         { Connected = true; return Task.CompletedTask; }
@@ -383,7 +384,7 @@ public sealed class HomeShellTests
             "bin",
             "x64",
             "Debug",
-            "net8.0-windows7.0",
+            "net8.0-windows10.0.17763",
             "Aerochat.exe"));
         Assert.That(File.Exists(executablePath), Is.True, $"Expected Debug x64 executable at {executablePath}");
 

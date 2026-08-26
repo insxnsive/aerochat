@@ -120,6 +120,23 @@
                     </StackPanel>
                 </Grid>
             </StackPanel>
+            <StackPanel Grid.Row="1" Margin="16,0,16,18" VerticalAlignment="Center">
+                <StackPanel.Style>
+                    <Style TargetType="StackPanel">
+                        <Setter Property="Visibility" Value="Collapsed" />
+                        <Style.Triggers>
+                            <DataTrigger Binding="{Binding Type}" Value="2">
+                                <Setter Property="Visibility" Value="Visible" />
+                            </DataTrigger>
+                        </Style.Triggers>
+                    </Style>
+                </StackPanel.Style>
+                <TextBlock Text="{Binding Message.RawMessage}" TextAlignment="Center" Foreground="#333" Margin="0,0,0,8" />
+                <StackPanel Orientation="Horizontal" HorizontalAlignment="Center">
+                    <Button Content="Accept" Click="AcceptCall_Click" Margin="0,0,6,0" Padding="10,2" />
+                    <Button Content="Reject" Click="RejectCall_Click" Padding="10,2" />
+                </StackPanel>
+            </StackPanel>
         </Grid>
     </Grid>
 </Window>

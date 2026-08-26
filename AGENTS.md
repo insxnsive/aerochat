@@ -106,7 +106,9 @@ generic controls when the existing visual control can be retained.
 
 - Verdict: **conditional proceed** with SIPSorcery on .NET 8 — see
   `docs/superpowers/specs/webrtc-spike-results.md`. Pins that build:
-  SIPSorcery/SIPSorceryMedia.Windows/SIPSorceryMedia.Encoders all at **8.0.14**,
+  SIPSorcery/SIPSorceryMedia.Windows at **8.0.14**,
+  SIPSorceryMedia.Encoders at **8.0.7** (8.0.14 was never published for the
+  Encoders package — pinning it triggers a silent NU1603 float to 10.0.4),
   TFMs raised to `net8.0-windows10.0.17763+`. Known high advisories are patched
   only in the net10 line; VP8 comes from SIPSorceryMedia.Encoders (not the
   net10-only SIPSorcery.VP8). Client RTC tasks must include the TFM-raise smoke.
