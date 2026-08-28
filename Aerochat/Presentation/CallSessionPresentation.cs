@@ -3,10 +3,13 @@ namespace Aerochat.Presentation;
 public enum CallSessionState
 {
     Idle,
+    Starting,
     Ringing,
     Incoming,
     Offering,
+    Connecting,
     Connected,
+    Failed,
     Ended
 }
 
@@ -28,8 +31,9 @@ public sealed class CallSessionPresentation : ObservableObject
         State = eventType switch
         {
             "call.ring" => CallSessionState.Incoming,
-            "call.offer" => CallSessionState.Offering,
-            "call.answer" => CallSessionState.Connected,
+            "call.offer" => CallSessionState.Incoming,
+            "call.answer" when State == CallSessionState.Connected => CallSessionState.Connected,
+            "call.answer" => CallSessionState.Connecting,
             "call.hangup" => CallSessionState.Ended,
             "call.ice" => State,
             _ => State
@@ -40,4 +44,24 @@ public sealed class CallSessionPresentation : ObservableObject
     }
 
     public void SetLocalState(CallSessionState state) => State = state;
+
+    public void BeginOutgoing()
+    {
+        Sdp = null;
+        Candidate = null;
+        Reason = null;
+        State = CallSessionState.Starting;
+    }
+
+    public void End(string reason)
+    {
+        Reason = reason;
+        State = CallSessionState.Ended;
+    }
+
+    public void Fail(string reason)
+    {
+        Reason = reason;
+        State = CallSessionState.Failed;
+    }
 }

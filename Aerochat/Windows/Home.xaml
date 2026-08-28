@@ -389,6 +389,15 @@
                                                                                     <Setter Property="Visibility" Value="Visible" />
                                                                                 </MultiDataTrigger.Setters>
                                                                             </MultiDataTrigger>
+                                                                            <MultiDataTrigger>
+                                                                                <MultiDataTrigger.Conditions>
+                                                                                    <Condition Binding="{Binding CurrentUser.Presence.CustomStatus}" Value="" />
+                                                                                    <Condition Binding="{Binding IsEditingStatus}" Value="False" />
+                                                                                </MultiDataTrigger.Conditions>
+                                                                                <MultiDataTrigger.Setters>
+                                                                                    <Setter Property="Visibility" Value="Visible" />
+                                                                                </MultiDataTrigger.Setters>
+                                                                            </MultiDataTrigger>
                                                                         </Style.Triggers>
                                                                     </Style>
                                                                 </TextBlock.Style>
@@ -588,7 +597,8 @@
                             </Grid>
                         </Grid>
                     </Grid>
-                    <controls:HomeTreeView Grid.Row="1" Margin="2,2,2,0" UseLayoutRounding="True"
+                    <Grid Grid.Row="1">
+                    <controls:HomeTreeView Margin="2,2,2,0" UseLayoutRounding="True"
                               VirtualizingPanel.IsVirtualizing="True"
                               VirtualizingPanel.VirtualizationMode="Recycling"
                               ScrollViewer.CanContentScroll="True"
@@ -840,6 +850,19 @@
                             </HierarchicalDataTemplate>
                         </controls:HomeTreeView.ItemTemplate>
                     </controls:HomeTreeView>
+                    <TextBlock Text="{loc:Loc HomeNoSearchResults}" Foreground="#666666" HorizontalAlignment="Center" VerticalAlignment="Top" Margin="16,18" IsHitTestVisible="False">
+                        <TextBlock.Style>
+                            <Style TargetType="TextBlock">
+                                <Setter Property="Visibility" Value="Collapsed" />
+                                <Style.Triggers>
+                                    <DataTrigger Binding="{Binding FilteredContactGroups.Count}" Value="0">
+                                        <Setter Property="Visibility" Value="Visible" />
+                                    </DataTrigger>
+                                </Style.Triggers>
+                            </Style>
+                        </TextBlock.Style>
+                    </TextBlock>
+                    </Grid>
                     <Grid Grid.Row="3" Margin="-16,0">
                         <controls:ColorizedNineSlice TintColor="{Binding CurrentScene.Color}" Slice="1,1">
                             <controls:ColorizedNineSlice.Background>

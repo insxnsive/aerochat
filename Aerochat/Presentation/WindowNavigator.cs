@@ -23,8 +23,8 @@ public sealed class WindowNavigator
     public Window Create(ShellRoute route, object? payload = null) => route switch
     {
         ShellRoute.Home => new Home(State, this),
-        ShellRoute.Chat => _chatFactory?.Invoke(State, payload as ConversationPresentation ?? State.Conversations[0], this)
-            ?? new Chat(State, payload as ConversationPresentation ?? State.Conversations[0], this),
+        ShellRoute.Chat => _chatFactory?.Invoke(State, ResolveConversation(payload), this)
+            ?? new Chat(State, ResolveConversation(payload), this),
         ShellRoute.Settings => new Aerochat.Windows.Settings(State),
         ShellRoute.About => new About(),
         ShellRoute.Login => _loginFactory(State, this),
@@ -32,6 +32,14 @@ public sealed class WindowNavigator
         ShellRoute.ImagePreviewer => new ImagePreviewer(State,
             payload as PreviewImagePresentation ?? State.PreviewImages[0]),
         _ => throw new ArgumentOutOfRangeException(nameof(route), route, null)
+    };
+
+    private ConversationPresentation ResolveConversation(object? payload) => payload switch
+    {
+        ConversationPresentation conversation => conversation,
+        ulong conversationId => State.Conversations.FirstOrDefault(
+            conversation => conversation.Id == conversationId) ?? State.Conversations[0],
+        _ => State.Conversations[0]
     };
 
     public Window Show(ShellRoute route, Window? owner = null, object? payload = null)

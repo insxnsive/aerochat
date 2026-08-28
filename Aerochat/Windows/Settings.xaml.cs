@@ -65,8 +65,10 @@ public partial class Settings : Window
     }
 }
 
-public sealed class SettingsPresentationView
+public sealed class SettingsPresentationView : ObservableObject
 {
+    private SettingsCategoryPresentation _selectedCategory = null!;
+
     private SettingsPresentationView(PresentationState state)
     {
         State = state;
@@ -81,7 +83,11 @@ public sealed class SettingsPresentationView
     public PresentationState State { get; }
     public ObservableCollection<SettingsCategoryPresentation> Categories { get; } = [];
     public ObservableCollection<SettingPresentation> SettingsItems { get; } = [];
-    public SettingsCategoryPresentation SelectedCategory { get; private set; }
+    public SettingsCategoryPresentation SelectedCategory
+    {
+        get => _selectedCategory;
+        private set => SetProperty(ref _selectedCategory, value);
+    }
 
     public void Select(SettingsCategoryPresentation category)
     {
@@ -147,7 +153,11 @@ public sealed class SettingPresentation
     public static SettingPresentation String(string key, string name, string value, IEnumerable<string> values)
     {
         var item = new SettingPresentation(key, name, "StringList", value);
-        foreach (string option in values) item.StringValues.Add(option);
+        string[] options = values.Distinct(StringComparer.Ordinal).ToArray();
+        if (!options.Contains(value, StringComparer.Ordinal))
+            item.StringValues.Add(value);
+        foreach (string option in options)
+            item.StringValues.Add(option);
         return item;
     }
 }

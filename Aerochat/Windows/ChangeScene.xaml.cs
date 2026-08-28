@@ -37,8 +37,16 @@ public partial class ChangeScene : Window
     }
 }
 
-public sealed class SceneChoice(ScenePresentation scene, bool selected)
+public sealed class SceneChoice : ObservableObject
 {
-    public ScenePresentation Scene { get; } = scene;
-    public bool Selected { get; set; } = selected;
+    private bool _selected;
+
+    public SceneChoice(ScenePresentation scene, bool selected)
+    {
+        Scene = scene;
+        _selected = selected;
+    }
+
+    public ScenePresentation Scene { get; }
+    public bool Selected { get => _selected; set => SetProperty(ref _selected, value); }
 }

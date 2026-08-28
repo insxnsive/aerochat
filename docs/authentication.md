@@ -63,6 +63,26 @@ Auth__SessionSigningKey
 
 A provider with missing credentials returns HTTP 503 `provider_not_configured`; it does not prevent `/health` or other configured providers from running.
 
+### Local GitHub OAuth smoke configuration
+
+Register a GitHub OAuth app with callback URL:
+
+```text
+http://localhost:5080/auth/github/callback
+```
+
+The server project has a .NET User Secrets ID, so local credentials can stay outside the repository. From the repository root, set the non-secret client ID and public origin, then enter the secret without placing it in shell history:
+
+```bash
+dotnet user-secrets set --project Aerochat.Server/Aerochat.Server.csproj 'Auth:GitHub:ClientId' '<client-id>'
+dotnet user-secrets set --project Aerochat.Server/Aerochat.Server.csproj 'PublicBaseUrl' 'http://localhost:5080'
+read -r -s -p 'GitHub client secret: ' GITHUB_CLIENT_SECRET; printf '\n'
+dotnet user-secrets set --project Aerochat.Server/Aerochat.Server.csproj 'Auth:GitHub:ClientSecret' "$GITHUB_CLIENT_SECRET"
+unset GITHUB_CLIENT_SECRET
+```
+
+Never paste the client secret into chat, source files, command arguments saved in project scripts, or committed configuration.
+
 ## Resource bounds
 
 Pending authorization state and handoff stores are process-local and bounded (4096 entries each by default). Creation is serialized per store so concurrent requests cannot exceed the cap. When capacity is reached, expired entries are reclaimed before rejecting new work. Remaining exhaustion returns HTTP 503 `oauth_capacity` rather than allowing unbounded memory growth.

@@ -1,4 +1,5 @@
 using System.Collections.ObjectModel;
+using System.Globalization;
 
 namespace Aerochat.Presentation;
 
@@ -12,7 +13,9 @@ public sealed class ConversationPresentation : ObservableObject
     public required string Name { get; init; }
     public required string Topic { get; init; }
     public required bool IsGroup { get; init; }
-    public bool IsServerBacked { get; init; }
+    public bool IsServerBacked { get; set; }
+    public string? WireId { get; set; }
+    public string TransportId => WireId ?? Id.ToString(CultureInfo.InvariantCulture);
     public PersonPresentation? Recipient { get; init; }
     public ObservableCollection<PersonPresentation> Participants { get; } = [];
     public ObservableCollection<MessagePresentation> Messages { get; } = [];
@@ -21,3 +24,8 @@ public sealed class ConversationPresentation : ObservableObject
     public MessagePresentation? TargetMessage { get => _targetMessage; set => SetProperty(ref _targetMessage, value); }
     public MessageTargetMode TargetMode { get => _targetMode; set => SetProperty(ref _targetMode, value); }
 }
+
+public sealed record RemoteConversationDescriptor(
+    Guid Id,
+    string Kind,
+    string? Title);

@@ -22,6 +22,18 @@ public sealed class ConversationMessageService(
     private static readonly HashSet<string> StickerPayloadProperties =
     ["sticker", "url", "contentType"];
 
+    private static readonly HashSet<string> InstalledStickerResourceNames = new(StringComparer.Ordinal)
+    {
+        "Smile.png",
+        "Heart.png",
+        "Grin.png",
+        "Wink.png",
+        "ThumbsUp.png",
+        "Dog.png",
+        "Football.png",
+        "HighFive.png"
+    };
+
     public async Task<IResult> SendAsync(
         HttpContext httpContext,
         string conversationId,
@@ -60,7 +72,7 @@ public sealed class ConversationMessageService(
             return ConversationAuth.InvalidRequest();
         }
 
-        if (request.Kind == "sticker" && !IsValidStickerPayload(request.RefPayloadJson))
+        if (request.Kind == "sticker" && !IsValidStickerPayload(request.Body, request.RefPayloadJson))
         {
             return ConversationAuth.InvalidRequest();
         }
@@ -137,7 +149,7 @@ public sealed class ConversationMessageService(
                 message.DeletedAt));
     }
 
-    private static bool IsValidStickerPayload(string? json)
+    private static bool IsValidStickerPayload(string body, string? json)
     {
         if (string.IsNullOrWhiteSpace(json))
             return false;
@@ -158,47 +170,12 @@ public sealed class ConversationMessageService(
                 return false;
             }
 
-            if (sticker!.Length == 0
-                || sticker.Length > 128
-                || sticker.Contains('/', StringComparison.Ordinal)
-                || sticker.Contains('\\', StringComparison.Ordinal)
-                || sticker.Contains("..", StringComparison.Ordinal)
-                || (!sticker.EndsWith(".png", StringComparison.OrdinalIgnoreCase)
-                    && !sticker.EndsWith(".gif", StringComparison.OrdinalIgnoreCase)))
-            {
-                return false;
-            }
-
-            string expectedContentType = sticker.EndsWith(".gif", StringComparison.OrdinalIgnoreCase)
-                ? "image/gif"
-                : "image/png";
-            if (!string.Equals(contentType, expectedContentType, StringComparison.OrdinalIgnoreCase))
-                return false;
-
-            if (!url!.StartsWith("/sticker-packs/", StringComparison.Ordinal)
-                || url.Contains('\\', StringComparison.Ordinal)
-                || url.Contains('?', StringComparison.Ordinal)
-                || url.Contains('#', StringComparison.Ordinal))
-            {
-                return false;
-            }
-
-            string[] segments = url.Split('/', StringSplitOptions.RemoveEmptyEntries);
-            if (segments.Length != 3 || segments[0] != "sticker-packs")
-                return false;
-
-            string[] decodedSegments = segments.Select(Uri.UnescapeDataString).ToArray();
-            return decodedSegments.All(segment =>
-                       segment.Length > 0
-                       && segment is not "." and not ".."
-                       && segment.IndexOfAny(['/', '\\']) < 0)
-                && string.Equals(decodedSegments[^1], sticker, StringComparison.Ordinal);
+            return InstalledStickerResourceNames.Contains(sticker!)
+                && string.Equals(body, sticker, StringComparison.Ordinal)
+                && string.Equals(url, $"/sticker-packs/wlm/{sticker}", StringComparison.Ordinal)
+                && string.Equals(contentType, "image/png", StringComparison.OrdinalIgnoreCase);
         }
         catch (JsonException)
-        {
-            return false;
-        }
-        catch (UriFormatException)
         {
             return false;
         }

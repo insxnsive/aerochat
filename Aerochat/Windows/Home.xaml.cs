@@ -15,6 +15,9 @@ public partial class Home : Window
     private readonly Uri? _server;
     private readonly string? _token;
     private readonly Func<CancellationToken, Task<string?>>? _tokenLoader;
+    private readonly IConversationCatalogClient? _conversationCatalog;
+    private readonly SemaphoreSlim _liveConnectGate = new(1, 1);
+    private bool _liveConnected;
 
     public Home()
     {
@@ -35,7 +38,8 @@ public partial class Home : Window
         IChatTransport transport,
         Uri? server = null,
         string? token = null,
-        Func<CancellationToken, Task<string?>>? tokenLoader = null)
+        Func<CancellationToken, Task<string?>>? tokenLoader = null,
+        IConversationCatalogClient? conversationCatalog = null)
     {
         State = state ?? throw new ArgumentNullException(nameof(state));
         Navigator = navigator ?? throw new ArgumentNullException(nameof(navigator));
@@ -43,6 +47,7 @@ public partial class Home : Window
         _server = server;
         _token = token;
         _tokenLoader = tokenLoader;
+        _conversationCatalog = conversationCatalog;
         InitializePresentation();
         _transport.PresenceUpdated += OnPresenceUpdated;
         _transport.MessageCreated += OnMessageCreated;
@@ -59,15 +64,39 @@ public partial class Home : Window
         if (_transport is NullTransport || _server is null)
             return;
 
+        await _liveConnectGate.WaitAsync(cancellationToken);
         try
         {
             string? token = _tokenLoader is null ? _token : await _tokenLoader(cancellationToken);
-            if (!string.IsNullOrWhiteSpace(token))
+            if (string.IsNullOrWhiteSpace(token))
+                return;
+
+
+
+            if (_conversationCatalog is not null)
+            {
+                IReadOnlyList<ServerConversationSummary> conversations =
+                    await _conversationCatalog.LoadAsync(token, cancellationToken);
+                State.ReplaceServerConversations(conversations.Select(conversation =>
+                    new RemoteConversationDescriptor(
+                        conversation.Id,
+                        conversation.Kind,
+                        conversation.Title)));
+            }
+
+            if (!_liveConnected)
+            {
                 await _transport.ConnectAsync(_server, token, cancellationToken);
+                _liveConnected = true;
+            }
         }
-        catch (Exception) when (true)
+        catch (Exception)
         {
             // Live connectivity is optional; keep the visual shell usable offline.
+        }
+        finally
+        {
+            _liveConnectGate.Release();
         }
     }
 

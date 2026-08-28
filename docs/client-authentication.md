@@ -12,6 +12,14 @@ AEROCHAT_SERVER_URL=https://chat.example.com
 
 The value must be an absolute HTTP or HTTPS origin with only the root path and without user information, query, or fragment. Invalid or missing values select `NullAuthClient`; the application still launches in DemoData mode and Login shows Google, GitHub, and Discord as disabled with `Server not configured.`
 
+For multi-instance testing on one Windows account, each process may select a separate DPAPI-protected cache file through:
+
+```text
+AEROCHAT_SESSION_CACHE_PATH=C:\path\to\instance-a-session.bin
+```
+
+This setting changes only the encrypted cache location. It is not a token input and does not bypass OAuth. Give every simultaneously authenticated instance a distinct path; omitting it retains the default `%LOCALAPPDATA%\Aerochat\session.bin`.
+
 No browser or network action occurs until the user explicitly clicks an enabled provider button.
 
 ## Login flow

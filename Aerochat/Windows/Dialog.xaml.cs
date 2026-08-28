@@ -1,6 +1,7 @@
 ﻿using System.Windows;
 using System.Windows.Documents;
 using System.Windows.Media;
+using System.Windows.Media.Imaging;
 
 namespace Aerochat.Windows;
 
@@ -21,7 +22,19 @@ public partial class Dialog : Window
     public string Description { get; }
     public ImageSource? Icon { get; }
 
-    private static ImageSource? CreateIcon(DialogIcon icon) => null;
+    private static ImageSource CreateIcon(DialogIcon icon)
+    {
+        string resource = icon switch
+        {
+            DialogIcon.Warning => "WarningIcon.png",
+            DialogIcon.Error => "ErrorIcon.png",
+            _ => "InfoIcon.png"
+        };
+        var image = new BitmapImage(new Uri(
+            $"pack://application:,,,/Aerochat;component/Resources/Home/{resource}"));
+        image.Freeze();
+        return image;
+    }
 
     private void Dialog_Loaded(object sender, RoutedEventArgs e)
     {

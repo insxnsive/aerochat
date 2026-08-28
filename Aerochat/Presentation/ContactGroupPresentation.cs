@@ -21,6 +21,7 @@ public sealed class ContactGroupPresentation : ObservableObject
     private readonly List<ContactGroupPresentation> _filteredCopies = [];
 
     public required string Name { get; init; }
+    public bool IsServerBacked { get; init; }
     public ObservableCollection<ContactPresentation> Items { get; } = [];
 
     public bool IsCollapsed

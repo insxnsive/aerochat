@@ -10,6 +10,7 @@ using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Documents;
 using System.Windows.Input;
+using System.Windows.Media;
 using System.Windows.Media.Imaging;
 
 namespace Aerochat.VisualShell.Tests;
@@ -47,6 +48,15 @@ public sealed class PresentationControlTests
         public string Content { get; }
 
         public IReadOnlyList<TestChannel> MentionedChannels { get; }
+    }
+
+    public sealed class UntrustedStickerMessage
+    {
+        public string Kind => "sticker";
+
+        public string StickerUri => "https://example.invalid/untrusted-sticker.png";
+
+        public string Body => "untrusted sticker";
     }
 
     private sealed class TestChannel
@@ -325,6 +335,17 @@ public sealed class PresentationControlTests
     }
 
     [Test, Apartment(ApartmentState.STA)]
+    public void Sticker_with_untrusted_absolute_uri_renders_as_inert_text()
+    {
+        EnsureWpfApplication();
+        var parser = new MessageParser { Message = new UntrustedStickerMessage() };
+
+        Assert.That(parser.MainPanel.Children.OfType<Image>(), Is.Empty);
+        Assert.That(string.Concat(RenderedText(parser).Inlines.OfType<Run>().Select(run => run.Text)),
+            Is.EqualTo("untrusted sticker"));
+    }
+
+    [Test, Apartment(ApartmentState.STA)]
     public void Locally_sent_shortcode_renders_through_the_message_presentation_body()
     {
         EnsureWpfApplication();
@@ -341,6 +362,142 @@ public sealed class PresentationControlTests
             .Select(container => container.Child).OfType<Image>().Single();
 
         Assert.That(((BitmapImage)image.Source!).UriSource.AbsoluteUri, Does.EndWith("/Smile.png"));
+    }
+
+    [Test, Apartment(ApartmentState.STA)]
+    public void Message_presentation_body_mutation_refreshes_existing_parser_output()
+    {
+        EnsureWpfApplication();
+        PresentationState state = DemoData.Create();
+        MessagePresentation message = state.Conversations[0].Messages[0];
+        var parser = new MessageParser { Message = message };
+
+        Assert.That(string.Concat(RenderedText(parser).Inlines.OfType<Run>().Select(run => run.Text)),
+            Is.EqualTo(message.Body));
+
+        message.Body = "edited after assignment";
+
+        Assert.That(string.Concat(RenderedText(parser).Inlines.OfType<Run>().Select(run => run.Text)),
+            Is.EqualTo("edited after assignment"));
+    }
+
+    [Test, Apartment(ApartmentState.STA)]
+    public void Unloaded_parser_defers_message_mutation_until_loaded_again()
+    {
+        WpfTestHost.Run(() =>
+        {
+            PresentationState state = DemoData.Create();
+            MessagePresentation message = state.Conversations[0].Messages[0];
+            var parser = new MessageParser { Message = message };
+            string originalBody = message.Body;
+
+            parser.RaiseEvent(new RoutedEventArgs(FrameworkElement.UnloadedEvent));
+            message.Body = "edited while parser was unloaded";
+
+            Assert.That(string.Concat(RenderedText(parser).Inlines.OfType<Run>().Select(run => run.Text)),
+                Is.EqualTo(originalBody));
+
+            parser.RaiseEvent(new RoutedEventArgs(FrameworkElement.LoadedEvent));
+
+            Assert.That(string.Concat(RenderedText(parser).Inlines.OfType<Run>().Select(run => run.Text)),
+                Is.EqualTo("edited while parser was unloaded"));
+        });
+    }
+
+    [Test, Apartment(ApartmentState.STA)]
+    public void Disposed_parser_ignores_message_changes_and_queued_renders()
+    {
+        MessagePresentation? message = null;
+        MessageParser? parser = null;
+
+        WpfTestHost.Run(() =>
+        {
+            PresentationState state = DemoData.Create();
+            message = state.Conversations[0].Messages[0];
+            parser = new MessageParser { Message = message };
+            parser.MainPanel.Children.Clear();
+
+            Task queuedMutation = Task.Run(() => message.Body = "queued before dispose");
+            queuedMutation.GetAwaiter().GetResult();
+            parser.Dispose();
+            parser.Message = new MessagePresentation
+            {
+                Id = Guid.NewGuid(),
+                Author = state.CurrentUser,
+                SentAt = DateTimeOffset.UtcNow,
+                IsOutgoing = false,
+                Body = "assigned after dispose"
+            };
+            message.Body = "changed after dispose";
+
+            Assert.That(parser.MainPanel.Children, Is.Empty);
+        });
+
+        WpfTestHost.Run(() => Assert.That(parser!.MainPanel.Children, Is.Empty));
+    }
+
+    [Test, Apartment(ApartmentState.STA)]
+    public void Disposed_parser_clears_current_message_and_rejects_later_assignments()
+    {
+        WpfTestHost.Run(() =>
+        {
+            var parser = new MessageParser
+            {
+                Message = new MessageModel("message before dispose")
+            };
+
+            Assert.That(parser.MainPanel.Children, Is.Not.Empty);
+
+            parser.Dispose();
+
+            Assert.Multiple(() =>
+            {
+                Assert.That(parser.Message, Is.Null);
+                Assert.That(parser.ReadLocalValue(MessageParser.MessageProperty),
+                    Is.SameAs(DependencyProperty.UnsetValue));
+                Assert.That(parser.MainPanel.Children, Is.Empty);
+            });
+
+            parser.Message = new MessageModel("assigned through CLR property after dispose");
+            Assert.Multiple(() =>
+            {
+                Assert.That(parser.Message, Is.Null);
+                Assert.That(parser.ReadLocalValue(MessageParser.MessageProperty),
+                    Is.SameAs(DependencyProperty.UnsetValue));
+                Assert.That(parser.MainPanel.Children, Is.Empty);
+            });
+
+            parser.SetValue(MessageParser.MessageProperty,
+                new MessageModel("assigned through SetValue after dispose"));
+            Assert.Multiple(() =>
+            {
+                Assert.That(parser.Message, Is.Null);
+                Assert.That(parser.ReadLocalValue(MessageParser.MessageProperty),
+                    Is.SameAs(DependencyProperty.UnsetValue));
+                Assert.That(parser.MainPanel.Children, Is.Empty);
+            });
+        });
+    }
+
+    [Test, Apartment(ApartmentState.STA)]
+    public void Special_message_parser_output_applies_the_parser_foreground()
+    {
+        EnsureWpfApplication();
+        PresentationState state = DemoData.Create();
+        var parser = new MessageParser { Foreground = Brushes.Maroon };
+        parser.Message = new MessagePresentation
+        {
+            Id = Guid.NewGuid(),
+            Author = state.CurrentUser,
+            SentAt = DateTimeOffset.UtcNow,
+            IsOutgoing = false,
+            Body = "RecipientRemove"
+        };
+
+        TextBlock rendered = RenderedText(parser);
+
+        Assert.That(((SolidColorBrush)rendered.Foreground).Color,
+            Is.EqualTo(Color.FromRgb(0x80, 0x00, 0x00)));
     }
 
     [Test, Apartment(ApartmentState.STA)]

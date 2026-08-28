@@ -11,20 +11,42 @@ public sealed class GatewayClient : IChatTransport
     private const string PushOnlyMessage =
         "The Aerochat gateway is push-only; outbound messages and typing are not supported.";
 
+    [ThreadStatic]
+    private static GatewayClient? _deliveryContext;
+
     private readonly object _gate = new();
-    private readonly Func<ClientWebSocket> _socketFactory;
+    private readonly SemaphoreSlim _deliveryOwnership = new(1, 1);
+    private readonly HashSet<IGatewaySocket> _disposedSockets =
+        new(ReferenceEqualityComparer.Instance);
+    private readonly Func<IGatewaySocket> _socketFactory;
     private readonly Func<int, TimeSpan>? _jitter;
-    private ClientWebSocket? _socket;
+    private readonly Func<TimeSpan, CancellationToken, Task> _delay;
+    private IGatewaySocket? _socket;
     private CancellationTokenSource? _lifetime;
+    private Task? _connectTask;
     private Task? _receiveTask;
+    private Task? _disposeTask;
     private string? _lastEventId;
+    private bool _disposed;
 
     public GatewayClient(
         Func<ClientWebSocket>? socketFactory = null,
         Func<int, TimeSpan>? jitter = null)
+        : this(
+            () => new ClientWebSocketAdapter((socketFactory ?? (() => new ClientWebSocket()))()),
+            jitter,
+            static (delay, cancellationToken) => Task.Delay(delay, cancellationToken))
     {
-        _socketFactory = socketFactory ?? (() => new ClientWebSocket());
+    }
+
+    internal GatewayClient(
+        Func<IGatewaySocket> socketFactory,
+        Func<int, TimeSpan>? jitter,
+        Func<TimeSpan, CancellationToken, Task> delay)
+    {
+        _socketFactory = socketFactory ?? throw new ArgumentNullException(nameof(socketFactory));
         _jitter = jitter;
+        _delay = delay ?? throw new ArgumentNullException(nameof(delay));
     }
 
     public event EventHandler<MessageCreatedEventArgs>? MessageCreated;
@@ -41,39 +63,37 @@ public sealed class GatewayClient : IChatTransport
         ArgumentNullException.ThrowIfNull(server);
         ArgumentException.ThrowIfNullOrWhiteSpace(token);
 
+        CancellationTokenSource lifetime;
+        Task connectTask;
         lock (_gate)
         {
-            if (_receiveTask is not null)
+            if (_disposed)
+                throw new ObjectDisposedException(nameof(GatewayClient));
+            if (_connectTask is not null || _receiveTask is not null)
                 throw new InvalidOperationException("The gateway client is already connected.");
-        }
 
-        Interlocked.Exchange(ref _lastEventId, null);
-        Uri gatewayUri = BuildGatewayUri(server, token, null);
-        ClientWebSocket socket = _socketFactory();
-        try
-        {
-            await socket.ConnectAsync(gatewayUri, cancellationToken).ConfigureAwait(false);
-        }
-        catch
-        {
-            socket.Dispose();
-            throw;
-        }
-
-        CancellationTokenSource lifetime = new();
-        lock (_gate)
-        {
-            _socket = socket;
+            Interlocked.Exchange(ref _lastEventId, null);
+            lifetime = new CancellationTokenSource();
             _lifetime = lifetime;
-            _receiveTask = ReceiveAndReconnectAsync(server, token, socket, lifetime.Token);
+            var initialConnectStart = new TaskCompletionSource(
+                TaskCreationOptions.RunContinuationsAsynchronously);
+            connectTask = ConnectInitialAsync(
+                server,
+                token,
+                lifetime,
+                cancellationToken,
+                initialConnectStart.Task);
+            _connectTask = connectTask;
+            initialConnectStart.TrySetResult();
         }
+
+        await connectTask.ConfigureAwait(false);
     }
 
     public Task SendAsync(
         string conversationId,
         string body,
         CancellationToken cancellationToken = default) =>
-        // Task 9 deviation: the server gateway intentionally accepts no inbound frames.
         throw new NotSupportedException(PushOnlyMessage);
 
     public Task SetTypingAsync(
@@ -81,19 +101,70 @@ public sealed class GatewayClient : IChatTransport
         CancellationToken cancellationToken = default) =>
         throw new NotSupportedException(PushOnlyMessage);
 
-    public async ValueTask DisposeAsync()
+    public ValueTask DisposeAsync()
     {
-        CancellationTokenSource? lifetime;
-        Task? receiveTask;
-        ClientWebSocket? socket;
+        bool reentrantDelivery = ReferenceEquals(_deliveryContext, this);
+        Task disposalTask;
+        TaskCompletionSource? completion = null;
         lock (_gate)
         {
-            lifetime = _lifetime;
-            receiveTask = _receiveTask;
-            socket = _socket;
-            _lifetime = null;
-            _receiveTask = null;
-            _socket = null;
+            if (_disposeTask is not null)
+            {
+                return reentrantDelivery
+                    ? ValueTask.CompletedTask
+                    : new ValueTask(_disposeTask);
+            }
+
+            completion = new TaskCompletionSource(
+                TaskCreationOptions.RunContinuationsAsynchronously);
+            _disposeTask = completion.Task;
+            disposalTask = completion.Task;
+        }
+
+        _ = CompleteDisposeAsync(completion);
+        return reentrantDelivery
+            ? ValueTask.CompletedTask
+            : new ValueTask(disposalTask);
+    }
+
+    private async Task CompleteDisposeAsync(TaskCompletionSource completion)
+    {
+        try
+        {
+            await DisposeCoreAsync().ConfigureAwait(false);
+            completion.TrySetResult();
+        }
+        catch (Exception exception)
+        {
+            completion.TrySetException(exception);
+        }
+    }
+
+    private async Task DisposeCoreAsync()
+    {
+        CancellationTokenSource? lifetime;
+        Task? connectTask;
+        Task? receiveTask;
+        IGatewaySocket? socket;
+        await _deliveryOwnership.WaitAsync().ConfigureAwait(false);
+        try
+        {
+            lock (_gate)
+            {
+                _disposed = true;
+                lifetime = _lifetime;
+                connectTask = _connectTask;
+                receiveTask = _receiveTask;
+                socket = _socket;
+                _lifetime = null;
+                _connectTask = null;
+                _receiveTask = null;
+                _socket = null;
+            }
+        }
+        finally
+        {
+            _deliveryOwnership.Release();
         }
 
         if (lifetime is null)
@@ -101,11 +172,22 @@ public sealed class GatewayClient : IChatTransport
 
         lifetime.Cancel();
         socket?.Abort();
-        if (receiveTask is not null)
-            await receiveTask.ConfigureAwait(false);
-
-        socket?.Dispose();
-        lifetime.Dispose();
+        try
+        {
+            if (connectTask is not null)
+                await connectTask.ConfigureAwait(false);
+            if (receiveTask is not null)
+                await receiveTask.ConfigureAwait(false);
+        }
+        catch (OperationCanceledException)
+        {
+        }
+        finally
+        {
+            if (socket is not null)
+                DisposeSocketOnce(socket);
+            lifetime.Dispose();
+        }
     }
 
     public static Uri BuildGatewayUri(Uri server, string token, string? lastEventId)
@@ -136,13 +218,88 @@ public sealed class GatewayClient : IChatTransport
         return builder.Uri;
     }
 
+    private async Task ConnectInitialAsync(
+        Uri server,
+        string token,
+        CancellationTokenSource lifetime,
+        CancellationToken callerCancellationToken,
+        Task initialConnectStart)
+    {
+        using CancellationTokenSource operationCancellation =
+            CancellationTokenSource.CreateLinkedTokenSource(lifetime.Token, callerCancellationToken);
+        await initialConnectStart.ConfigureAwait(false);
+        IGatewaySocket? socket = null;
+        try
+        {
+            socket = _socketFactory();
+            lock (_gate)
+            {
+                if (_disposed
+                    || !ReferenceEquals(_lifetime, lifetime)
+                    || lifetime.IsCancellationRequested)
+                {
+                    throw new OperationCanceledException(lifetime.Token);
+                }
+
+                _socket = socket;
+            }
+
+            await socket.ConnectAsync(
+                BuildGatewayUri(server, token, null),
+                operationCancellation.Token).ConfigureAwait(false);
+
+            lock (_gate)
+            {
+                if (_disposed
+                    || !ReferenceEquals(_lifetime, lifetime)
+                    || lifetime.IsCancellationRequested)
+                {
+                    throw new OperationCanceledException(lifetime.Token);
+                }
+
+                IGatewaySocket connectedSocket = socket;
+                _receiveTask = Task.Run(
+                    () => ReceiveAndReconnectAsync(server, token, connectedSocket, lifetime.Token));
+                socket = null;
+            }
+        }
+        catch
+        {
+            if (socket is not null)
+                DisposeSocketOnce(socket);
+            ReleaseInitialOwnership(lifetime);
+            throw;
+        }
+    }
+
+    private void ReleaseInitialOwnership(CancellationTokenSource lifetime)
+    {
+        bool owned;
+        lock (_gate)
+        {
+            owned = ReferenceEquals(_lifetime, lifetime);
+            if (owned)
+            {
+                _lifetime = null;
+                _connectTask = null;
+                _receiveTask = null;
+                _socket = null;
+            }
+        }
+
+        if (owned)
+        {
+            lifetime.Dispose();
+        }
+    }
+
     private async Task ReceiveAndReconnectAsync(
         Uri server,
         string token,
-        ClientWebSocket socket,
+        IGatewaySocket socket,
         CancellationToken cancellationToken)
     {
-        ClientWebSocket current = socket;
+        IGatewaySocket current = socket;
         int attempt = 0;
         try
         {
@@ -160,39 +317,58 @@ public sealed class GatewayClient : IChatTransport
                 {
                 }
 
-                current.Dispose();
+                DisposeSocketOnce(current);
                 if (cancellationToken.IsCancellationRequested)
                     break;
 
-                await Task.Delay(
+                await _delay(
                     ExponentialBackoff.GetDelay(attempt++, _jitter),
                     cancellationToken).ConfigureAwait(false);
 
                 while (!cancellationToken.IsCancellationRequested)
                 {
-                    ClientWebSocket next = _socketFactory();
+                    IGatewaySocket? next = null;
                     try
                     {
+                        next = _socketFactory();
+                        if (!PublishSocket(next, cancellationToken))
+                        {
+                            DisposeSocketOnce(next);
+                            return;
+                        }
+
                         Uri reconnectUri = BuildGatewayUri(server, token, LastEventId);
                         await next.ConnectAsync(reconnectUri, cancellationToken).ConfigureAwait(false);
-                        current = next;
-                        attempt = 0;
+                        bool accepted;
                         lock (_gate)
                         {
-                            _socket = current;
+                            accepted = !_disposed && !cancellationToken.IsCancellationRequested;
+                            if (accepted)
+                            {
+                                current = next;
+                                attempt = 0;
+                            }
+                        }
+
+                        if (!accepted)
+                        {
+                            DisposeSocketOnce(next);
+                            return;
                         }
 
                         break;
                     }
                     catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
                     {
-                        next.Dispose();
+                        if (next is not null)
+                            DisposeSocketOnce(next);
                         return;
                     }
-                    catch (WebSocketException)
+                    catch (Exception)
                     {
-                        next.Dispose();
-                        await Task.Delay(
+                        if (next is not null)
+                            DisposeSocketOnce(next);
+                        await _delay(
                             ExponentialBackoff.GetDelay(attempt++, _jitter),
                             cancellationToken).ConfigureAwait(false);
                     }
@@ -201,12 +377,38 @@ public sealed class GatewayClient : IChatTransport
         }
         finally
         {
-            current.Dispose();
+            DisposeSocketOnce(current);
         }
     }
 
+    private bool PublishSocket(IGatewaySocket socket, CancellationToken cancellationToken)
+    {
+        lock (_gate)
+        {
+            if (_disposed || cancellationToken.IsCancellationRequested)
+                return false;
+
+            _socket = socket;
+            return true;
+        }
+    }
+
+    private void DisposeSocketOnce(IGatewaySocket socket)
+    {
+        lock (_gate)
+        {
+            if (!_disposedSockets.Add(socket))
+                return;
+
+            if (ReferenceEquals(_socket, socket))
+                _socket = null;
+        }
+
+        socket.Dispose();
+    }
+
     private async Task ReceiveLoopAsync(
-        ClientWebSocket socket,
+        IGatewaySocket socket,
         CancellationToken cancellationToken)
     {
         byte[] buffer = new byte[ReceiveBufferSize];
@@ -229,28 +431,51 @@ public sealed class GatewayClient : IChatTransport
             if (!result.EndOfMessage)
                 continue;
 
-            ProcessFrame(Encoding.UTF8.GetString(frame.GetBuffer(), 0, checked((int)frame.Length)));
+            await _deliveryOwnership.WaitAsync(cancellationToken).ConfigureAwait(false);
+            try
+            {
+                lock (_gate)
+                {
+                    if (_disposed || !ReferenceEquals(_socket, socket))
+                        return;
+                }
+
+                GatewayClient? previousDeliveryContext = _deliveryContext;
+                _deliveryContext = this;
+                try
+                {
+                    ProcessFrame(
+                        Encoding.UTF8.GetString(frame.GetBuffer(), 0, checked((int)frame.Length)),
+                        socket);
+                }
+                finally
+                {
+                    _deliveryContext = previousDeliveryContext;
+                }
+            }
+            finally
+            {
+                _deliveryOwnership.Release();
+            }
+
             frame.SetLength(0);
         }
     }
 
-    private void ProcessFrame(string json)
+    private void ProcessFrame(string json, IGatewaySocket socket)
     {
         if (!GatewayProtocol.TryParseFrame(json, out GatewayFrame? frame) || frame is null)
             return;
-
-        if (!string.IsNullOrEmpty(frame.EventId))
-            Interlocked.Exchange(ref _lastEventId, frame.EventId);
 
         switch (frame.Type)
         {
             case "message.created":
                 if (GatewayProtocol.TryParseMessage(frame.Data, out MessageCreatedEventArgs? message))
-                    MessageCreated?.Invoke(this, message!);
+                    InvokeSubscribers(MessageCreated, message!);
                 break;
             case "presence.updated":
                 if (TryReadPresence(frame.Data, out PresenceUpdatedEventArgs? presence))
-                    PresenceUpdated?.Invoke(this, presence!);
+                    InvokeSubscribers(PresenceUpdated, presence!);
                 break;
             case "call.ring":
             case "call.offer":
@@ -258,8 +483,31 @@ public sealed class GatewayClient : IChatTransport
             case "call.ice":
             case "call.hangup":
                 if (GatewayProtocol.TryParseCallSignal(frame, out CallSignalEventArgs? call))
-                    CallSignalReceived?.Invoke(this, call!);
+                    InvokeSubscribers(CallSignalReceived, call!);
                 break;
+        }
+
+        if (!string.IsNullOrEmpty(frame.EventId))
+            Interlocked.Exchange(ref _lastEventId, frame.EventId);
+    }
+
+    private void InvokeSubscribers<TEventArgs>(
+        EventHandler<TEventArgs>? handlers,
+        TEventArgs args)
+        where TEventArgs : EventArgs
+    {
+        if (handlers is null)
+            return;
+
+        foreach (EventHandler<TEventArgs> handler in handlers.GetInvocationList())
+        {
+            try
+            {
+                handler(this, args);
+            }
+            catch (Exception)
+            {
+            }
         }
     }
 

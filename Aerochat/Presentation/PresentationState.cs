@@ -69,6 +69,7 @@ public sealed class PresentationState : ObservableObject
             ContactGroupPresentation filteredGroup = new()
             {
                 Name = sourceGroup.Name,
+                IsServerBacked = sourceGroup.IsServerBacked,
                 IsCollapsed = sourceGroup.IsCollapsed,
                 IsSelected = sourceGroup.IsSelected,
                 IsVisibleProperty = sourceGroup.IsVisibleProperty
@@ -86,6 +87,86 @@ public sealed class PresentationState : ObservableObject
         }
 
         Notify(nameof(FilteredContactGroups));
+    }
+
+    public void ReplaceServerConversations(IEnumerable<RemoteConversationDescriptor> descriptors)
+    {
+        ArgumentNullException.ThrowIfNull(descriptors);
+        RemoteConversationDescriptor[] snapshot = descriptors.ToArray();
+        HashSet<ulong> snapshotIds = snapshot
+            .Select(descriptor => StableIdMapper.Map(descriptor.Id))
+            .ToHashSet();
+        Dictionary<ulong, MessagePresentation[]> retainedMessages = Conversations
+            .Where(conversation => snapshotIds.Contains(conversation.Id))
+            .ToDictionary(
+                conversation => conversation.Id,
+                conversation => conversation.Messages.ToArray());
+        foreach (ContactGroupPresentation filteredGroup in FilteredContactGroups)
+            filteredGroup.UnlinkFilteredCopy();
+        FilteredContactGroups.Clear();
+
+        foreach (ConversationPresentation conversation in Conversations
+                     .Where(item => item.IsServerBacked || snapshotIds.Contains(item.Id))
+                     .ToArray())
+            Conversations.Remove(conversation);
+        foreach (ContactGroupPresentation group in ContactGroups
+                     .Where(item => item.IsServerBacked)
+                     .ToArray())
+            ContactGroups.Remove(group);
+
+        var liveGroup = new ContactGroupPresentation
+        {
+            Name = "Live",
+            IsServerBacked = true
+        };
+        foreach (RemoteConversationDescriptor descriptor in snapshot)
+        {
+            ulong localId = StableIdMapper.Map(descriptor.Id);
+            string name = string.IsNullOrWhiteSpace(descriptor.Title)
+                ? "Server conversation"
+                : descriptor.Title.Trim();
+            var remoteContact = new PersonPresentation
+            {
+                Id = localId,
+                Name = name,
+                Username = descriptor.Id.ToString("N"),
+                Avatar = "/Aerochat;component/Resources/Frames/PlaceholderPfp.png",
+                Presence = new PresencePresentation
+                {
+                    Status = PresenceStatus.Offline,
+                    Activity = "",
+                    CustomStatus = "Server conversation"
+                }
+            };
+            bool isGroup = !string.Equals(descriptor.Kind, "dm", StringComparison.OrdinalIgnoreCase);
+            var conversation = new ConversationPresentation
+            {
+                Id = localId,
+                WireId = descriptor.Id.ToString("D"),
+                Name = name,
+                Topic = "Server conversation",
+                IsGroup = isGroup,
+                IsServerBacked = true,
+                Recipient = isGroup ? null : remoteContact
+            };
+            conversation.Participants.Add(CurrentUser);
+            conversation.Participants.Add(remoteContact);
+            if (retainedMessages.TryGetValue(localId, out MessagePresentation[]? messages))
+            {
+                foreach (MessagePresentation message in messages)
+                    conversation.Messages.Add(message);
+            }
+            Conversations.Add(conversation);
+            liveGroup.Items.Add(new ContactPresentation
+            {
+                ConversationId = localId,
+                Person = remoteContact
+            });
+        }
+
+        if (liveGroup.Items.Count > 0)
+            ContactGroups.Insert(0, liveGroup);
+        ApplySearch("");
     }
 
     public MessagePresentation? SendDraft(
@@ -201,9 +282,13 @@ public sealed class PresentationState : ObservableObject
         string body,
         DateTimeOffset createdAt,
         string kind = "message",
-        string? refPayloadJson = null)
+        string? refPayloadJson = null,
+        string? wireConversationId = null)
     {
-        ConversationPresentation conversation = EnsureConversation(conversationId, authorId);
+        ConversationPresentation conversation = EnsureConversation(
+            conversationId,
+            authorId,
+            wireConversationId);
         if (conversation.Messages.Any(message => message.Id == messageId))
             return;
 
@@ -240,7 +325,7 @@ public sealed class PresentationState : ObservableObject
     public CallSessionPresentation BeginOutgoingCall(string conversationId)
     {
         CallSessionPresentation session = GetOrCreateCallSession(conversationId);
-        session.SetLocalState(CallSessionState.Ringing);
+        session.BeginOutgoing();
         return session;
     }
 
@@ -251,11 +336,21 @@ public sealed class PresentationState : ObservableObject
         return session;
     }
 
-    private ConversationPresentation EnsureConversation(ulong conversationId, ulong authorId)
+    private ConversationPresentation EnsureConversation(
+        ulong conversationId,
+        ulong authorId,
+        string? wireConversationId)
     {
         ConversationPresentation? existing = Conversations.FirstOrDefault(item => item.Id == conversationId);
         if (existing is not null)
+        {
+            if (!string.IsNullOrWhiteSpace(wireConversationId))
+            {
+                existing.WireId ??= wireConversationId;
+                existing.IsServerBacked = true;
+            }
             return existing;
+        }
 
         PersonPresentation author = FindPerson(authorId) ?? new PersonPresentation
         {
@@ -271,6 +366,8 @@ public sealed class PresentationState : ObservableObject
             Name = author.Name,
             Topic = "",
             IsGroup = false,
+            IsServerBacked = !string.IsNullOrWhiteSpace(wireConversationId),
+            WireId = wireConversationId,
             Recipient = author
         };
         conversation.Participants.Add(CurrentUser);

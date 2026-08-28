@@ -42,23 +42,18 @@ public sealed class RateLimitingMiddleware(RequestDelegate next)
 
     private static bool IsProtectedRequest(HttpContext context)
     {
-        if (!HttpMethods.IsPost(context.Request.Method)
-            && !(HttpMethods.IsGet(context.Request.Method)
-                && context.Request.Path.Equals("/gifs/search")))
-        {
-            return false;
-        }
-
         string[] parts = context.Request.Path.Value?.Split('/', StringSplitOptions.RemoveEmptyEntries) ?? [];
         return (HttpMethods.IsGet(context.Request.Method)
-                && parts is ["gifs", "search"])
+                && parts.Length == 2
+                && string.Equals(parts[0], "gifs", StringComparison.OrdinalIgnoreCase)
+                && string.Equals(parts[1], "search", StringComparison.OrdinalIgnoreCase))
             || (HttpMethods.IsPost(context.Request.Method)
                 && parts.Length == 3
-                && parts[0] == "conversations"
-                && parts[2] == "messages")
+                && string.Equals(parts[0], "conversations", StringComparison.OrdinalIgnoreCase)
+                && string.Equals(parts[2], "messages", StringComparison.OrdinalIgnoreCase))
             || (HttpMethods.IsPost(context.Request.Method)
                 && parts.Length == 4
-                && parts[0] == "conversations"
-                && parts[2] == "call");
+                && string.Equals(parts[0], "conversations", StringComparison.OrdinalIgnoreCase)
+                && string.Equals(parts[2], "call", StringComparison.OrdinalIgnoreCase));
     }
 }

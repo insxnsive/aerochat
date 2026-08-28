@@ -693,18 +693,37 @@ public sealed class ConversationRestTests
         Assert.That(persisted.RefPayloadJson, Is.EqualTo(payload));
     }
 
-    [Test]
-    public async Task Authenticated_member_can_send_and_persist_valid_gif_sticker_attachment()
+    [TestCase("Smile.png", "Smile.png", true)]
+    [TestCase("Heart.png", "Heart.png", true)]
+    [TestCase("Grin.png", "Grin.png", true)]
+    [TestCase("Wink.png", "Wink.png", true)]
+    [TestCase("ThumbsUp.png", "ThumbsUp.png", true)]
+    [TestCase("Dog.png", "Dog.png", true)]
+    [TestCase("Football.png", "Football.png", true)]
+    [TestCase("HighFive.png", "HighFive.png", true)]
+    [TestCase("Wave.gif", "Wave.gif", false)]
+    [TestCase("NotInstalled.png", "NotInstalled.png", false)]
+    [TestCase("Smile.png", "unrelated body", false)]
+    public async Task Sticker_attachment_accepts_only_installed_catalog_entries(
+        string sticker,
+        string body,
+        bool shouldPersist)
     {
         using var factory = new ApiWebApplicationFactory();
         (Guid conversationId, _) =
-            await SeedMemberConversationAsync(factory, "sticker-gif-valid");
-        using HttpClient client = CreateAuthorizedClient(factory, "sticker-gif-valid");
-        const string payload =
-            "{\"sticker\":\"Wave.gif\",\"url\":\"/sticker-packs/wlm/Wave.gif\",\"contentType\":\"image/gif\"}";
+            await SeedMemberConversationAsync(factory, "sticker-catalog");
+        using HttpClient client = CreateAuthorizedClient(factory, "sticker-catalog");
+        string payload = JsonSerializer.Serialize(new
+        {
+            sticker,
+            url = $"/sticker-packs/wlm/{sticker}",
+            contentType = sticker.EndsWith(".gif", StringComparison.OrdinalIgnoreCase)
+                ? "image/gif"
+                : "image/png"
+        });
         string requestJson = JsonSerializer.Serialize(new
         {
-            body = "Wave.gif",
+            body,
             kind = "sticker",
             refPayloadJson = payload
         });
@@ -712,17 +731,13 @@ public sealed class ConversationRestTests
         using HttpResponseMessage response = await client.PostAsync(
             $"/conversations/{conversationId}/messages",
             new StringContent(requestJson, Encoding.UTF8, "application/json"));
-        MessageDto? message = JsonSerializer.Deserialize<MessageDto>(
-            await response.Content.ReadAsStringAsync(),
-            new JsonSerializerOptions(JsonSerializerDefaults.Web));
 
-        Assert.Multiple(() =>
-        {
-            Assert.That(response.StatusCode, Is.EqualTo(HttpStatusCode.Created));
-            Assert.That(message, Is.Not.Null);
-            Assert.That(message!.Kind, Is.EqualTo("sticker"));
-            Assert.That(message.RefPayloadJson, Is.EqualTo(payload));
-        });
+        Assert.That(response.StatusCode,
+            Is.EqualTo(shouldPersist ? HttpStatusCode.Created : HttpStatusCode.BadRequest));
+        await using AsyncServiceScope scope = factory.Services.CreateAsyncScope();
+        ChatDb db = scope.ServiceProvider.GetRequiredService<ChatDb>();
+        Assert.That(await db.Messages.CountAsync(message => message.ConversationId == conversationId),
+            Is.EqualTo(shouldPersist ? 1 : 0));
     }
 
     [TestCase("{not-json")]

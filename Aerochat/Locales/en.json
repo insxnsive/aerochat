@@ -41,6 +41,7 @@
   "HomeShareQuickMessage": "Share a quick message",
   "HomeEnterPersonalMessage": "Enter a personal message or a link you want to share",
   "HomeSearchPlaceholder": "Search contacts or the web...",
+  "HomeNoSearchResults": "No contacts match your search.",
   "HomeAddContactOrGroup": "Add a contact or group",
   "HomeChangeContactListLayout": "Change contact list layout",
   "HomeShowMenu": "Show menu",

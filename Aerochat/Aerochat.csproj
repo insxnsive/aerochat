@@ -23,6 +23,12 @@
     <Resource Include="Icons\**\*" />
   </ItemGroup>
   <ItemGroup>
+    <None Update="Locales\**\*.json">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+      <CopyToPublishDirectory>PreserveNewest</CopyToPublishDirectory>
+    </None>
+  </ItemGroup>
+  <ItemGroup>
     <PackageReference Include="XamlAnimatedGif" Version="2.3.0" />
     <PackageReference Include="System.Security.Cryptography.ProtectedData" Version="8.0.0" />
     <PackageReference Include="SIPSorcery" Version="8.0.14" />

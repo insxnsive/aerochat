@@ -32,7 +32,49 @@ public sealed class HomeShellTests
         });
     }
 
-    private sealed class FakeTransport : IChatTransport
+    [Test]
+    public void Home_connects_the_gateway_before_hydrating_server_conversations()
+    {
+        WpfTestHost.Run(() =>
+        {
+            PresentationState state = DemoData.Create();
+            var order = new List<string>();
+            var transport = new FakeTransport(order);
+            var conversationId = Guid.Parse("aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee");
+            var catalog = new FakeConversationCatalog(
+                order,
+                [new ServerConversationSummary(
+                    conversationId,
+                    "group",
+                    "Live RTC Room",
+                    new DateTimeOffset(2026, 8, 27, 12, 0, 0, TimeSpan.Zero))]);
+            var home = new Home(
+                state,
+                new WindowNavigator(state),
+                transport,
+                new Uri("http://localhost:5080/"),
+                "session-token",
+                conversationCatalog: catalog);
+
+            home.ConnectLiveAsync().GetAwaiter().GetResult();
+
+            ConversationPresentation live = state.Conversations.Single(
+                conversation => conversation.WireId == conversationId.ToString("D"));
+            Assert.Multiple(() =>
+            {
+                Assert.That(order, Is.EqualTo(new[] { "connect", "catalog" }));
+                Assert.That(live.Id, Is.EqualTo(StableIdMapper.Map(conversationId)));
+                Assert.That(live.TransportId, Is.EqualTo(conversationId.ToString("D")));
+                Assert.That(live.IsServerBacked, Is.True);
+                Assert.That(live.Name, Is.EqualTo("Live RTC Room"));
+                Assert.That(state.ContactGroups.Single(group => group.IsServerBacked)
+                    .Items.Single().ConversationId, Is.EqualTo(live.Id));
+            });
+            home.Close();
+        });
+    }
+
+    private sealed class FakeTransport(List<string>? order = null) : IChatTransport
     {
         public event EventHandler<MessageCreatedEventArgs>? MessageCreated;
         public event EventHandler<PresenceUpdatedEventArgs>? PresenceUpdated;
@@ -41,7 +83,7 @@ public sealed class HomeShellTests
 #pragma warning restore CS0067
         public bool Connected { get; private set; }
         public Task ConnectAsync(Uri server, string token, CancellationToken cancellationToken = default)
-        { Connected = true; return Task.CompletedTask; }
+        { order?.Add("connect"); Connected = true; return Task.CompletedTask; }
         public Task SendAsync(string conversationId, string body, CancellationToken cancellationToken = default) => Task.CompletedTask;
         public Task SetTypingAsync(string conversationId, CancellationToken cancellationToken = default) => Task.CompletedTask;
         public ValueTask DisposeAsync() => ValueTask.CompletedTask;
@@ -49,6 +91,20 @@ public sealed class HomeShellTests
         public void RaiseMessage(string conversation, string message, string author, string body) =>
             MessageCreated?.Invoke(this, new(conversation, message, author, body, DateTimeOffset.UtcNow));
     }
+
+    private sealed class FakeConversationCatalog(
+        List<string> order,
+        IReadOnlyList<ServerConversationSummary> conversations) : IConversationCatalogClient
+    {
+        public Task<IReadOnlyList<ServerConversationSummary>> LoadAsync(
+            string token,
+            CancellationToken cancellationToken = default)
+        {
+            order.Add("catalog");
+            return Task.FromResult(conversations);
+        }
+    }
+
     [Test]
     public void Home_constructs_from_demo_state_without_backend_services()
     {
@@ -95,6 +151,56 @@ public sealed class HomeShellTests
             Assert.That(filteredContacts
                 .All(item => item.Person.Name.Contains("maya", StringComparison.OrdinalIgnoreCase)), Is.True);
             Assert.That(state.ContactGroups.Sum(group => group.Items.Count), Is.EqualTo(sourceCount));
+            home.Close();
+        });
+    }
+
+    [Test]
+    public void Home_loaded_status_placeholder_is_visible_for_empty_custom_status_when_not_editing()
+    {
+        WpfTestHost.Run(() =>
+        {
+            PresentationState state = DemoData.Create();
+            state.CurrentUser.Presence.CustomStatus = "";
+            state.IsEditingStatus = false;
+            var home = new Home(state, new WindowNavigator(state));
+
+            home.Show();
+            home.UpdateLayout();
+            var placeholder = (System.Windows.Controls.TextBlock)home.FindName("PART_StatusPlaceholder");
+
+            Assert.That(placeholder.Visibility, Is.EqualTo(Visibility.Visible));
+            home.Close();
+        });
+    }
+
+    [Test]
+    public void Home_loaded_no_match_search_shows_explanatory_empty_result_visual()
+    {
+        WpfTestHost.Run(() =>
+        {
+            PresentationState state = DemoData.Create();
+            var home = new Home(state, new WindowNavigator(state));
+
+            home.Show();
+            home.UpdateLayout();
+            var contactRegion = (DependencyObject)System.Windows.Media.VisualTreeHelper.GetParent(
+                FindVisualChildren<Aerochat.Controls.HomeTreeView>(home).Single())!;
+            string[] beforeSearch = VisibleTextBlocks(contactRegion);
+
+            home.ApplySearch("no-contact-matches-this-query");
+            home.UpdateLayout();
+            string[] afterSearch = VisibleTextBlocks(contactRegion);
+            string[] explanatoryText = afterSearch
+                .Except(beforeSearch, StringComparer.Ordinal)
+                .ToArray();
+
+            Assert.Multiple(() =>
+            {
+                Assert.That(state.FilteredContactGroups, Is.Empty);
+                Assert.That(explanatoryText, Is.Not.Empty,
+                    "A no-match search must render explanatory text in the contact region.");
+            });
             home.Close();
         });
     }
@@ -341,6 +447,26 @@ public sealed class HomeShellTests
     }
 
     [Test]
+    public void Localization_resolves_representative_keys_from_compiled_output()
+    {
+        string englishLocale = Path.Combine(
+            AppContext.BaseDirectory,
+            "Locales",
+            "en.json");
+        var localization = new Aerochat.Localization.LocalizationManager();
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(File.Exists(englishLocale), Is.True,
+                $"Expected runtime locale at {englishLocale}");
+            Assert.That(localization["AppNameMessenger"], Is.EqualTo("Windows Live Messenger"));
+            Assert.That(localization["StatusAvailable"], Is.EqualTo("Available"));
+            Assert.That(localization["HomeWhatsNew"], Is.EqualTo("What's new"));
+            Assert.That(localization["ChatAttribution"], Is.EqualTo("Aerochat by nullptr"));
+        });
+    }
+
+    [Test]
     public void Localization_rejects_path_like_language_codes()
     {
         var localization = new Aerochat.Localization.LocalizationManager();
@@ -478,6 +604,26 @@ public sealed class HomeShellTests
             Assert.That(xaml, Does.Contain("/Aerochat;component/Resources/Message/Separator.png"));
             Assert.That(xaml, Does.Contain("/Aerochat;component/Resources/Message/Background.png"));
         });
+    }
+
+    private static string[] VisibleTextBlocks(DependencyObject root) =>
+        FindVisualChildren<System.Windows.Controls.TextBlock>(root)
+            .Where(textBlock => textBlock.Visibility == Visibility.Visible &&
+                                !string.IsNullOrWhiteSpace(textBlock.Text))
+            .Select(textBlock => textBlock.Text.Trim())
+            .ToArray();
+
+    private static IEnumerable<T> FindVisualChildren<T>(DependencyObject parent)
+        where T : DependencyObject
+    {
+        for (int index = 0; index < System.Windows.Media.VisualTreeHelper.GetChildrenCount(parent); index++)
+        {
+            DependencyObject child = System.Windows.Media.VisualTreeHelper.GetChild(parent, index);
+            if (child is T match)
+                yield return match;
+            foreach (T descendant in FindVisualChildren<T>(child))
+                yield return descendant;
+        }
     }
 
     private static string GetHomePath(string fileName) =>

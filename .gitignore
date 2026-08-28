@@ -65,6 +65,14 @@ project.lock.json
 project.fragment.lock.json
 artifacts/
 
+# Hermes session-local notes and plans
+.hermes/
+
+# Local environment files and secrets
+.env
+.env.*
+!.env.example
+
 # ASP.NET Scaffolding
 ScaffoldingReadMe.txt
 

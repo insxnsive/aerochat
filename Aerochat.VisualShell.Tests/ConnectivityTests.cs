@@ -11,6 +11,32 @@ namespace Aerochat.VisualShell.Tests;
 public sealed class ConnectivityTests
 {
     [Test]
+    public async Task Conversation_catalog_client_loads_authorized_guid_conversations()
+    {
+        var conversationId = Guid.Parse("11111111-2222-3333-4444-555555555555");
+        var handler = new ConversationCatalogHandler(conversationId);
+        var client = new ConversationCatalogClient(
+            new HttpClient(handler),
+            new Uri("http://localhost:5080/"));
+
+        IReadOnlyList<ServerConversationSummary> conversations =
+            await client.LoadAsync("session-token");
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(handler.Request?.Method, Is.EqualTo(HttpMethod.Get));
+            Assert.That(handler.Request?.RequestUri?.AbsoluteUri,
+                Is.EqualTo("http://localhost:5080/conversations"));
+            Assert.That(handler.Request?.Headers.Authorization?.Scheme, Is.EqualTo("Bearer"));
+            Assert.That(handler.Request?.Headers.Authorization?.Parameter, Is.EqualTo("session-token"));
+            Assert.That(conversations, Has.Count.EqualTo(1));
+            Assert.That(conversations[0].Id, Is.EqualTo(conversationId));
+            Assert.That(conversations[0].Kind, Is.EqualTo("group"));
+            Assert.That(conversations[0].Title, Is.EqualTo("RTC Room"));
+        });
+    }
+
+    [Test]
     public async Task Null_transport_is_an_inert_async_transport()
     {
         IChatTransport transport = new NullTransport();
@@ -317,6 +343,23 @@ public sealed class ConnectivityTests
         {
             Cleared = true;
             return Task.CompletedTask;
+        }
+    }
+
+    private sealed class ConversationCatalogHandler(Guid conversationId) : HttpMessageHandler
+    {
+        public HttpRequestMessage? Request { get; private set; }
+
+        protected override Task<HttpResponseMessage> SendAsync(
+            HttpRequestMessage request,
+            CancellationToken cancellationToken)
+        {
+            Request = request;
+            string json = $"[{{\"id\":\"{conversationId:D}\",\"kind\":\"group\",\"title\":\"RTC Room\",\"createdAt\":\"2026-08-27T12:00:00+00:00\"}}]";
+            return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK)
+            {
+                Content = new StringContent(json, Encoding.UTF8, "application/json")
+            });
         }
     }
 

@@ -42,14 +42,18 @@ public sealed class CallRestTests
     }
 
     [Test]
-    public async Task Happy_path_publishes_one_event_per_step()
+    public async Task Happy_path_publishes_each_step_to_other_participants_only()
     {
         using var factory = new ApiWebApplicationFactory();
         Guid conversationId = Guid.NewGuid();
-        (Guid memberId, _) = await SeedConversationAsync(factory, conversationId, "call-happy", null);
-        var sink = new RecordingSink("call-happy-sink", memberId);
-        factory.Services.GetRequiredService<GatewayHub>().Register(sink);
-        using HttpClient client = AuthorizedClient(factory, "call-happy");
+        (Guid senderId, Guid receiverId) = await SeedTwoMemberConversationAsync(
+            factory, conversationId, "call-happy-sender", "call-happy-receiver");
+        var senderSink = new RecordingSink("call-happy-sender-sink", senderId);
+        var receiverSink = new RecordingSink("call-happy-receiver-sink", receiverId);
+        GatewayHub gateway = factory.Services.GetRequiredService<GatewayHub>();
+        gateway.Register(senderSink);
+        gateway.Register(receiverSink);
+        using HttpClient client = AuthorizedClient(factory, "call-happy-sender");
 
         (string Path, object Body)[] steps =
         [
@@ -67,7 +71,7 @@ public sealed class CallRestTests
         }
 
         Assert.That(
-            sink.Events.Where(envelope => envelope.Type.StartsWith("call.", StringComparison.Ordinal))
+            receiverSink.Events.Where(envelope => envelope.Type.StartsWith("call.", StringComparison.Ordinal))
                 .Select(envelope => envelope.Type),
             Is.EqualTo(new[]
             {
@@ -77,8 +81,11 @@ public sealed class CallRestTests
                 GatewayEventType.CallIce,
                 GatewayEventType.CallHangup
             }));
+        Assert.That(
+            senderSink.Events.Any(envelope => envelope.Type.StartsWith("call.", StringComparison.Ordinal)),
+            Is.False);
         JsonElement data = JsonDocument.Parse(
-            GatewayJson.Serialize(sink.Events.Single(envelope => envelope.Type == GatewayEventType.CallOffer)))
+            GatewayJson.Serialize(receiverSink.Events.Single(envelope => envelope.Type == GatewayEventType.CallOffer)))
             .RootElement.GetProperty("d");
         Assert.That(data.GetProperty("conversationId").GetGuid(), Is.EqualTo(conversationId));
         Assert.That(data.GetProperty("sdp").GetString(), Is.EqualTo("offer-sdp"));
@@ -116,6 +123,44 @@ public sealed class CallRestTests
 
         Assert.That(response.StatusCode, Is.EqualTo(HttpStatusCode.BadRequest));
         Assert.That(sink.Events.Any(envelope => envelope.Type.StartsWith("call.", StringComparison.Ordinal)), Is.False);
+    }
+
+    private static async Task<(Guid SenderId, Guid ReceiverId)> SeedTwoMemberConversationAsync(
+        ApiWebApplicationFactory factory,
+        Guid conversationId,
+        string senderProviderId,
+        string receiverProviderId)
+    {
+        Guid senderId = Guid.NewGuid();
+        Guid receiverId = Guid.NewGuid();
+        DateTimeOffset now = new(2026, 8, 25, 12, 0, 0, TimeSpan.Zero);
+        await factory.SeedAsync(db =>
+        {
+            db.Users.AddRange(
+                new ExternalUserEntity
+                {
+                    Id = senderId, Provider = "github", ProviderUserId = senderProviderId,
+                    DisplayName = senderProviderId, CreatedAt = now, UpdatedAt = now
+                },
+                new ExternalUserEntity
+                {
+                    Id = receiverId, Provider = "github", ProviderUserId = receiverProviderId,
+                    DisplayName = receiverProviderId, CreatedAt = now, UpdatedAt = now
+                });
+            db.Conversations.Add(new ConversationEntity
+            {
+                Id = conversationId,
+                Kind = "dm",
+                CreatedAt = now,
+                Participants =
+                {
+                    new ParticipantEntity { UserId = senderId, JoinedAt = now },
+                    new ParticipantEntity { UserId = receiverId, JoinedAt = now }
+                }
+            });
+            return Task.CompletedTask;
+        });
+        return (senderId, receiverId);
     }
 
     private static async Task<(Guid UserId, DateTimeOffset Now)> SeedConversationAsync(

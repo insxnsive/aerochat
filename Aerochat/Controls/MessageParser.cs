@@ -1,4 +1,5 @@
 using System.Collections;
+using System.ComponentModel;
 using System.Globalization;
 using System.Reflection;
 using System.Text;
@@ -8,6 +9,7 @@ using System.Windows.Controls;
 using System.Windows.Documents;
 using System.Windows.Media;
 using System.Windows.Media.Imaging;
+using Aerochat.Presentation;
 
 namespace Aerochat.Controls
 {
@@ -16,8 +18,12 @@ namespace Aerochat.Controls
     /// The bound value is intentionally object-shaped so existing bindings can pass
     /// their message model while this control only reads presentation properties.
     /// </summary>
-    public class MessageParser : UserControl
+    public class MessageParser : UserControl, IDisposable
     {
+        private INotifyPropertyChanged? _observedMessage;
+        private bool _disposed;
+        private bool _isUnloaded;
+
         private static readonly IReadOnlyDictionary<string, string> UnicodeEmojiMap =
             new Dictionary<string, string>(StringComparer.Ordinal)
             {
@@ -66,11 +72,97 @@ namespace Aerochat.Controls
         {
             MainPanel = new WrapPanel();
             Content = MainPanel;
+            Loaded += MessageParser_Loaded;
+            Unloaded += MessageParser_Unloaded;
         }
 
         private static void OnMessageChanged(DependencyObject d, DependencyPropertyChangedEventArgs e)
         {
-            ((MessageParser)d).RenderMessage();
+            var parser = (MessageParser)d;
+            if (parser._disposed)
+            {
+                if (parser.ReadLocalValue(MessageProperty) != DependencyProperty.UnsetValue)
+                    parser.ClearValue(MessageProperty);
+
+                return;
+            }
+
+            if (parser._isUnloaded)
+                return;
+
+            parser.DetachMessageNotifications();
+            parser.AttachMessageNotifications(e.NewValue);
+            parser.RenderMessage();
+        }
+
+        private void MessageParser_Loaded(object sender, RoutedEventArgs e)
+        {
+            if (_disposed)
+                return;
+
+            _isUnloaded = false;
+            AttachMessageNotifications(Message);
+            RenderMessage();
+        }
+
+        private void MessageParser_Unloaded(object sender, RoutedEventArgs e)
+        {
+            _isUnloaded = true;
+            DetachMessageNotifications();
+        }
+
+        private void AttachMessageNotifications(object? message)
+        {
+            if (_disposed || message is not INotifyPropertyChanged notify)
+                return;
+
+            if (ReferenceEquals(_observedMessage, message))
+                return;
+
+            DetachMessageNotifications();
+            _observedMessage = notify;
+            notify.PropertyChanged += Message_PropertyChanged;
+        }
+
+        private void DetachMessageNotifications()
+        {
+            if (_observedMessage is null)
+                return;
+
+            _observedMessage.PropertyChanged -= Message_PropertyChanged;
+            _observedMessage = null;
+        }
+
+        private void Message_PropertyChanged(object? sender, PropertyChangedEventArgs e)
+        {
+            if (_disposed || _isUnloaded || !ReferenceEquals(sender, _observedMessage))
+                return;
+
+            if (Dispatcher.CheckAccess())
+                RenderMessage();
+            else
+                _ = Dispatcher.BeginInvoke(RenderMessageIfActive);
+        }
+
+        private void RenderMessageIfActive()
+        {
+            if (_disposed || _isUnloaded)
+                return;
+
+            RenderMessage();
+        }
+
+        public void Dispose()
+        {
+            if (_disposed)
+                return;
+
+            _disposed = true;
+            DetachMessageNotifications();
+            ClearValue(MessageProperty);
+            MainPanel.Children.Clear();
+            Loaded -= MessageParser_Loaded;
+            Unloaded -= MessageParser_Unloaded;
         }
 
         private void RenderMessage()
@@ -81,11 +173,12 @@ namespace Aerochat.Controls
                 return;
 
             if (string.Equals(ReadString(Message, "Kind"), "sticker", StringComparison.Ordinal)
-                && Uri.TryCreate(ReadString(Message, "StickerUri"), UriKind.Absolute, out Uri? stickerUri))
+                && StickerCatalog.TryReadResourceName(ReadString(Message, "RefPayloadJson"), out string resourceName)
+                && StickerCatalog.TryGet(resourceName, out StickerPresentation stickerPresentation))
             {
                 var sticker = new Image
                 {
-                    Source = new BitmapImage(stickerUri),
+                    Source = new BitmapImage(new Uri(stickerPresentation.ResourceUri, UriKind.Absolute)),
                     Width = 160,
                     Height = 160,
                     MaxWidth = 220,
@@ -333,7 +426,7 @@ namespace Aerochat.Controls
 #endif
             {
                 TextWrapping = sourceTextBlock.TextWrapping,
-                Foreground = sourceTextBlock.Foreground,
+                Foreground = Foreground,
                 TextAlignment = sourceTextBlock.TextAlignment
             };
 

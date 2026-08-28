@@ -54,7 +54,11 @@
                                                         </Style>
                                                     </controls:NineSlice.Style>
                                                 </controls:NineSlice>
-                                                <Rectangle Margin="4,4,0,0" UseLayoutRounding="True" Width="96" Height="48" HorizontalAlignment="Left" VerticalAlignment="Top" Fill="#33aacc" />
+                                                <Rectangle Margin="4,4,0,0" UseLayoutRounding="True" Width="96" Height="48" HorizontalAlignment="Left" VerticalAlignment="Top">
+                                                    <Rectangle.Fill>
+                                                        <SolidColorBrush Color="{Binding Scene.Color}" />
+                                                    </Rectangle.Fill>
+                                                </Rectangle>
                                                 <Image Margin="4,4,0,0" UseLayoutRounding="True" Width="96" Height="48" HorizontalAlignment="Left" VerticalAlignment="Top" Source="{x:Null}" Stretch="Fill">
                                                     <Image.Effect>
                                                         <DropShadowEffect Opacity="0.4" Color="Black" BlurRadius="6" Direction="315" />

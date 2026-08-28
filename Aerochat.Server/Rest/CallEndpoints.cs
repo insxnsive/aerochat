@@ -112,7 +112,8 @@ public static class CallEndpoints
 
         List<Guid> audience = await db.Participants
             .AsNoTracking()
-            .Where(participant => participant.ConversationId == conversationGuid)
+            .Where(participant =>
+                participant.ConversationId == conversationGuid && participant.UserId != user.Id)
             .Select(participant => participant.UserId)
             .Distinct()
             .ToListAsync(cancellationToken);

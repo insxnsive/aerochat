@@ -11,6 +11,7 @@ public partial class Login : Window
 {
     private readonly WindowNavigator _navigator;
     private readonly IAuthClient _authClient;
+    private readonly Func<Task>? _signedIn;
     private CancellationTokenSource? _signInCancellation;
     private bool _isClosing;
 
@@ -22,10 +23,20 @@ public partial class Login : Window
     }
 
     public Login(PresentationState state, WindowNavigator navigator, IAuthClient authClient)
+        : this(state, navigator, authClient, null)
+    {
+    }
+
+    public Login(
+        PresentationState state,
+        WindowNavigator navigator,
+        IAuthClient authClient,
+        Func<Task>? signedIn)
     {
         ArgumentNullException.ThrowIfNull(state);
         _navigator = navigator ?? throw new ArgumentNullException(nameof(navigator));
         _authClient = authClient ?? throw new ArgumentNullException(nameof(authClient));
+        _signedIn = signedIn;
         ViewModel = new LoginPresentation(state.CurrentScene, _authClient.IsAvailable);
         DataContext = ViewModel;
         InitializeComponent();
@@ -50,8 +61,16 @@ public partial class Login : Window
                 return;
 
             _signInCancellation = null;
-            Close();
-            _navigator.Show(ShellRoute.Home);
+            if (_signedIn is null)
+            {
+                Close();
+                _navigator.Show(ShellRoute.Home);
+            }
+            else
+            {
+                await _signedIn();
+                Close();
+            }
         }
         catch (OperationCanceledException)
         {

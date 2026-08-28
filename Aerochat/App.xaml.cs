@@ -13,6 +13,7 @@ public partial class App : Application
     private readonly bool _suppressStartup;
     private IChatTransport? _chatTransport;
     private PresentationAdapter? _presentationAdapter;
+    private ConversationCatalogClient? _conversationCatalog;
 
     public App() : this(false) { }
 
@@ -29,28 +30,35 @@ public partial class App : Application
         PresentationState state = DemoData.Create();
         IAuthClient authClient = CreateAuthClient();
         _chatTransport = CreateChatTransport();
+        _conversationCatalog = CreateConversationCatalog();
         _presentationAdapter = new PresentationAdapter(
             state,
             _chatTransport,
             action => Dispatcher.Invoke(action));
+        Home? home = null;
         WindowNavigator navigator = new(
             state,
-            (currentState, currentNavigator) => new Login(currentState, currentNavigator, authClient),
+            (currentState, currentNavigator) => new Login(
+                currentState,
+                currentNavigator,
+                authClient,
+                () => home?.ConnectLiveAsync() ?? Task.CompletedTask),
             (currentState, conversation, currentNavigator) => new Chat(
                 currentState,
                 conversation,
                 currentNavigator,
                 CreateMessageClient(authClient),
-                CreateCallClient(authClient),
-                TryGetConfiguredServer(out _) ? new RtcPeerEngine() : null));
-        MainWindow = new Home(
+                CreateCallCoordinator(currentState, conversation, authClient)));
+        home = new Home(
             state,
             navigator,
             _chatTransport,
             TryGetConfiguredServer(out Uri? configuredServer) ? configuredServer : null,
             tokenLoader: authClient is OAuthAuthClient oauth
                 ? oauth.LoadCachedTokenAsync
-                : null);
+                : null,
+            conversationCatalog: _conversationCatalog);
+        MainWindow = home;
         MainWindow.Closed += (_, _) => _ = DisposeConnectivityAsync();
         MainWindow.Show();
     }
@@ -60,7 +68,9 @@ public partial class App : Application
         if (!TryGetConfiguredServer(out Uri? serverUri) || serverUri is null)
             return new NullAuthClient();
 
-        return OAuthAuthClient.Create(serverUri);
+        return OAuthAuthClient.Create(
+            serverUri,
+            Environment.GetEnvironmentVariable("AEROCHAT_SESSION_CACHE_PATH"));
     }
 
     private static IChatTransport CreateChatTransport() =>
@@ -77,12 +87,37 @@ public partial class App : Application
             : null;
     }
 
+    private static ConversationCatalogClient? CreateConversationCatalog()
+    {
+        if (!TryGetConfiguredServer(out Uri? server) || server is null)
+            return null;
+        return new ConversationCatalogClient(new HttpClient(), server);
+    }
+
     private static CallSignalingClient? CreateCallClient(IAuthClient authClient)
     {
         if (!TryGetConfiguredServer(out Uri? server) || server is null
             || authClient is not OAuthAuthClient oauth)
             return null;
         return new CallSignalingClient(new HttpClient(), server, oauth.LoadCachedTokenAsync);
+    }
+
+    private ICallCoordinator? CreateCallCoordinator(
+        PresentationState state,
+        ConversationPresentation conversation,
+        IAuthClient authClient)
+    {
+        CallSignalingClient? signaling = CreateCallClient(authClient);
+        if (signaling is null || _chatTransport is null)
+            return new OfflineCallCoordinator(state, conversation.Id.ToString());
+
+        return new CallCoordinator(
+            state,
+            conversation.TransportId,
+            signaling,
+            new RtcPeerEngine(),
+            _chatTransport,
+            action => Dispatcher.Invoke(action));
     }
 
     private static bool TryGetConfiguredServer(out Uri? serverUri)
@@ -105,6 +140,7 @@ public partial class App : Application
     private async Task DisposeConnectivityAsync()
     {
         _presentationAdapter?.Dispose();
+        _conversationCatalog?.Dispose();
         if (_chatTransport is not null)
             await _chatTransport.DisposeAsync();
     }

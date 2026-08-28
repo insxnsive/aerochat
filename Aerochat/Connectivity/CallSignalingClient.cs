@@ -4,12 +4,22 @@ using System.Net.Http.Json;
 
 namespace Aerochat.Connectivity;
 
-public sealed class CallSignalingClient
+public interface ICallSignalingClient : IAsyncDisposable
+{
+    Task RingAsync(string conversationId, CancellationToken cancellationToken = default);
+    Task OfferAsync(string conversationId, string offerSdp, CancellationToken cancellationToken = default);
+    Task AnswerAsync(string conversationId, string answerSdp, CancellationToken cancellationToken = default);
+    Task IceAsync(string conversationId, string candidate, CancellationToken cancellationToken = default);
+    Task HangupAsync(string conversationId, string? reason = null, CancellationToken cancellationToken = default);
+}
+
+public sealed class CallSignalingClient : ICallSignalingClient
 {
     private readonly HttpClient _httpClient;
     private readonly Uri _server;
     private readonly string? _token;
     private readonly Func<CancellationToken, Task<string?>>? _tokenLoader;
+    private int _disposed;
 
     public CallSignalingClient(HttpClient httpClient, Uri server, string token)
     {
@@ -56,5 +66,13 @@ public sealed class CallSignalingClient
         request.Content = JsonContent.Create(new { sdp, candidate, reason });
         using HttpResponseMessage response = await _httpClient.SendAsync(request, cancellationToken).ConfigureAwait(false);
         response.EnsureSuccessStatusCode();
+    }
+
+    public ValueTask DisposeAsync()
+    {
+        if (Interlocked.Exchange(ref _disposed, 1) == 0)
+            _httpClient.Dispose();
+
+        return ValueTask.CompletedTask;
     }
 }

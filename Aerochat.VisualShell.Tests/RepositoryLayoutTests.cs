@@ -8,6 +8,15 @@ public sealed class RepositoryLayoutTests
     private static string Root => RepositoryRoot.Path;
 
     [Test]
+    public void Call_coordinator_keeps_its_signal_gate_alive_for_late_callbacks()
+    {
+        string source = File.ReadAllText(Path.Combine(
+            Root, "Aerochat", "Connectivity", "Rtc", "CallCoordinator.cs"));
+
+        Assert.That(source, Does.Not.Contain("_operations.Dispose()"));
+    }
+
+    [Test]
     public void Product_source_contains_no_backend_or_external_side_effect_code()
     {
         string[] forbiddenDirectories =

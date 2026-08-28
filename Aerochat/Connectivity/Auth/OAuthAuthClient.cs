@@ -65,11 +65,11 @@ public sealed class OAuthAuthClient : IAuthClient
     public Task<string?> LoadCachedTokenAsync(CancellationToken cancellationToken = default) =>
         _tokenCache.LoadAsync(cancellationToken);
 
-    public static OAuthAuthClient Create(Uri serverUri) =>
+    public static OAuthAuthClient Create(Uri serverUri, string? tokenCachePath = null) =>
         new(
             new HttpClient(),
             serverUri,
-            new DpapiTokenCache(),
+            new DpapiTokenCache(tokenCachePath),
             new ShellBrowserLauncher(),
             () => new LoopbackCallbackListener());
 

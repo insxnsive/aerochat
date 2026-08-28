@@ -58,6 +58,51 @@ public sealed class HardeningIntegrationTests
         });
     }
 
+    [Test]
+    public async Task Message_rate_limit_counts_case_variant_route_as_the_same_protected_endpoint()
+    {
+        var clock = new MutableTimeProvider(DateTimeOffset.UtcNow.AddMinutes(1));
+        using var factory = new ApiWebApplicationFactory
+        {
+            Clock = clock,
+            RateLimit = 1,
+            RateLimitWindowSeconds = 60
+        };
+        Guid userId = Guid.NewGuid();
+        Guid conversationId = Guid.NewGuid();
+        DateTimeOffset now = clock.GetUtcNow();
+        await factory.SeedAsync(db =>
+        {
+            db.Users.Add(new ExternalUserEntity
+            {
+                Id = userId, Provider = "github", ProviderUserId = "rate-case-user",
+                DisplayName = "Rate Case User", CreatedAt = now, UpdatedAt = now
+            });
+            db.Conversations.Add(new ConversationEntity
+            {
+                Id = conversationId, Kind = "dm", CreatedAt = now,
+                Participants = { new ParticipantEntity { UserId = userId, JoinedAt = now } }
+            });
+            return Task.CompletedTask;
+        });
+
+        using HttpClient client = CreateAuthorizedClient(factory, "rate-case-user");
+        static StringContent Message(string body) =>
+            new(JsonSerializer.Serialize(new { body, kind = "message" }), Encoding.UTF8, "application/json");
+
+        using HttpResponseMessage first = await client.PostAsync(
+            $"/conversations/{conversationId}/messages", Message("one"));
+        using HttpResponseMessage casingVariant = await client.PostAsync(
+            $"/CONVERSATIONS/{conversationId}/MESSAGES", Message("two"));
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(first.StatusCode, Is.EqualTo(HttpStatusCode.Created));
+            Assert.That(casingVariant.StatusCode, Is.EqualTo(HttpStatusCode.TooManyRequests));
+            Assert.That(casingVariant.Headers.RetryAfter?.Delta, Is.EqualTo(TimeSpan.FromMinutes(1)));
+        });
+    }
+
     private static HttpClient CreateAuthorizedClient(ApiWebApplicationFactory factory, string providerUserId)
     {
         HttpClient client = factory.CreateClient();

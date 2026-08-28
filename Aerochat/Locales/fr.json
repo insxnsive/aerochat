@@ -40,6 +40,7 @@
   "HomeShareQuickMessage": "Partagez un message rapide",
   "HomeEnterPersonalMessage": "Entrez un message personnel ou un lien à partager",
   "HomeSearchPlaceholder": "Rechercher des contacts ou le web...",
+  "HomeNoSearchResults": "Aucun contact ne correspond à votre recherche.",
   "HomeAddContactOrGroup": "Ajouter un contact ou un groupe",
   "HomeChangeContactListLayout": "Modifier la disposition de la liste de contacts",
   "HomeShowMenu": "Afficher le menu",
