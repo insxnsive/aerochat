@@ -1,111 +1,105 @@
 # Contributing to Aerochat
 
-Thank you for helping build Aerochat, a self-hostable chat platform and WPF client that preserves the Windows Live Messenger 2009 visual language. This repository is in active development: the client is offline-first, while networking and server features land behind explicit boundaries.
+Aerochat is open to contributions, but it is still an unfinished development project. The client, server, protocols, and visual surfaces are changing together. Please do not treat the repository as a stable product or promise behavior that the code does not provide yet.
 
-This guide is the contribution contract for the `visual-shell` branch. Read `AGENTS.md` before changing code; it is the current development guide. The inherited upstream `README.md` still describes the original Discord client and is not the runtime contract for this repository.
+## Read this first
+
+Read [`AGENTS.md`](AGENTS.md) before changing anything.
+
+If you are an AI agent, or a person working alongside an AI agent, reading `AGENTS.md` is a fundamental part of working on this project. It explains the current project status, the architecture boundaries, the WLM visual design rules, the files that own networking, the things that must not be added, and the exact verification commands. Do not guess around it. Read it first and keep it in view while you work.
+
+The repository is not ready for release. That is intentional context, not a missing disclaimer. Contributions can improve unfinished parts without pretending that the current build is production-ready.
 
 ## Before you start
 
-- Use Windows with the .NET 8 SDK installed. The client is WPF and targets `net8.0-windows7.0`.
-- Build and test **x64 only**. Never select `Any CPU`; the solution explicitly maps x64 and includes native-sensitive rendering dependencies.
-- A Visual Studio installation with the .NET Desktop Development workload is recommended for WPF/XAML work. The `dotnet` CLI commands below are authoritative.
-- Keep provider secrets, API keys, signing keys, deployment configuration, databases, and session tokens out of the repository and out of logs.
-- Do not switch away from the task's working branch or rewrite history. Do not force-push or publish from this workflow.
+1. Check the open issues and existing code before starting a duplicate change.
+2. Read the relevant source files and nearby tests.
+3. Keep changes focused. Avoid drive-by cleanup and unrelated reformatting.
+4. If the change affects the visual shell, inspect the existing XAML and assets before replacing them.
+5. Never add passwords, provider secrets, access tokens, or deployment credentials.
 
-## Repository shape and design documents
+The default branch is `visual-shell`. Create a short-lived branch from it for your work:
 
-- `Aerochat/` is the WPF client and visual shell.
-- `Aerochat.VisualShell.Tests/` contains the client and presentation tests.
-- `Aerochat.Server/` is the self-hostable ASP.NET Core backend.
-- `Aerochat.Server.Tests/` exercises the real server pipeline, including loopback Kestrel/WebSocket behavior.
-- Approved design and implementation material lives under `docs/superpowers/specs/` and `docs/superpowers/plans/`. Read the relevant documents before changing an established contract.
+```bash
+git fetch origin
+git switch visual-shell
+git pull --ff-only origin visual-shell
+git switch -c fix/short-description
+```
 
-The WLM 2009 visual mandate is intentional. Do not modernize the layout, flatten the titlebars, remove the scene system, replace the art direction, or substitute generic controls when the existing visual control can be retained.
+Use branch names such as:
+
+- `feat/short-description`
+- `fix/short-description`
+- `refactor/short-description`
+- `docs/short-description`
+- `test/short-description`
+- `ci/short-description`
+
+## Project boundaries
+
+The visual direction matters here. Keep the Windows Live Messenger 2009 layout, titlebars, scenes, image assets, and nine-slice controls when working on the client. Do not replace them with generic modern controls just to make an implementation easier.
+
+The code is split into deliberate boundaries:
+
+- `Aerochat/Presentation/` contains UI-facing state and local presentation models.
+- `Aerochat/Controls/` contains visual infrastructure and must remain free of networking, persistence, process launch, and native integration.
+- `Aerochat/Connectivity/` owns client networking, authentication, realtime transport, and RTC code.
+- `Aerochat.Server/` owns backend behavior.
+
+Live client behavior must pass through `Aerochat.Connectivity`. The app must still launch in offline DemoData mode when no server is configured. Do not add telemetry, update checkers, analytics, crash uploaders, or unrelated background behavior.
 
 ## Build and test
 
-Run these commands from `C:/Users/insxn/Documents/chataero.v2`. Use x64 for every restore/build/test workflow.
+Use x64 for every build and test command. Any CPU is not supported.
+
+From the repository root:
 
 ```bash
-# Restore if needed
 dotnet restore Aerochat.sln
-
-# Full solution test suite
 dotnet test Aerochat.sln -c Debug -p:Platform=x64 --no-restore
-
-# Full solution build
 dotnet build Aerochat.sln -c Debug -p:Platform=x64 --no-restore
+git diff --check
+```
 
-# Server smoke (after Phase 0 lands)
-dotnet run --project Aerochat.Server             # starts API on http://localhost:5080
-curl -s http://localhost:5080/health             # expect {"status":"ok"}
+For a focused test run, use a project or test filter while keeping the x64 platform setting:
 
-# Focused visual-shell project tests
-dotnet test Aerochat.VisualShell.Tests/Aerochat.VisualShell.Tests.csproj \
-  -c Debug -p:Platform=x64 --no-restore
-
-# Focused test examples
+```bash
 dotnet test Aerochat.VisualShell.Tests/Aerochat.VisualShell.Tests.csproj \
   -c Debug -p:Platform=x64 --no-restore \
   --filter 'FullyQualifiedName~HomeShellTests'
-
-dotnet test Aerochat.VisualShell.Tests/Aerochat.VisualShell.Tests.csproj \
-  -c Debug -p:Platform=x64 --no-restore \
-  --filter 'FullyQualifiedName~ChatShellTests'
-
-# Formatting and branch state
-git diff --check
-git status --short --branch
 ```
 
-The checked baseline is a full x64 suite with 125 passing tests, 0 failures, 0 skips, and a solution build with 0 warnings and 0 errors. A change is not complete because it compiles: visual changes also need a real executable smoke check.
+Code changes should have tests where practical. A visual change is not verified by compilation alone. Launch the real executable and exercise the affected path when the change touches a visible surface or startup behavior.
 
-### Server smoke notes
+## Commits and pull requests
 
-`dotnet run --project Aerochat.Server` is a foreground process. Leave it running in one terminal and run the `curl` command from another terminal. The health response should be `{"status":"ok"}`. Use a separate development/test SQLite database rather than a production database or a personal deployment file.
+Use concise Conventional Commit messages:
 
-## Test-driven development
+```text
+feat: add conversation history loading
+fix: keep the draft when switching chats
+test: cover gateway cursor replay
+docs: explain local server setup
+```
 
-Every behavior change should follow RED-GREEN:
+A pull request should explain:
 
-1. Add or update the smallest focused test that describes the behavior.
-2. Run it and observe the expected **RED** failure for the right reason.
-3. Implement the smallest change that makes the test **GREEN**.
-4. Refactor only after the behavior is covered and green.
-5. Run the affected focused tests, then the full x64 solution suite and build.
+- what changed and why;
+- which tests or checks were run;
+- any known unfinished behavior;
+- any visual or interaction changes, including the states you exercised.
 
-Tests are part of the contract, not obstacles to work around. **Never weaken, delete, bypass, or broaden a boundary/resource test merely to make a change pass.** If a test exposes a real contract conflict, document the conflict and change the contract deliberately with the relevant design documentation and review.
+Keep pull requests reviewable. If a change needs a larger design decision, open an issue or discussion before burying the decision in a large patch.
 
-For visual work, inspect the actual executable after the focused tests pass. Verify the retained WLM titlebar, scenes, controls, resource paths, and interaction states that the change touches. Compilation alone is not evidence of visual/runtime success.
+## Working with AI agents
 
-## Layering contract
+AI-assisted contributions are welcome. They still need normal engineering review.
 
-The current layering contract supersedes the former blanket no-networking boundary:
+An AI agent must read `AGENTS.md` before editing. A person directing or reviewing an agent must read it too. The agent does not get to bypass the repository boundaries, skip required verification, invent APIs, or claim a test passed without running it. The human contributor remains responsible for the submitted change.
 
-1. **Presentation and Controls are pure.** `Aerochat.Presentation` and `Aerochat/Controls` contain no I/O, sockets, process launch, persistence, or P/Invoke. Boundary tests scan these trees for forbidden tokens. Inert controls stay visibly inert unless wired through `Aerochat.Connectivity`.
-2. **Connectivity owns all client networking.** `Aerochat.Connectivity` owns transports, OAuth token handling/cache, realtime protocol, and the RTC engine. Socket, HTTP, and data-protection types belong there. Windows and presentation code reach it through injected interfaces from the composition root.
-3. **The server is separate.** `Aerochat.Server` is the self-hostable ASP.NET Core backend. Secrets and deployment configuration never enter git.
-4. **Offline-first remains the default.** With no server configured, `DemoData` remains the default and the app behaves like the visual shell. No hidden network behavior should be added.
-5. **Forbidden behavior remains forbidden globally.** Do not add telemetry, analytics, update checkers, crash uploaders, or other unrequested behavior outside the approved connectivity/server layers.
+If an AI agent helped with a pull request, briefly state what it changed and what you personally verified. That makes review easier, especially while the project is still being rebuilt.
 
-When adding a feature, decide first which layer owns it. Do not resurrect legacy service/model dependencies in new presentation code, and do not create a temporary fake backend abstraction in the client.
+## License
 
-## Pull requests
-
-A good pull request is small, reviewable, and proven:
-
-- Keep the diff focused on one behavior or coherent design change. Avoid unrelated cleanup and formatting churn.
-- Include focused tests with behavior changes. State the expected RED and the verified GREEN/full-suite results in the PR description.
-- Run the exact x64 commands above; include any failure or environment limitation honestly.
-- For visual changes, describe the affected WLM surface and include a screenshot or short manual verification note when useful. Respect the existing WLM visual system instead of introducing a modern replacement.
-- Preserve resource paths, notices, and existing assets. Do not delete or replace an inherited WLM asset just to make a binding easier.
-- Never commit API keys, OAuth client secrets, session signing keys, passwords, database files, or personal data.
-- If a change affects a documented boundary, authentication flow, data contract, or release obligation, update the relevant documentation and point reviewers to the design/spec file.
-- Finish with `git diff --check` and report the branch state. Do not commit or push on behalf of another workflow unless explicitly requested.
-
-## Good first issues
-
-- **Emoji shortcode table additions:** add a small, intentional alias to the emoji shortcode mapping, include a focused parser/resource test, and preserve the existing packaged visual asset conventions. Do not replace or remove WLM assets.
-- **Documentation improvements:** clarify setup, OAuth configuration, server deployment, database backup, or the visual-shell test workflow without changing runtime behavior. Documentation-only fixes are welcome when they keep the current contracts accurate.
-
-If you are unsure where a change belongs, start with `AGENTS.md`, the relevant file under `docs/superpowers/specs/`, and the existing focused tests. A narrowly scoped question in the issue or pull request is better than guessing at a boundary.
+Aerochat is licensed under the Mozilla Public License 2.0. Contributions are accepted under the terms of that license. Keep the existing license and attribution notices intact.
