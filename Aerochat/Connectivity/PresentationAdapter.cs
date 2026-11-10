@@ -56,7 +56,13 @@ public sealed class PresentationAdapter : IDisposable
     public void ApplyCallSignal(CallSignalEventArgs call)
     {
         ArgumentNullException.ThrowIfNull(call);
-        _state.ApplyCallSignal(call.EventType, call.ConversationId, call.Sdp, call.Candidate, call.Reason);
+        _state.ApplyRemoteCallSignal(
+            call.EventType,
+            call.ConversationId,
+            call.CallId,
+            call.Sdp,
+            call.Candidate,
+            call.Reason);
     }
 
     public void Dispose()

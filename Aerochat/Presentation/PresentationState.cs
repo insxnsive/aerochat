@@ -322,6 +322,17 @@ public sealed class PresentationState : ObservableObject
         GetOrCreateCallSession(conversationId).Apply(eventType, sdp, candidate, reason);
     }
 
+    public bool ApplyRemoteCallSignal(
+        string eventType,
+        string conversationId,
+        string? callId,
+        string? sdp,
+        string? candidate,
+        string? reason)
+    {
+        return GetOrCreateCallSession(conversationId).ApplyRemote(eventType, callId, sdp, candidate, reason);
+    }
+
     public CallSessionPresentation BeginOutgoingCall(string conversationId)
     {
         CallSessionPresentation session = GetOrCreateCallSession(conversationId);
