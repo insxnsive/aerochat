@@ -158,6 +158,7 @@ public static class GatewayJson
                 ValidateValue(call.Sdp, visited);
                 ValidateValue(call.Candidate, visited);
                 ValidateValue(call.Reason, visited);
+                ValidateValue(call.CallId, visited);
                 return;
             case GatewayReadyData ready:
                 ValidateValue(ready.UserId, visited);
@@ -223,7 +224,8 @@ public sealed record CallSignalData(
     Guid ConversationId,
     string? Sdp,
     string? Candidate,
-    string? Reason);
+    string? Reason,
+    Guid? CallId = null);
 
 public sealed record GatewayReadyData(
     Guid UserId,

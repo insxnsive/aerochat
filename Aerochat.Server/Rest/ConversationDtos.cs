@@ -27,7 +27,7 @@ public sealed record MessagePageDto(
 
 public sealed record SendMessageRequest(string? Body, string? Kind, string? RefPayloadJson = null);
 
-public sealed record CallSignalRequest(string? Sdp, string? Candidate, string? Reason);
+public sealed record CallSignalRequest(string? Sdp, string? Candidate, string? Reason, Guid? CallId = null);
 
 public sealed record ErrorDto(string Error);
 
