@@ -63,7 +63,10 @@ public static class GatewayProtocol
             conversationId!,
             TryGetString(frame.Data, "sdp", out string? sdp) ? sdp : null,
             TryGetString(frame.Data, "candidate", out string? candidate) ? candidate : null,
-            TryGetString(frame.Data, "reason", out string? reason) ? reason : null);
+            TryGetString(frame.Data, "reason", out string? reason) ? reason : null,
+            TryGetString(frame.Data, "callId", out string? callId) && Guid.TryParse(callId, out Guid parsedCallId)
+                ? parsedCallId.ToString("D")
+                : null);
         return true;
     }
 

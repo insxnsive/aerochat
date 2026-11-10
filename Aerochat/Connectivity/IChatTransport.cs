@@ -66,13 +66,15 @@ public sealed class CallSignalEventArgs : EventArgs
         string conversationId,
         string? sdp = null,
         string? candidate = null,
-        string? reason = null)
+        string? reason = null,
+        string? callId = null)
     {
         EventType = eventType;
         ConversationId = conversationId;
         Sdp = sdp;
         Candidate = candidate;
         Reason = reason;
+        CallId = callId;
     }
 
     public string EventType { get; }
@@ -80,4 +82,5 @@ public sealed class CallSignalEventArgs : EventArgs
     public string? Sdp { get; }
     public string? Candidate { get; }
     public string? Reason { get; }
+    public string? CallId { get; }
 }
