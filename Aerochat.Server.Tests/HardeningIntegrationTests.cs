@@ -103,6 +103,67 @@ public sealed class HardeningIntegrationTests
         });
     }
 
+    [Test]
+    public async Task History_rate_limit_returns_retry_after_and_resets()
+    {
+        var clock = new MutableTimeProvider(DateTimeOffset.UtcNow.AddMinutes(1));
+        using var factory = new ApiWebApplicationFactory
+        {
+            Clock = clock,
+            RateLimit = 1,
+            RateLimitWindowSeconds = 60
+        };
+        Guid userId = Guid.NewGuid();
+        Guid conversationId = Guid.NewGuid();
+        DateTimeOffset now = clock.GetUtcNow();
+        await factory.SeedAsync(db =>
+        {
+            db.Users.Add(new ExternalUserEntity
+            {
+                Id = userId, Provider = "github", ProviderUserId = "history-rate-user",
+                DisplayName = "History Rate User", CreatedAt = now, UpdatedAt = now
+            });
+            db.Conversations.Add(new ConversationEntity
+            {
+                Id = conversationId, Kind = "dm", CreatedAt = now,
+                Participants = { new ParticipantEntity { UserId = userId, JoinedAt = now } }
+            });
+            db.Messages.Add(new MessageEntity
+            {
+                Id = Guid.NewGuid(), ConversationId = conversationId, AuthorId = userId,
+                Body = "history-message", Kind = "message", CreatedAt = now
+            });
+            return Task.CompletedTask;
+        });
+
+        using HttpClient client = CreateAuthorizedClient(factory, "history-rate-user");
+        factory.MessageQueryLimits.Clear();
+
+        using HttpResponseMessage first = await client.GetAsync(
+            $"/conversations/{conversationId}/messages?limit=10");
+        int queriesAfterFirst = factory.MessageQueryLimits.Count;
+        using HttpResponseMessage limited = await client.GetAsync(
+            $"/conversations/{conversationId.ToString().ToUpperInvariant()}/MESSAGES?limit=10");
+        int queriesAfterLimited = factory.MessageQueryLimits.Count;
+
+        clock.Advance(TimeSpan.FromMinutes(1));
+        factory.MessageQueryLimits.Clear();
+        using HttpResponseMessage reset = await client.GetAsync(
+            $"/conversations/{conversationId}/messages?limit=10");
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(first.StatusCode, Is.EqualTo(HttpStatusCode.OK));
+            Assert.That(queriesAfterFirst, Is.GreaterThan(0));
+            Assert.That(limited.StatusCode, Is.EqualTo(HttpStatusCode.TooManyRequests));
+            Assert.That(queriesAfterLimited, Is.EqualTo(queriesAfterFirst));
+            Assert.That(limited.Headers.RetryAfter?.Delta, Is.EqualTo(TimeSpan.FromMinutes(1)));
+            Assert.That(reset.StatusCode, Is.EqualTo(HttpStatusCode.OK));
+            Assert.That(factory.MessageQueryLimits, Is.Not.Empty);
+        });
+        Assert.That(await limited.Content.ReadAsStringAsync(), Is.EqualTo("{\"error\":\"rate_limited\"}"));
+    }
+
     private static HttpClient CreateAuthorizedClient(ApiWebApplicationFactory factory, string providerUserId)
     {
         HttpClient client = factory.CreateClient();

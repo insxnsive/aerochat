@@ -54,6 +54,8 @@ public static class ConversationEndpoints
 
         return Results.Ok(conversations);
     }
+    private const int MaxHistoryPageSize = 100;
+
     private static async Task<IResult> GetMessagesAsync(
         string conversationId,
         HttpContext httpContext,
@@ -120,8 +122,7 @@ public static class ConversationEndpoints
                 || (message.CreatedAt == cursor.CreatedAt && message.Id.CompareTo(cursor.Id) < 0));
         }
 
-        bool canLookAhead = pageSize < int.MaxValue;
-        int takeCount = canLookAhead ? pageSize + 1 : pageSize;
+        int takeCount = pageSize + 1;
         List<MessageDto> rows = await query
             .OrderByDescending(message => message.CreatedAt)
             .ThenByDescending(message => message.Id)
@@ -138,7 +139,7 @@ public static class ConversationEndpoints
                 message.DeletedAt))
             .ToListAsync(cancellationToken);
 
-        bool hasMore = canLookAhead && rows.Count > pageSize;
+        bool hasMore = rows.Count > pageSize;
         if (hasMore)
         {
             rows.RemoveAt(rows.Count - 1);
@@ -173,6 +174,6 @@ public static class ConversationEndpoints
                 System.Globalization.NumberStyles.None,
                 System.Globalization.CultureInfo.InvariantCulture,
                 out limit)
-            && limit > 0;
+            && limit is > 0 and <= MaxHistoryPageSize;
     }
 }
