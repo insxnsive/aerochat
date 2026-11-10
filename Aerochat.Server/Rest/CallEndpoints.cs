@@ -18,6 +18,8 @@ public static class CallEndpoints
         endpoints.MapPost("/conversations/{conversationId}/call/offer", OfferAsync);
         endpoints.MapPost("/conversations/{conversationId}/call/answer", AnswerAsync);
         endpoints.MapPost("/conversations/{conversationId}/call/ice", IceAsync);
+        endpoints.MapPost("/conversations/{conversationId}/call/screen/start", ScreenStartAsync);
+        endpoints.MapPost("/conversations/{conversationId}/call/screen/stop", ScreenStopAsync);
         endpoints.MapPost("/conversations/{conversationId}/call/hangup", HangupAsync);
     }
 
@@ -47,6 +49,22 @@ public static class CallEndpoints
         ChatDb db, IExternalUserStore externalUsers, SessionService sessions,
         CallRegistry registry, GatewayHub gateway, CancellationToken cancellationToken) =>
         ApplyAsync(CallAction.Ice, GatewayEventType.CallIce, conversationId, httpContext, request,
+            db, externalUsers, sessions, registry, gateway, cancellationToken);
+
+    private static Task<IResult> ScreenStartAsync(
+        string conversationId, HttpContext httpContext, CallSignalRequest? request,
+        ChatDb db, IExternalUserStore externalUsers, SessionService sessions,
+        CallRegistry registry, GatewayHub gateway, CancellationToken cancellationToken) =>
+        ApplyAsync(CallAction.ScreenStart, GatewayEventType.CallScreenStarted,
+            conversationId, httpContext, request,
+            db, externalUsers, sessions, registry, gateway, cancellationToken);
+
+    private static Task<IResult> ScreenStopAsync(
+        string conversationId, HttpContext httpContext, CallSignalRequest? request,
+        ChatDb db, IExternalUserStore externalUsers, SessionService sessions,
+        CallRegistry registry, GatewayHub gateway, CancellationToken cancellationToken) =>
+        ApplyAsync(CallAction.ScreenStop, GatewayEventType.CallScreenStopped,
+            conversationId, httpContext, request,
             db, externalUsers, sessions, registry, gateway, cancellationToken);
 
     private static Task<IResult> HangupAsync(

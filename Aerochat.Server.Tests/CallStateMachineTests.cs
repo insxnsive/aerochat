@@ -61,4 +61,23 @@ public sealed class CallStateMachineTests
         Assert.That(registry.TryStart(conversationId, out CallSession? replacement), Is.True);
         Assert.That(replacement, Is.Not.Null);
     }
+
+    [Test]
+    public void Screen_share_start_stop_requires_a_connected_call_and_rejects_duplicates()
+    {
+        var disconnected = new CallStateMachine(CallState.Offering);
+        var connected = new CallStateMachine(CallState.Connected);
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(disconnected.TryApply(CallAction.ScreenStart), Is.False);
+            Assert.That(connected.TryApply(CallAction.ScreenStart), Is.True);
+            Assert.That(connected.IsScreenSharing, Is.True);
+            Assert.That(connected.TryApply(CallAction.ScreenStart), Is.False);
+            Assert.That(connected.TryApply(CallAction.ScreenStop), Is.True);
+            Assert.That(connected.IsScreenSharing, Is.False);
+            Assert.That(connected.TryApply(CallAction.ScreenStop), Is.False);
+            Assert.That(connected.State, Is.EqualTo(CallState.Connected));
+        });
+    }
 }

@@ -16,6 +16,8 @@ public enum CallAction
     Offer,
     Answer,
     Ice,
+    ScreenStart,
+    ScreenStop,
     Hangup
 }
 
@@ -27,11 +29,27 @@ public sealed class CallStateMachine
     public CallStateMachine(CallState initialState = CallState.Idle) => State = initialState;
 
     public CallState State { get; private set; }
+    public bool IsScreenSharing { get; private set; }
 
     public bool TryApply(CallAction action)
     {
         lock (_gate)
         {
+            if (action == CallAction.ScreenStart)
+            {
+                if (State != CallState.Connected || IsScreenSharing)
+                    return false;
+                IsScreenSharing = true;
+                return true;
+            }
+            if (action == CallAction.ScreenStop)
+            {
+                if (State != CallState.Connected || !IsScreenSharing)
+                    return false;
+                IsScreenSharing = false;
+                return true;
+            }
+
             CallState? next = (State, action) switch
             {
                 (CallState.Idle, CallAction.Ring) => CallState.Ringing,
@@ -49,6 +67,8 @@ public sealed class CallStateMachine
             }
 
             State = next.Value;
+            if (State == CallState.Ended)
+                IsScreenSharing = false;
             return true;
         }
     }

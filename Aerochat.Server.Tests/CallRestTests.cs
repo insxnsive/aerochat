@@ -109,6 +109,53 @@ public sealed class CallRestTests
     }
 
     [Test]
+    public async Task Connected_screen_share_start_stop_publish_to_other_participants_only()
+    {
+        using var factory = new ApiWebApplicationFactory();
+        Guid conversationId = Guid.NewGuid();
+        (Guid senderId, Guid receiverId) = await SeedTwoMemberConversationAsync(
+            factory, conversationId, "screen-sender", "screen-receiver");
+        var senderSink = new RecordingSink("screen-sender-sink", senderId);
+        var receiverSink = new RecordingSink("screen-receiver-sink", receiverId);
+        GatewayHub gateway = factory.Services.GetRequiredService<GatewayHub>();
+        gateway.Register(senderSink);
+        gateway.Register(receiverSink);
+        using HttpClient client = AuthorizedClient(factory, "screen-sender");
+        foreach ((string path, object body) in new (string, object)[]
+                 {
+                     ("ring", new { reason = "start" }),
+                     ("offer", new { sdp = "offer-sdp" }),
+                     ("answer", new { sdp = "answer-sdp" })
+                 })
+        {
+            using HttpResponseMessage response = await client.PostAsJsonAsync(
+                $"/conversations/{conversationId}/call/{path}", body);
+            Assert.That(response.StatusCode, Is.EqualTo(HttpStatusCode.OK), path);
+        }
+        receiverSink.Events.Clear();
+
+        using HttpResponseMessage start = await client.PostAsJsonAsync(
+            $"/conversations/{conversationId}/call/screen/start", new { reason = "screen" });
+        using HttpResponseMessage stop = await client.PostAsJsonAsync(
+            $"/conversations/{conversationId}/call/screen/stop", new { reason = "screen" });
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(start.StatusCode, Is.EqualTo(HttpStatusCode.OK));
+            Assert.That(stop.StatusCode, Is.EqualTo(HttpStatusCode.OK));
+            Assert.That(receiverSink.Events.Select(envelope => envelope.Type),
+                Is.EqualTo(new[]
+                {
+                    GatewayEventType.CallScreenStarted,
+                    GatewayEventType.CallScreenStopped
+                }));
+            Assert.That(senderSink.Events.Any(envelope =>
+                envelope.Type is GatewayEventType.CallScreenStarted or GatewayEventType.CallScreenStopped),
+                Is.False);
+        });
+    }
+
+    [Test]
     public async Task Oversized_payload_returns_400_without_publishing()
     {
         using var factory = new ApiWebApplicationFactory();
