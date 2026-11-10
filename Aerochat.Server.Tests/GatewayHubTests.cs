@@ -695,23 +695,30 @@ public sealed class GatewayHubTests
         for (int index = 0; index < 16; index++)
         {
             int captured = index;
-            tasks.Add(Task.Run(() =>
+            // Dedicated threads: 16 workers blocked on one barrier must not depend on thread-pool injection.
+            tasks.Add(Task.Factory.StartNew(() =>
             {
-                barrier.SignalAndWait();
+                if (!barrier.SignalAndWait(TimeSpan.FromSeconds(10)))
+                    throw new TimeoutException("Not every reservation worker reached the barrier.");
                 if (hub.TryReserveConnection(userId, $"parallel-{captured}", out GatewayHub.ConnectionLease? lease))
                 {
                     leases.Add(lease!);
                 }
-            }));
+            }, CancellationToken.None, TaskCreationOptions.LongRunning, TaskScheduler.Default));
         }
 
-        Assert.That(Task.WaitAll([.. tasks], TimeSpan.FromSeconds(5)), Is.True);
-        Assert.That(leases.Count, Is.EqualTo(4));
-        Assert.That(hub.ReservedConnectionCount, Is.EqualTo(4));
-
-        foreach (GatewayHub.ConnectionLease lease in leases)
+        try
         {
-            lease.Dispose();
+            Assert.That(Task.WaitAll([.. tasks], TimeSpan.FromSeconds(20)), Is.True, "reservation workers did not finish");
+            Assert.That(leases.Count, Is.EqualTo(4));
+            Assert.That(hub.ReservedConnectionCount, Is.EqualTo(4));
+        }
+        finally
+        {
+            foreach (GatewayHub.ConnectionLease lease in leases)
+            {
+                lease.Dispose();
+            }
         }
 
         Assert.That(hub.ReservedConnectionCount, Is.Zero);
