@@ -290,6 +290,90 @@ public sealed class GatewayWebSocketIntegrationTests
         });
     }
 
+    [Test]
+    public async Task Gateway_token_expiry_stops_idle_delivery_and_requires_fresh_token()
+    {
+        using LoopbackServerFixture fixture = await LoopbackServerFixture.StartAsync();
+        (Guid alice, _) = await CreateUserAsync(fixture, "expiry-alice");
+        (Guid bob, string bobToken) = await CreateUserAsync(fixture, "expiry-bob");
+        Guid conversation = await CreateDirectConversationAsync(fixture, alice, bob);
+        SessionService sessions = fixture.Services.GetRequiredService<SessionService>();
+        GatewayHub hub = fixture.Services.GetRequiredService<GatewayHub>();
+        string shortLivedToken = sessions.Issue(
+            new Identity("github", "expiry-alice", "expiry-alice"), TimeSpan.FromSeconds(5));
+        DateTimeOffset expiresAt = sessions.Validate(shortLivedToken)!.ExpiresAt;
+
+        using HttpClient poster = new();
+        poster.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", bobToken);
+
+        WebSocket? socket = null;
+        try
+        {
+            socket = await ConnectAsync(fixture.BaseUrl, shortLivedToken);
+            Assert.That(await ReceiveTextFrameAsync(socket), Does.Contain("gateway.ready"));
+            Assert.That(hub.ActiveConnectionCount, Is.EqualTo(1));
+
+            await PostMessageAsync(poster, fixture.BaseUrl, conversation);
+            Assert.That(await ReceiveTextFrameAsync(socket), Does.Contain("message.created"));
+
+            // Leave the socket idle: the token expiry alone must terminate delivery.
+            bool terminated = false;
+            var buffer = new byte[16 * 1024];
+            DateTimeOffset waitUntil = expiresAt.AddSeconds(5);
+            using (var waitWindow = new CancellationTokenSource(waitUntil - DateTimeOffset.UtcNow))
+            {
+                try
+                {
+                    WebSocketReceiveResult result = await socket.ReceiveAsync(
+                        new ArraySegment<byte>(buffer), waitWindow.Token);
+                    terminated = result.MessageType == WebSocketMessageType.Close;
+                }
+                catch (WebSocketException)
+                {
+                    terminated = true;
+                }
+                catch (OperationCanceledException)
+                {
+                    terminated = false;
+                }
+            }
+
+            Assert.That(terminated, Is.True, "idle socket survived token expiry");
+
+            DateTimeOffset zeroUntil = DateTimeOffset.UtcNow.AddSeconds(5);
+            while (hub.ActiveConnectionCount != 0 && DateTimeOffset.UtcNow < zeroUntil)
+            {
+                await Task.Delay(50);
+            }
+
+            Assert.That(hub.ActiveConnectionCount, Is.Zero);
+
+            // A new eligible event must not revive the expired subscription.
+            await PostMessageAsync(poster, fixture.BaseUrl, conversation);
+            await Task.Delay(250);
+            Assert.That(hub.ActiveConnectionCount, Is.Zero);
+
+            using HttpClient probe = new();
+            using HttpResponseMessage rejected = await probe.GetAsync(
+                $"{fixture.BaseUrl}/ws?token={Uri.EscapeDataString(shortLivedToken)}");
+            Assert.Multiple(() =>
+            {
+                Assert.That(rejected.StatusCode, Is.EqualTo(HttpStatusCode.Unauthorized));
+                Assert.That(rejected.Headers.WwwAuthenticate.ToString(), Is.EqualTo("Bearer"));
+            });
+
+            string freshToken = sessions.Issue(new Identity("github", "expiry-alice", "expiry-alice"));
+            using WebSocket reconnected = await ConnectAsync(fixture.BaseUrl, freshToken);
+            Assert.That(await ReceiveTextFrameAsync(reconnected), Does.Contain("gateway.ready"));
+            await PostMessageAsync(poster, fixture.BaseUrl, conversation);
+            Assert.That(await ReceiveTextFrameAsync(reconnected), Does.Contain("message.created"));
+        }
+        finally
+        {
+            socket?.Dispose();
+        }
+    }
+
     private static async Task<string> PostMessageAsync(HttpClient client, string baseUrl, Guid conversation)
     {
         string body = $"payload-{Guid.NewGuid():N}";
