@@ -71,7 +71,11 @@ public partial class Home : Window
             if (string.IsNullOrWhiteSpace(token))
                 return;
 
-
+            if (!_liveConnected)
+            {
+                await _transport.ConnectAsync(_server, token, cancellationToken);
+                _liveConnected = true;
+            }
 
             if (_conversationCatalog is not null)
             {
@@ -82,12 +86,6 @@ public partial class Home : Window
                         conversation.Id,
                         conversation.Kind,
                         conversation.Title)));
-            }
-
-            if (!_liveConnected)
-            {
-                await _transport.ConnectAsync(_server, token, cancellationToken);
-                _liveConnected = true;
             }
         }
         catch (Exception)
