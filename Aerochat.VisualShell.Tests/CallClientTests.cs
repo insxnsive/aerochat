@@ -240,6 +240,35 @@ public sealed class CallClientTests
     }
 
     [Test]
+    public async Task Remote_hangup_resets_candidate_queue_for_the_next_incoming_call()
+    {
+        PresentationState state = DemoData.Create();
+        string conversationId = state.Conversations[0].Id.ToString();
+        var signaling = new RecordingCallSignalingClient();
+        var engine = new RecordingRtcPeerEngine();
+        var transport = new RecordingCallTransport();
+        await using var coordinator = new CallCoordinator(
+            state, conversationId, signaling, engine, transport);
+
+        transport.Raise(new CallSignalEventArgs("call.offer", conversationId, sdp: "offer-1"));
+        await coordinator.AcceptAsync();
+        transport.Raise(new CallSignalEventArgs("call.hangup", conversationId));
+
+        transport.Raise(new CallSignalEventArgs("call.offer", conversationId, sdp: "offer-2"));
+        transport.Raise(new CallSignalEventArgs("call.ice", conversationId, candidate: "unanswered-call-ice"));
+        Assert.That(engine.AddedCandidates, Is.Empty);
+        transport.Raise(new CallSignalEventArgs("call.hangup", conversationId));
+
+        transport.Raise(new CallSignalEventArgs("call.offer", conversationId, sdp: "offer-3"));
+        transport.Raise(new CallSignalEventArgs("call.ice", conversationId, candidate: "current-call-ice"));
+        Assert.That(engine.AddedCandidates, Is.Empty);
+        await coordinator.AcceptAsync();
+
+        Assert.That(engine.AddedCandidates.Select(candidate => candidate.Candidate),
+            Is.EqualTo(new[] { "current-call-ice" }));
+    }
+
+    [Test]
     public async Task Call_coordinator_releases_media_when_hangup_signaling_fails()
     {
         PresentationState state = DemoData.Create();

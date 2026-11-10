@@ -291,6 +291,8 @@ public sealed class CallCoordinator : ICallCoordinator
 
                 case "call.hangup":
                     _hangupCompleted = true;
+                    _remoteDescriptionApplied = false;
+                    _pendingCandidates.Clear();
                     await _engine.Hangup(signal.Reason ?? "remote hangup").ConfigureAwait(false);
                     _role = CallRole.None;
                     ApplyPresentation(() => _state.ApplyCallSignal(
