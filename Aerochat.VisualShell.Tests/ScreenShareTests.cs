@@ -1,3 +1,4 @@
+using System.Net;
 using Aerochat.Connectivity.Rtc;
 using SIPSorceryMedia.Abstractions;
 
@@ -177,8 +178,108 @@ public sealed class ScreenShareTests
         });
     }
 
+    [Test]
+    public async Task Vp8_endpoint_round_trips_a_bgra_frame()
+    {
+        using var encoder = new Vp8RtcVideoEndpoint();
+        using var decoder = new Vp8RtcVideoEndpoint();
+        VideoFormat format = encoder.SourceFormats[0];
+        encoder.SetFormat(format);
+        decoder.SetFormat(format);
+        await encoder.StartAsync();
+        await decoder.StartAsync();
+        var decoded = new TaskCompletionSource<ScreenShareFrame>(TaskCreationOptions.RunContinuationsAsynchronously);
+        decoder.FrameDecoded += (_, frame) => decoded.TrySetResult(frame);
+        encoder.EncodedSample += (_, sample) =>
+            decoder.Receive(new IPEndPoint(IPAddress.Loopback, 5000), 0, sample, format);
+
+        encoder.Send(SolidFrame(640, 360));
+        ScreenShareFrame received = await decoded.Task.WaitAsync(TimeSpan.FromSeconds(5));
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(received.Width, Is.EqualTo(640));
+            Assert.That(received.Height, Is.EqualTo(360));
+            Assert.That(received.Stride, Is.EqualTo(640 * ScreenShareFrame.BytesPerPixel));
+        });
+    }
+
+    [Test]
+    public async Task Vp8_endpoint_ignores_a_new_frame_size_and_frames_after_stop()
+    {
+        using var endpoint = new Vp8RtcVideoEndpoint();
+        endpoint.SetFormat(endpoint.SourceFormats[0]);
+        await endpoint.StartAsync();
+        int encoded = 0;
+        endpoint.EncodedSample += (_, _) => Interlocked.Increment(ref encoded);
+
+        endpoint.Send(SolidFrame(320, 180));
+        endpoint.Send(SolidFrame(640, 360));
+        Assert.That(encoded, Is.EqualTo(1));
+
+        await endpoint.StopAsync();
+        Assert.DoesNotThrow(() => endpoint.Send(SolidFrame(320, 180)));
+        Assert.That(encoded, Is.EqualTo(1));
+    }
+
+    [Test]
+    [Repeat(25)]
+    public async Task Vp8_endpoint_stop_during_continuous_send_is_safe()
+    {
+        var endpoint = new Vp8RtcVideoEndpoint();
+        endpoint.SetFormat(endpoint.SourceFormats[0]);
+        await endpoint.StartAsync();
+        using var stopping = new CancellationTokenSource();
+        ScreenShareFrame frame = SolidFrame(640, 360);
+        Task sender = Task.Run(() =>
+        {
+            while (!stopping.IsCancellationRequested)
+                endpoint.Send(frame);
+        });
+
+        await Task.Delay(40);
+        await endpoint.StopAsync();
+        endpoint.Dispose();
+        stopping.Cancel();
+        await sender.WaitAsync(TimeSpan.FromSeconds(5));
+    }
+
+    [Test]
+    public async Task Rtc_peer_engine_forwards_decoded_video_and_releases_endpoint_once()
+    {
+        var video = new RecordingRtcVideoEndpoint();
+        await using var engine = new RtcPeerEngine(() => null, () => video);
+        ScreenShareFrame? received = null;
+        engine.FrameReceived += (_, frame) => received = frame;
+        await engine.InitializeAsync();
+        var frame = FrameAt(TimeSpan.Zero);
+
+        video.RaiseDecoded(frame);
+        await engine.DisposeAsync();
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(received, Is.SameAs(frame));
+            Assert.That(video.DecodedSubscriberCount, Is.Zero);
+            Assert.That(video.StopCount, Is.EqualTo(1));
+            Assert.That(video.DisposeCount, Is.EqualTo(1));
+        });
+    }
     private static ScreenShareFrame FrameAt(TimeSpan capturedAt) => new(1, 1, 4, [0, 0, 0, 0xFF], capturedAt);
 
+    private static ScreenShareFrame SolidFrame(int width, int height)
+    {
+        byte[] pixels = new byte[width * height * ScreenShareFrame.BytesPerPixel];
+        for (int index = 0; index < pixels.Length; index += ScreenShareFrame.BytesPerPixel)
+        {
+            pixels[index] = 0x20;
+            pixels[index + 1] = 0x60;
+            pixels[index + 2] = 0xA0;
+            pixels[index + 3] = 0xFF;
+        }
+
+        return new ScreenShareFrame(width, height, width * ScreenShareFrame.BytesPerPixel, pixels);
+    }
     private sealed class RecordingScreenCaptureSource : IScreenCaptureSource
     {
         private EventHandler<ScreenShareFrame>? _frameReceived;
@@ -248,5 +349,31 @@ public sealed class ScreenShareTests
                 Assert.That(await _finished.WaitAsync(TimeSpan.FromSeconds(2)), Is.True);
         }
         public void FinishOneSend(int count = 1) => _proceed.Release(count);
+    }
+
+    private sealed class RecordingRtcVideoEndpoint : IRtcVideoEndpoint
+    {
+        private EventHandler<ScreenShareFrame>? _frameDecoded;
+
+        public IReadOnlyList<VideoFormat> SourceFormats { get; } =
+            [new VideoFormat(VideoCodecsEnum.VP8, 96, 90000, string.Empty)];
+        public int DecodedSubscriberCount { get; private set; }
+        public int StopCount { get; private set; }
+        public int DisposeCount { get; private set; }
+
+        public event Action<uint, byte[]>? EncodedSample;
+        public event EventHandler<ScreenShareFrame>? FrameDecoded
+        {
+            add { _frameDecoded += value; DecodedSubscriberCount++; }
+            remove { _frameDecoded -= value; DecodedSubscriberCount--; }
+        }
+
+        public void SetFormat(VideoFormat format) { }
+        public void Receive(IPEndPoint remoteEndPoint, uint timestamp, byte[] sample, VideoFormat format) { }
+        public void Send(ScreenShareFrame frame) => EncodedSample?.Invoke(6000, frame.Pixels.ToArray());
+        public Task StartAsync() => Task.CompletedTask;
+        public Task StopAsync() { StopCount++; return Task.CompletedTask; }
+        public void Dispose() => DisposeCount++;
+        public void RaiseDecoded(ScreenShareFrame frame) => _frameDecoded?.Invoke(this, frame);
     }
 }
