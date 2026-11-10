@@ -269,6 +269,61 @@ public sealed class CallClientTests
     }
 
     [Test]
+    public async Task Pending_candidates_are_bounded_and_reset_for_a_replacement_attempt()
+    {
+        PresentationState state = DemoData.Create();
+        string conversationId = state.Conversations[0].Id.ToString();
+        var signaling = new RecordingCallSignalingClient();
+        var engine = new RecordingRtcPeerEngine();
+        var transport = new RecordingCallTransport();
+        await using var coordinator = new CallCoordinator(
+            state, conversationId, signaling, engine, transport);
+        void Signal(string type, string? sdp = null, string? candidate = null) =>
+            transport.Raise(new CallSignalEventArgs(type, conversationId, sdp: sdp, candidate: candidate));
+        string[] Applied() => engine.AddedCandidates.Select(item => item.Candidate).ToArray();
+
+        // Count bound
+        Signal("call.ring");
+        Signal("call.offer", sdp: "offer-1");
+        for (int index = 0; index < 70; index++)
+            Signal("call.ice", candidate: $"ice-{index}");
+        await coordinator.AcceptAsync();
+        Assert.That(Applied(), Is.EqualTo(Enumerable.Range(0, 64).Select(index => $"ice-{index}")));
+        Signal("call.hangup");
+        engine.AddedCandidates.Clear();
+
+        // Byte bound
+        string large = new('x', 20_000);
+        Signal("call.ring");
+        Signal("call.offer", sdp: "offer-2");
+        Signal("call.ice", candidate: large);
+        Signal("call.ice", candidate: new string('y', 20_000));
+        Signal("call.ice", candidate: "small-ice");
+        await coordinator.AcceptAsync();
+        Assert.That(Applied(), Is.EqualTo(new[] { large, "small-ice" }));
+        Signal("call.hangup");
+        engine.AddedCandidates.Clear();
+
+        // Replacement attempt with no hangup
+        Signal("call.ring");
+        Signal("call.offer", sdp: "offer-3");
+        Signal("call.ice", candidate: "stale-ice");
+        Signal("call.ring");
+        Signal("call.offer", sdp: "offer-4");
+        Signal("call.ice", candidate: "current-ice");
+        await coordinator.AcceptAsync();
+        Assert.That(Applied(), Is.EqualTo(new[] { "current-ice" }));
+        Signal("call.hangup");
+        engine.AddedCandidates.Clear();
+
+        // Outgoing call does not inherit queued candidates
+        Signal("call.ice", candidate: "idle-ice");
+        await coordinator.StartAsync();
+        Signal("call.answer", sdp: "answer-sdp");
+        Assert.That(Applied(), Is.Empty);
+    }
+
+    [Test]
     public async Task Call_coordinator_releases_media_when_hangup_signaling_fails()
     {
         PresentationState state = DemoData.Create();
