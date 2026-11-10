@@ -103,8 +103,7 @@ public partial class Home : Window
         Dispatcher.Invoke(() =>
         {
             if (StableIdMapper.TryMap(update.UserId, out ulong userId)
-                && Enum.TryParse(update.Status, true, out PresenceStatus status)
-                && Enum.IsDefined(status))
+                && PresentationAdapter.TryParsePresenceStatus(update.Status, out PresenceStatus status))
                 State.ApplyRemotePresence(userId, status);
         });
     }

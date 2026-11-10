@@ -36,12 +36,16 @@ public sealed class PresentationAdapter : IDisposable
             message.Kind, message.RefPayloadJson, message.ConversationId);
     }
 
+    public static bool TryParsePresenceStatus(string? value, out PresenceStatus status) =>
+        Enum.TryParse(value, ignoreCase: true, out status)
+        && Enum.IsDefined(status)
+        && string.Equals(status.ToString(), value, StringComparison.OrdinalIgnoreCase);
+
     public void ApplyPresenceUpdated(PresenceUpdatedEventArgs update)
     {
         ArgumentNullException.ThrowIfNull(update);
         if (!StableIdMapper.TryMap(update.UserId, out ulong userId)
-            || !Enum.TryParse(update.Status, ignoreCase: true, out PresenceStatus status)
-            || !Enum.IsDefined(status))
+            || !TryParsePresenceStatus(update.Status, out PresenceStatus status))
         {
             return;
         }

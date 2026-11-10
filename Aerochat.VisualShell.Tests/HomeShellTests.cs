@@ -32,6 +32,30 @@ public sealed class HomeShellTests
         });
     }
 
+    [TestCase("2")]
+    [TestCase("Online,Away")]
+    public void Home_live_transport_ignores_numeric_or_combined_presence_status(string status)
+    {
+        WpfTestHost.Run(() =>
+        {
+            PresentationState state = DemoData.Create();
+            var transport = new FakeTransport();
+            var home = new Home(state, new WindowNavigator(state), transport,
+                new Uri("http://localhost:5080/"), "test-token");
+            home.ConnectLiveAsync().GetAwaiter().GetResult();
+            PresenceStatus Current() => state.ContactGroups.SelectMany(group => group.Items)
+                .Single(item => item.Person.Id == 1001).Person.Presence.Status;
+
+            transport.RaisePresence("1001", "Online");
+            transport.RaisePresence("1001", status);
+            Assert.That(Current(), Is.EqualTo(PresenceStatus.Online));
+
+            transport.RaisePresence("1001", "busy");
+            Assert.That(Current(), Is.EqualTo(PresenceStatus.Busy));
+            home.Close();
+        });
+    }
+
     [Test]
     public void Home_connects_the_gateway_before_hydrating_server_conversations()
     {
