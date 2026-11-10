@@ -5,6 +5,7 @@ using System.Text;
 using System.Text.Json;
 using Aerochat.Server.Auth;
 using Aerochat.Server.Auth.OAuth;
+using Aerochat.Server.Calls;
 using Aerochat.Server.Data;
 using Aerochat.Server.Data.Entities;
 using Aerochat.Server.Gateway;
@@ -1051,6 +1052,338 @@ public sealed class CallRestTests
         Assert.That(calleeSink.Events, Has.Count.EqualTo(calleeEvents + 1));
     }
 
+    [Test]
+    public async Task Connected_call_is_reclaimed_after_last_connection_grace()
+    {
+        var clock = new ManualTimeProvider(new DateTimeOffset(2100, 1, 1, 12, 0, 0, TimeSpan.Zero));
+        using var factory = new ApiWebApplicationFactory { Clock = clock };
+        Guid conversationId = Guid.NewGuid();
+        var (callerId, calleeId) = await SeedTwoMemberConversationAsync(
+            factory, conversationId, "cleanup-caller", "cleanup-callee");
+        GatewayHub hub = factory.Services.GetRequiredService<GatewayHub>();
+        var a = new RecordingSink("cleanup-a", callerId);
+        var b = new RecordingSink("cleanup-b", calleeId);
+        hub.Register(a);
+        hub.Register(b);
+        using HttpClient caller = AuthorizedClient(factory, "cleanup-caller");
+        using HttpClient callee = AuthorizedClient(factory, "cleanup-callee");
+        string root = $"/conversations/{conversationId}/call";
+        using var ring = await caller.PostAsJsonAsync(root + "/ring", new { });
+        Assert.That(ring.StatusCode, Is.EqualTo(HttpStatusCode.OK));
+        Guid generation = CallIdFromResponse(await ring.Content.ReadAsStringAsync());
+        using var offer = await caller.PostAsJsonAsync(root + "/offer", new { sdp = "offer", callId = generation });
+        using var answer = await callee.PostAsJsonAsync(root + "/answer", new { sdp = "answer", callId = generation });
+        Assert.That(offer.StatusCode, Is.EqualTo(HttpStatusCode.OK));
+        Assert.That(answer.StatusCode, Is.EqualTo(HttpStatusCode.OK));
+        var cleanup = factory.Services.GetRequiredService<ConnectedCallCleanupService>();
+        int before = b.Events.Count;
+        Assert.That(hub.Remove(a.ConnectionId, a), Is.True);
+        clock.Advance(TimeSpan.FromSeconds(29));
+        cleanup.Sweep();
+        using var tooSoon = await callee.PostAsJsonAsync(root + "/ring", new { });
+        Assert.That(tooSoon.StatusCode, Is.EqualTo(HttpStatusCode.Conflict));
+        Assert.That(b.Events.Count, Is.EqualTo(before));
+        clock.Advance(TimeSpan.FromSeconds(1));
+        cleanup.Sweep();
+        using var replacement = await callee.PostAsJsonAsync(root + "/ring", new { });
+        Assert.That(replacement.StatusCode, Is.EqualTo(HttpStatusCode.OK));
+        Assert.That(CallIdFromResponse(await replacement.Content.ReadAsStringAsync()), Is.Not.EqualTo(generation));
+        Assert.That(b.Events.Count, Is.EqualTo(before + 1));
+        Assert.That(b.Events[^1].Type, Is.EqualTo(GatewayEventType.CallHangup));
+        Assert.That(CallIdFromEvent(b.Events[^1]), Is.EqualTo(generation));
+        cleanup.Sweep();
+        Assert.That(b.Events.Count, Is.EqualTo(before + 1));
+    }
+
+    [Test]
+    public async Task Reconnect_before_the_grace_expires_keeps_the_connected_call()
+    {
+        var clock = new ManualTimeProvider(new DateTimeOffset(2100, 1, 1, 12, 0, 0, TimeSpan.Zero));
+        using var factory = new ApiWebApplicationFactory { Clock = clock };
+        Guid conversationId = Guid.NewGuid();
+        var call = await EstablishConnectedCallAsync(factory, conversationId, "reconnect");
+        try
+        {
+            GatewayHub hub = factory.Services.GetRequiredService<GatewayHub>();
+            int before = call.CalleeSink.Events.Count;
+            Assert.That(hub.Remove(call.CallerSink.ConnectionId, call.CallerSink), Is.True);
+            clock.Advance(TimeSpan.FromSeconds(29));
+            hub.Register(new RecordingSink("reconnect-caller-second", call.CallerId));
+            clock.Advance(TimeSpan.FromSeconds(1));
+            call.Cleanup.Sweep();
+            Assert.That(call.CalleeSink.Events.Count, Is.EqualTo(before));
+            using var ice = await call.Caller.PostAsJsonAsync(
+                call.Root + "/ice", new { candidate = "candidate", callId = call.CallId });
+            Assert.That(ice.StatusCode, Is.EqualTo(HttpStatusCode.OK));
+        }
+        finally
+        {
+            call.Caller.Dispose();
+            call.Callee.Dispose();
+        }
+    }
+
+    [Test]
+    public async Task Second_disconnect_requires_a_full_new_grace()
+    {
+        var clock = new ManualTimeProvider(new DateTimeOffset(2100, 1, 1, 12, 0, 0, TimeSpan.Zero));
+        using var factory = new ApiWebApplicationFactory { Clock = clock };
+        Guid conversationId = Guid.NewGuid();
+        var call = await EstablishConnectedCallAsync(factory, conversationId, "re-disconnect");
+        try
+        {
+            GatewayHub hub = factory.Services.GetRequiredService<GatewayHub>();
+            int before = call.CalleeSink.Events.Count;
+            Assert.That(hub.Remove(call.CallerSink.ConnectionId, call.CallerSink), Is.True);
+            clock.Advance(TimeSpan.FromSeconds(10));
+            var second = new RecordingSink("re-disconnect-caller-second", call.CallerId);
+            hub.Register(second);
+            Assert.That(hub.Remove(second.ConnectionId, second), Is.True);
+            clock.Advance(TimeSpan.FromSeconds(29));
+            call.Cleanup.Sweep();
+            Assert.That(call.CalleeSink.Events.Count, Is.EqualTo(before));
+            clock.Advance(TimeSpan.FromSeconds(1));
+            call.Cleanup.Sweep();
+            Assert.That(call.CalleeSink.Events.Count, Is.EqualTo(before + 1));
+            Assert.That(CallIdFromEvent(call.CalleeSink.Events[^1]), Is.EqualTo(call.CallId));
+        }
+        finally
+        {
+            call.Caller.Dispose();
+            call.Callee.Dispose();
+        }
+    }
+
+    [Test]
+    public async Task Removing_one_of_two_sockets_does_not_arm_cleanup()
+    {
+        var clock = new ManualTimeProvider(new DateTimeOffset(2100, 1, 1, 12, 0, 0, TimeSpan.Zero));
+        using var factory = new ApiWebApplicationFactory { Clock = clock };
+        Guid conversationId = Guid.NewGuid();
+        var call = await EstablishConnectedCallAsync(factory, conversationId, "two-sockets");
+        try
+        {
+            GatewayHub hub = factory.Services.GetRequiredService<GatewayHub>();
+            int before = call.CalleeSink.Events.Count;
+            var second = new RecordingSink("two-sockets-caller-second", call.CallerId);
+            hub.Register(second);
+            Assert.That(hub.Remove(call.CallerSink.ConnectionId, call.CallerSink), Is.True);
+            clock.Advance(TimeSpan.FromSeconds(31));
+            call.Cleanup.Sweep();
+            Assert.That(call.CalleeSink.Events.Count, Is.EqualTo(before));
+            Assert.That(hub.Remove(second.ConnectionId, second), Is.True);
+            clock.Advance(TimeSpan.FromSeconds(31));
+            call.Cleanup.Sweep();
+            Assert.That(call.CalleeSink.Events.Count, Is.EqualTo(before + 1));
+        }
+        finally
+        {
+            call.Caller.Dispose();
+            call.Callee.Dispose();
+        }
+    }
+
+    [Test]
+    public async Task Simultaneous_absence_ends_the_call_once_per_generation()
+    {
+        var clock = new ManualTimeProvider(new DateTimeOffset(2100, 1, 1, 12, 0, 0, TimeSpan.Zero));
+        using var factory = new ApiWebApplicationFactory { Clock = clock };
+        Guid conversationId = Guid.NewGuid();
+        var call = await EstablishConnectedCallAsync(factory, conversationId, "both-absent");
+        try
+        {
+            GatewayHub hub = factory.Services.GetRequiredService<GatewayHub>();
+            int before = hub.RetainedEventCount;
+            Assert.That(hub.Remove(call.CallerSink.ConnectionId, call.CallerSink), Is.True);
+            Assert.That(hub.Remove(call.CalleeSink.ConnectionId, call.CalleeSink), Is.True);
+            clock.Advance(TimeSpan.FromSeconds(30));
+            call.Cleanup.Sweep();
+            Assert.That(hub.RetainedEventCount, Is.EqualTo(before + 1));
+            call.Cleanup.Sweep();
+            Assert.That(hub.RetainedEventCount, Is.EqualTo(before + 1));
+        }
+        finally
+        {
+            call.Caller.Dispose();
+            call.Callee.Dispose();
+        }
+    }
+
+    [Test]
+    public async Task Old_deadline_does_not_end_a_replacement_generation()
+    {
+        var clock = new ManualTimeProvider(new DateTimeOffset(2100, 1, 1, 12, 0, 0, TimeSpan.Zero));
+        using var factory = new ApiWebApplicationFactory { Clock = clock };
+        Guid conversationId = Guid.NewGuid();
+        var call = await EstablishConnectedCallAsync(factory, conversationId, "old-deadline");
+        try
+        {
+            GatewayHub hub = factory.Services.GetRequiredService<GatewayHub>();
+            Guid firstGeneration = call.CallId;
+            Assert.That(hub.Remove(call.CallerSink.ConnectionId, call.CallerSink), Is.True);
+            using var hangup = await call.Callee.PostAsJsonAsync(
+                call.Root + "/hangup", new { callId = firstGeneration });
+            Assert.That(hangup.StatusCode, Is.EqualTo(HttpStatusCode.OK));
+            clock.Advance(TimeSpan.FromSeconds(5));
+            hub.Register(new RecordingSink("old-deadline-caller-second", call.CallerId));
+            using var ring = await call.Caller.PostAsJsonAsync(call.Root + "/ring", new { });
+            Assert.That(ring.StatusCode, Is.EqualTo(HttpStatusCode.OK));
+            Guid secondGeneration = CallIdFromResponse(await ring.Content.ReadAsStringAsync());
+            using var offer = await call.Caller.PostAsJsonAsync(
+                call.Root + "/offer", new { sdp = "offer", callId = secondGeneration });
+            using var answer = await call.Callee.PostAsJsonAsync(
+                call.Root + "/answer", new { sdp = "answer", callId = secondGeneration });
+            Assert.That(offer.StatusCode, Is.EqualTo(HttpStatusCode.OK));
+            Assert.That(answer.StatusCode, Is.EqualTo(HttpStatusCode.OK));
+            Assert.That(secondGeneration, Is.Not.EqualTo(firstGeneration));
+            int before = call.CalleeSink.Events.Count;
+            clock.Advance(TimeSpan.FromSeconds(30));
+            call.Cleanup.Sweep();
+            Assert.That(call.CalleeSink.Events.Count, Is.EqualTo(before));
+            using var ice = await call.Caller.PostAsJsonAsync(
+                call.Root + "/ice", new { candidate = "candidate", callId = secondGeneration });
+            Assert.That(ice.StatusCode, Is.EqualTo(HttpStatusCode.OK));
+        }
+        finally
+        {
+            call.Caller.Dispose();
+            call.Callee.Dispose();
+        }
+    }
+
+    [Test]
+    public async Task Healthy_connected_call_has_no_lifetime_cap()
+    {
+        var clock = new ManualTimeProvider(new DateTimeOffset(2100, 1, 1, 12, 0, 0, TimeSpan.Zero));
+        using var factory = new ApiWebApplicationFactory { Clock = clock };
+        Guid conversationId = Guid.NewGuid();
+        var call = await EstablishConnectedCallAsync(factory, conversationId, "healthy");
+        try
+        {
+            int before = call.CalleeSink.Events.Count;
+            clock.Advance(TimeSpan.FromMinutes(10));
+            call.Cleanup.Sweep();
+            Assert.That(call.CalleeSink.Events.Count, Is.EqualTo(before));
+            using var ice = await call.Callee.PostAsJsonAsync(
+                call.Root + "/ice", new { candidate = "candidate", callId = call.CallId });
+            Assert.That(ice.StatusCode, Is.EqualTo(HttpStatusCode.OK));
+        }
+        finally
+        {
+            call.Caller.Dispose();
+            call.Callee.Dispose();
+        }
+    }
+
+    [Test]
+    public async Task Disconnect_during_offering_starts_cleanup_from_the_connected_state()
+    {
+        var clock = new ManualTimeProvider(new DateTimeOffset(2100, 1, 1, 12, 0, 0, TimeSpan.Zero));
+        using var factory = new ApiWebApplicationFactory { Clock = clock };
+        Guid conversationId = Guid.NewGuid();
+        var (callerId, calleeId) = await SeedTwoMemberConversationAsync(
+            factory, conversationId, "offering-caller", "offering-callee");
+        GatewayHub hub = factory.Services.GetRequiredService<GatewayHub>();
+        var callerSink = new RecordingSink("offering-a", callerId);
+        var calleeSink = new RecordingSink("offering-b", calleeId);
+        hub.Register(callerSink);
+        hub.Register(calleeSink);
+        using HttpClient caller = AuthorizedClient(factory, "offering-caller");
+        using HttpClient callee = AuthorizedClient(factory, "offering-callee");
+        string root = $"/conversations/{conversationId}/call";
+        using var ring = await caller.PostAsJsonAsync(root + "/ring", new { });
+        Guid generation = CallIdFromResponse(await ring.Content.ReadAsStringAsync());
+        using var offer = await caller.PostAsJsonAsync(root + "/offer", new { sdp = "offer", callId = generation });
+        Assert.That(offer.StatusCode, Is.EqualTo(HttpStatusCode.OK));
+        var cleanup = factory.Services.GetRequiredService<ConnectedCallCleanupService>();
+        int before = calleeSink.Events.Count;
+        Assert.That(hub.Remove(callerSink.ConnectionId, callerSink), Is.True);
+        clock.Advance(TimeSpan.FromSeconds(10));
+        cleanup.Sweep();
+        Assert.That(calleeSink.Events.Count, Is.EqualTo(before));
+        using var answer = await callee.PostAsJsonAsync(root + "/answer", new { sdp = "answer", callId = generation });
+        Assert.That(answer.StatusCode, Is.EqualTo(HttpStatusCode.OK));
+        clock.Advance(TimeSpan.FromSeconds(29));
+        cleanup.Sweep();
+        Assert.That(calleeSink.Events.Count, Is.EqualTo(before));
+        clock.Advance(TimeSpan.FromSeconds(1));
+        cleanup.Sweep();
+        Assert.That(calleeSink.Events.Count, Is.EqualTo(before + 1));
+        Assert.That(CallIdFromEvent(calleeSink.Events[^1]), Is.EqualTo(generation));
+    }
+
+    [Test]
+    public async Task Cleanup_ends_a_screensharing_call_once()
+    {
+        var clock = new ManualTimeProvider(new DateTimeOffset(2100, 1, 1, 12, 0, 0, TimeSpan.Zero));
+        using var factory = new ApiWebApplicationFactory { Clock = clock };
+        Guid conversationId = Guid.NewGuid();
+        var call = await EstablishConnectedCallAsync(factory, conversationId, "screen-cleanup");
+        try
+        {
+            GatewayHub hub = factory.Services.GetRequiredService<GatewayHub>();
+            using var screen = await call.Caller.PostAsJsonAsync(
+                call.Root + "/screen/start", new { callId = call.CallId });
+            Assert.That(screen.StatusCode, Is.EqualTo(HttpStatusCode.OK));
+            int before = call.CalleeSink.Events.Count;
+            Assert.That(hub.Remove(call.CallerSink.ConnectionId, call.CallerSink), Is.True);
+            clock.Advance(TimeSpan.FromSeconds(30));
+            call.Cleanup.Sweep();
+            Assert.That(call.CalleeSink.Events.Count, Is.EqualTo(before + 1));
+            Assert.That(call.CalleeSink.Events[^1].Type, Is.EqualTo(GatewayEventType.CallHangup));
+            call.Cleanup.Sweep();
+            Assert.That(call.CalleeSink.Events.Count, Is.EqualTo(before + 1));
+        }
+        finally
+        {
+            call.Caller.Dispose();
+            call.Callee.Dispose();
+        }
+    }
+
+    private static async Task<(
+        Guid CallerId,
+        Guid CalleeId,
+        Guid CallId,
+        RecordingSink CallerSink,
+        RecordingSink CalleeSink,
+        HttpClient Caller,
+        HttpClient Callee,
+        ConnectedCallCleanupService Cleanup,
+        string Root)> EstablishConnectedCallAsync(
+        ApiWebApplicationFactory factory,
+        Guid conversationId,
+        string prefix)
+    {
+        var (callerId, calleeId) = await SeedTwoMemberConversationAsync(
+            factory, conversationId, $"{prefix}-caller", $"{prefix}-callee");
+        GatewayHub hub = factory.Services.GetRequiredService<GatewayHub>();
+        var callerSink = new RecordingSink($"{prefix}-a", callerId);
+        var calleeSink = new RecordingSink($"{prefix}-b", calleeId);
+        hub.Register(callerSink);
+        hub.Register(calleeSink);
+        HttpClient caller = AuthorizedClient(factory, $"{prefix}-caller");
+        HttpClient callee = AuthorizedClient(factory, $"{prefix}-callee");
+        string root = $"/conversations/{conversationId}/call";
+        using var ring = await caller.PostAsJsonAsync(root + "/ring", new { });
+        Assert.That(ring.StatusCode, Is.EqualTo(HttpStatusCode.OK));
+        Guid callId = CallIdFromResponse(await ring.Content.ReadAsStringAsync());
+        using var offer = await caller.PostAsJsonAsync(root + "/offer", new { sdp = "offer", callId });
+        using var answer = await callee.PostAsJsonAsync(root + "/answer", new { sdp = "answer", callId });
+        Assert.That(offer.StatusCode, Is.EqualTo(HttpStatusCode.OK));
+        Assert.That(answer.StatusCode, Is.EqualTo(HttpStatusCode.OK));
+        return (
+            callerId,
+            calleeId,
+            callId,
+            callerSink,
+            calleeSink,
+            caller,
+            callee,
+            factory.Services.GetRequiredService<ConnectedCallCleanupService>(),
+            root);
+    }
+
     private static Guid CallIdFromResponse(string responseJson)
     {
         using JsonDocument document = JsonDocument.Parse(responseJson);
@@ -1069,7 +1402,21 @@ public sealed class CallRestTests
 
         public override DateTimeOffset GetUtcNow() => _now;
 
+        public override ITimer CreateTimer(
+            TimerCallback callback, object? state, TimeSpan dueTime, TimeSpan period) => new InertTimer();
+
         public void Advance(TimeSpan delta) => _now += delta;
+
+        private sealed class InertTimer : ITimer
+        {
+            public bool Change(TimeSpan dueTime, TimeSpan period) => true;
+
+            public void Dispose()
+            {
+            }
+
+            public ValueTask DisposeAsync() => ValueTask.CompletedTask;
+        }
     }
 
     private static async Task<(Guid SenderId, Guid ReceiverId)> SeedTwoMemberConversationAsync(

@@ -105,6 +105,12 @@ public sealed class CallSession(Guid conversationId, Guid callerId, Guid calleeI
 
     /// <summary>Setup deadline for pending states; null once the call is connected or ended.</summary>
     internal DateTimeOffset? SetupDeadline { get; set; }
+
+    /// <summary>Grace deadline once the caller has no gateway connections while connected.</summary>
+    internal DateTimeOffset? CallerDisconnectDeadline { get; set; }
+
+    /// <summary>Grace deadline once the callee has no gateway connections while connected.</summary>
+    internal DateTimeOffset? CalleeDisconnectDeadline { get; set; }
 }
 
 /// <summary>Single-server v1 active-call registry. State is intentionally process-local.</summary>
@@ -113,9 +119,13 @@ public sealed class CallRegistry
     /// <summary>Pending setup states stop blocking replacement calls after this long.</summary>
     public static readonly TimeSpan SetupTimeout = TimeSpan.FromSeconds(30);
 
+    internal static readonly TimeSpan DisconnectGrace = TimeSpan.FromSeconds(30);
+
     private readonly object _gate = new();
     private readonly Dictionary<Guid, CallSession> _sessions = [];
+    private readonly HashSet<Guid> _gatewayUsers = [];
     private readonly TimeProvider _clock;
+    private bool _trackGatewayPresence;
 
     public CallRegistry()
         : this(TimeProvider.System)
@@ -218,6 +228,10 @@ public sealed class CallRegistry
                 // Only a real pending-phase transition arms a fresh setup deadline; trickled ICE
                 // is relayed without moving the existing deadline.
                 ArmSetupDeadline(session);
+                if (session.StateMachine.State == CallState.Connected)
+                {
+                    ArmConnectedPresence(session);
+                }
             }
 
             recipientId = isCaller ? session.CalleeId : session.CallerId;
@@ -237,6 +251,95 @@ public sealed class CallRegistry
             or CallState.Answering
             ? _clock.GetUtcNow().Add(SetupTimeout)
             : null;
+    }
+
+    internal void EnableGatewayPresence()
+    {
+        lock (_gate)
+        {
+            _trackGatewayPresence = true;
+        }
+    }
+
+    internal void SetGatewayPresence(Guid userId, bool connected)
+    {
+        lock (_gate)
+        {
+            bool changed = connected ? _gatewayUsers.Add(userId) : _gatewayUsers.Remove(userId);
+            if (!changed)
+            {
+                return;
+            }
+
+            DateTimeOffset? deadline = connected ? null : _clock.GetUtcNow().Add(DisconnectGrace);
+            foreach (CallSession session in _sessions.Values)
+            {
+                if (session.StateMachine.State != CallState.Connected)
+                {
+                    continue;
+                }
+
+                if (session.CallerId == userId)
+                {
+                    session.CallerDisconnectDeadline = deadline;
+                }
+
+                if (session.CalleeId == userId)
+                {
+                    session.CalleeDisconnectDeadline = deadline;
+                }
+            }
+        }
+    }
+
+    private void ArmConnectedPresence(CallSession session)
+    {
+        if (!_trackGatewayPresence)
+        {
+            return;
+        }
+
+        DateTimeOffset deadline = _clock.GetUtcNow().Add(DisconnectGrace);
+        session.CallerDisconnectDeadline = _gatewayUsers.Contains(session.CallerId) ? null : deadline;
+        session.CalleeDisconnectDeadline = _gatewayUsers.Contains(session.CalleeId) ? null : deadline;
+    }
+
+    internal IReadOnlyList<CallSession> CollectDisconnectedCalls()
+    {
+        lock (_gate)
+        {
+            DateTimeOffset now = _clock.GetUtcNow();
+            var ended = new List<CallSession>();
+            foreach (CallSession session in _sessions.Values.ToArray())
+            {
+                if (session.StateMachine.State != CallState.Connected)
+                {
+                    continue;
+                }
+
+                bool callerGone = session.CallerDisconnectDeadline is DateTimeOffset callerDeadline
+                    && now >= callerDeadline;
+                bool calleeGone = session.CalleeDisconnectDeadline is DateTimeOffset calleeDeadline
+                    && now >= calleeDeadline;
+                if (!callerGone && !calleeGone)
+                {
+                    continue;
+                }
+
+                // This is the current session under the registry lock: removal and the captured
+                // CallId are atomic, so no conversation-only delayed callback can target a
+                // replacement generation.
+                if (!session.StateMachine.TryApply(CallAction.Hangup))
+                {
+                    continue;
+                }
+
+                _sessions.Remove(session.ConversationId);
+                ended.Add(session);
+            }
+
+            return ended;
+        }
     }
 
     private void ReclaimExpired(Guid conversationId)

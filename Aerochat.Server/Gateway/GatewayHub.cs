@@ -60,6 +60,20 @@ public sealed class GatewayHub
 
     internal Action<GatewayEnvelope>? BeforeQueueInternalForTesting { get; set; }
 
+    /// <summary>
+    /// Private-server integration seam assigned once before use. It is invoked synchronously
+    /// under the hub gate and must only take the registry lock, never publish or re-enter the hub.
+    /// </summary>
+    internal Action<Guid, bool>? PresenceChanged { get; set; }
+
+    internal T WithPresenceLock<T>(Func<T> action)
+    {
+        lock (_gate)
+        {
+            return action();
+        }
+    }
+
     public string InstanceId => _instanceId;
 
     public int ActiveConnectionCount
@@ -234,9 +248,9 @@ public sealed class GatewayHub
                             && state.IsActive;
                         if (promoted)
                         {
-                            RemovePendingLocked(state);
                             RemovePrimaryLocked(replaced);
                             AddPrimaryLocked(state);
+                            RemovePendingLocked(state);
                         }
                     }
                 }
@@ -526,6 +540,7 @@ public sealed class GatewayHub
 
     private void AddPrimaryLocked(SinkState state)
     {
+        bool before = HasPresenceLocked(state.UserId);
         _connections[state.ConnectionId] = state;
         if (!_connectionsByUser.TryGetValue(state.UserId, out HashSet<string>? userConnections))
         {
@@ -534,10 +549,12 @@ public sealed class GatewayHub
         }
 
         userConnections.Add(state.ConnectionId);
+        NotifyPresenceLocked(state.UserId, before);
     }
 
     private void RemovePrimaryLocked(SinkState state)
     {
+        bool before = HasPresenceLocked(state.UserId);
         if (!_connections.Remove(state.ConnectionId))
         {
             return;
@@ -551,10 +568,13 @@ public sealed class GatewayHub
                 _connectionsByUser.Remove(state.UserId);
             }
         }
+
+        NotifyPresenceLocked(state.UserId, before);
     }
 
     private void AddPendingLocked(SinkState state)
     {
+        bool before = HasPresenceLocked(state.UserId);
         _pendingReplacements[state.ConnectionId] = state;
         if (!_pendingReplacementsByUser.TryGetValue(state.UserId, out HashSet<string>? userConnections))
         {
@@ -563,10 +583,12 @@ public sealed class GatewayHub
         }
 
         userConnections.Add(state.ConnectionId);
+        NotifyPresenceLocked(state.UserId, before);
     }
 
     private void RemovePendingLocked(SinkState state)
     {
+        bool before = HasPresenceLocked(state.UserId);
         if (!_pendingReplacements.Remove(state.ConnectionId))
         {
             return;
@@ -579,6 +601,20 @@ public sealed class GatewayHub
             {
                 _pendingReplacementsByUser.Remove(state.UserId);
             }
+        }
+
+        NotifyPresenceLocked(state.UserId, before);
+    }
+
+    private bool HasPresenceLocked(Guid userId) =>
+        _connectionsByUser.ContainsKey(userId) || _pendingReplacementsByUser.ContainsKey(userId);
+
+    private void NotifyPresenceLocked(Guid userId, bool before)
+    {
+        bool after = HasPresenceLocked(userId);
+        if (before != after)
+        {
+            PresenceChanged?.Invoke(userId, after);
         }
     }
 
