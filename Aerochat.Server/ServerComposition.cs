@@ -20,6 +20,19 @@ internal static class ServerComposition
 {
     internal static void ConfigureBuilder(WebApplicationBuilder builder)
     {
+        // Hosting request-start/finish records include raw query strings. /ws authenticates
+        // via a query token, so this category must not reach any logging provider.
+        builder.Services.PostConfigure<LoggerFilterOptions>(options =>
+        {
+            const string category = "Microsoft.AspNetCore.Hosting.Diagnostics";
+            string?[] providers = options.Rules.Select(rule => rule.ProviderName)
+                .Append(null).Distinct(StringComparer.Ordinal).ToArray();
+            foreach (string? provider in providers)
+            {
+                options.Rules.Add(new LoggerFilterRule(provider, category, LogLevel.None, null));
+            }
+        });
+
         string publicBaseUrl = builder.Configuration["PublicBaseUrl"] ?? "http://localhost:5080";
         Dictionary<string, OAuthProviderDefinition> providers = CreateProviderDefinitions(builder.Configuration);
         string chatConnectionString = ResolveChatConnectionString(builder.Configuration);
