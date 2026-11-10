@@ -56,13 +56,14 @@ public sealed class ScreenShareTests
     public async Task Screen_share_publisher_caps_frames_and_does_not_publish_after_stop()
     {
         var source = new RecordingScreenCaptureSource();
-        var sink = new RecordingScreenShareFrameSink(expectedFrames: 2);
+        var sink = new RecordingScreenShareFrameSink();
         await using var publisher = new ScreenSharePublisher(source, sink, framesPerSecond: 15);
         await publisher.StartAsync();
         source.Raise(FrameAt(TimeSpan.Zero));
+        await sink.WaitForFrameAsync();
         source.Raise(FrameAt(TimeSpan.FromMilliseconds(20)));
         source.Raise(FrameAt(TimeSpan.FromMilliseconds(67)));
-        await sink.ExpectedFrames.WaitAsync(TimeSpan.FromSeconds(2));
+        await sink.WaitForFrameAsync();
         await publisher.StopAsync();
         source.Raise(FrameAt(TimeSpan.FromMilliseconds(134)));
         Assert.Multiple(() =>
@@ -78,7 +79,7 @@ public sealed class ScreenShareTests
     public async Task Screen_share_publisher_disposal_stops_and_disposes_source_once()
     {
         var source = new RecordingScreenCaptureSource();
-        var sink = new RecordingScreenShareFrameSink(expectedFrames: 0);
+        var sink = new RecordingScreenShareFrameSink();
         var publisher = new ScreenSharePublisher(source, sink, framesPerSecond: 15);
         await publisher.StartAsync();
         await publisher.DisposeAsync();
@@ -101,7 +102,48 @@ public sealed class ScreenShareTests
         await publisher.StartAsync(startup.Token);
         startup.Cancel();
         source.Raise(FrameAt(TimeSpan.Zero));
+        await sink.FirstFrame.WaitAsync(TimeSpan.FromSeconds(2));
         Assert.That(sink.FrameCount, Is.EqualTo(1));
+    }
+
+    [Test]
+    public async Task Slow_frame_send_does_not_block_capture_and_stop_waits_for_it()
+    {
+        var source = new RecordingScreenCaptureSource();
+        var sink = new BlockingScreenShareFrameSink();
+        await using var publisher = new ScreenSharePublisher(source, sink, framesPerSecond: 15);
+        await publisher.StartAsync();
+        try
+        {
+            await Task.Run(() => source.Raise(FrameAt(TimeSpan.Zero))).WaitAsync(TimeSpan.FromSeconds(2));
+            await sink.WaitUntilSendingAsync();
+
+            source.Raise(FrameAt(TimeSpan.FromMilliseconds(67)));
+            source.Raise(FrameAt(TimeSpan.FromMilliseconds(134)));
+            sink.FinishOneSend();
+            await sink.WaitUntilSendingAsync();
+            sink.FinishOneSend();
+            await sink.WaitUntilFinishedAsync(sends: 2);
+
+            source.Raise(FrameAt(TimeSpan.FromMilliseconds(201)));
+            await sink.WaitUntilSendingAsync();
+            Task stop = publisher.StopAsync();
+            await Task.Delay(150);
+            Assert.That(stop.IsCompleted, Is.False);
+
+            sink.FinishOneSend();
+            await stop.WaitAsync(TimeSpan.FromSeconds(2));
+            Assert.That(sink.Frames, Is.EqualTo(new[]
+            {
+                TimeSpan.Zero,
+                TimeSpan.FromMilliseconds(134),
+                TimeSpan.FromMilliseconds(201)
+            }));
+        }
+        finally
+        {
+            sink.FinishOneSend(10);
+        }
     }
 
     [TestCase(3840, 2160, 1920, 1080)]
@@ -155,27 +197,56 @@ public sealed class ScreenShareTests
         public void Raise(ScreenShareFrame frame) => _frameReceived?.Invoke(this, frame);
     }
 
-    private sealed class RecordingScreenShareFrameSink(int expectedFrames) : IScreenShareFrameSink
+    private sealed class RecordingScreenShareFrameSink : IScreenShareFrameSink
     {
-        private readonly TaskCompletionSource _expectedFrames = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        private readonly SemaphoreSlim _received = new(0);
         public List<ScreenShareFrame> Frames { get; } = [];
-        public Task ExpectedFrames => expectedFrames == 0 ? Task.CompletedTask : _expectedFrames.Task;
         public Task SendAsync(ScreenShareFrame frame, CancellationToken cancellationToken = default)
         {
             Frames.Add(frame);
-            if (Frames.Count >= expectedFrames) _expectedFrames.TrySetResult();
+            _received.Release();
             return Task.CompletedTask;
         }
+        public async Task WaitForFrameAsync() =>
+            Assert.That(await _received.WaitAsync(TimeSpan.FromSeconds(2)), Is.True);
     }
 
     private sealed class CancellationAwareScreenShareFrameSink : IScreenShareFrameSink
     {
+        private readonly TaskCompletionSource _firstFrame = new(TaskCreationOptions.RunContinuationsAsynchronously);
         public int FrameCount { get; private set; }
+        public Task FirstFrame => _firstFrame.Task;
         public Task SendAsync(ScreenShareFrame frame, CancellationToken cancellationToken = default)
         {
             cancellationToken.ThrowIfCancellationRequested();
             FrameCount++;
+            _firstFrame.TrySetResult();
             return Task.CompletedTask;
         }
+    }
+
+    private sealed class BlockingScreenShareFrameSink : IScreenShareFrameSink
+    {
+        private readonly SemaphoreSlim _sending = new(0);
+        private readonly SemaphoreSlim _finished = new(0);
+        private readonly SemaphoreSlim _proceed = new(0);
+        private readonly System.Collections.Concurrent.ConcurrentQueue<TimeSpan> _frames = new();
+        public IEnumerable<TimeSpan> Frames => _frames;
+        public Task SendAsync(ScreenShareFrame frame, CancellationToken cancellationToken = default)
+        {
+            _frames.Enqueue(frame.CapturedAt);
+            _sending.Release();
+            _proceed.Wait();
+            _finished.Release();
+            return Task.CompletedTask;
+        }
+        public async Task WaitUntilSendingAsync() =>
+            Assert.That(await _sending.WaitAsync(TimeSpan.FromSeconds(2)), Is.True);
+        public async Task WaitUntilFinishedAsync(int sends)
+        {
+            for (int index = 0; index < sends; index++)
+                Assert.That(await _finished.WaitAsync(TimeSpan.FromSeconds(2)), Is.True);
+        }
+        public void FinishOneSend(int count = 1) => _proceed.Release(count);
     }
 }
