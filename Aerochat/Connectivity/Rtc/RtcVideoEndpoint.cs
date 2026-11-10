@@ -34,9 +34,17 @@ internal sealed class Vp8RtcVideoEndpoint : IRtcVideoEndpoint
     private bool _closed;
     private int _encoderWidth;
     private int _encoderHeight;
+    private readonly Func<long> _clockMilliseconds;
+    private readonly Vp8ReceiveAdmission _admission = new();
 
     public Vp8RtcVideoEndpoint()
+        : this(static () => Environment.TickCount64)
     {
+    }
+
+    internal Vp8RtcVideoEndpoint(Func<long> clockMilliseconds)
+    {
+        _clockMilliseconds = clockMilliseconds ?? throw new ArgumentNullException(nameof(clockMilliseconds));
         _endpoint.RestrictFormats(format => format.Codec == VideoCodecsEnum.VP8);
         _endpoint.OnVideoSourceEncodedSample += OnEncodedSample;
         _endpoint.OnVideoSinkDecodedSample += OnDecodedSample;
@@ -59,7 +67,10 @@ internal sealed class Vp8RtcVideoEndpoint : IRtcVideoEndpoint
     {
         lock (_decodeGate)
         {
-            if (_closed || format.Codec != VideoCodecsEnum.VP8)
+            if (_closed
+                || format.Codec != VideoCodecsEnum.VP8
+                || sample is null
+                || !_admission.TryAdmit(sample, _clockMilliseconds()))
                 return;
             _endpoint.GotVideoFrame(remoteEndPoint, timestamp, sample, format);
         }

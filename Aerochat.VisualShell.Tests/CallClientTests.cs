@@ -114,6 +114,60 @@ public sealed class CallClientTests
     }
 
     [Test]
+    public void Gateway_protocol_reads_the_call_id_from_call_events()
+    {
+        static CallSignalEventArgs Parse(object data)
+        {
+            string json = JsonSerializer.Serialize(new { t = "call.offer", eventId = "instance:1", d = data });
+            Assert.That(GatewayProtocol.TryParseFrame(json, out GatewayFrame? frame), Is.True);
+            Assert.That(GatewayProtocol.TryParseCallSignal(frame!, out CallSignalEventArgs? call), Is.True);
+            return call!;
+        }
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(Parse(new { conversationId = "conversation-1", sdp = "sdp", callId = "6F9619FF-8B86-D011-B42D-00C04FC964FF" }).CallId,
+                Is.EqualTo("6f9619ff-8b86-d011-b42d-00c04fc964ff"));
+            Assert.That(Parse(new { conversationId = "conversation-1", sdp = "sdp" }).CallId, Is.Null);
+            Assert.That(Parse(new { conversationId = "conversation-1", sdp = "sdp", callId = "not-a-call" }).CallId, Is.Null);
+        });
+    }
+
+    [Test]
+    public async Task Signaling_client_returns_the_issued_call_id_and_echoes_it()
+    {
+        var handler = new RecordingHandler(
+            responseBody: "{\"conversationId\":\"00000000-0000-0000-0000-000000000001\",\"callId\":\"6F9619FF-8B86-D011-B42D-00C04FC964FF\"}");
+        using var client = new HttpClient(handler);
+        var signaling = new CallSignalingClient(client, new Uri("https://server.test/"), "token");
+
+        string? issued = await signaling.RingAsync("conversation-1");
+        await signaling.IceAsync("conversation-1", "candidate-1", callId: issued);
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(issued, Is.EqualTo("6f9619ff-8b86-d011-b42d-00c04fc964ff"));
+            Assert.That(handler.Body, Does.Contain("\"callId\":\"6f9619ff-8b86-d011-b42d-00c04fc964ff\""));
+        });
+    }
+
+    [Test]
+    public void Signaling_client_reports_a_stale_call_generation_as_its_own_failure()
+    {
+        using var staleClient = new HttpClient(new RecordingHandler(
+            HttpStatusCode.Conflict, "{\"error\":\"call_stale_generation\"}"));
+        using var busyClient = new HttpClient(new RecordingHandler(
+            HttpStatusCode.Conflict, "{\"error\":\"call_invalid_state\"}"));
+        var stale = new CallSignalingClient(staleClient, new Uri("https://server.test/"), "token");
+        var busy = new CallSignalingClient(busyClient, new Uri("https://server.test/"), "token");
+
+        Assert.ThrowsAsync<CallStaleGenerationException>(
+            () => stale.HangupAsync("conversation-1", "bye", callId: "6f9619ff-8b86-d011-b42d-00c04fc964ff"));
+        Assert.ThrowsAsync<HttpRequestException>(
+            () => busy.HangupAsync("conversation-1", "bye", callId: "6f9619ff-8b86-d011-b42d-00c04fc964ff"));
+    }
+
+    [Test]
     public async Task Signaling_client_disposes_its_http_client_exactly_once()
     {
         var httpClient = new RecordingHttpClient(new RecordingHandler());
@@ -909,7 +963,9 @@ public sealed class CallClientTests
         });
     }
 
-    private sealed class RecordingHandler : HttpMessageHandler
+    private sealed class RecordingHandler(
+        HttpStatusCode statusCode = HttpStatusCode.OK,
+        string? responseBody = null) : HttpMessageHandler
     {
         public HttpRequestMessage? Request { get; private set; }
         public string Body { get; private set; } = "";
@@ -918,7 +974,10 @@ public sealed class CallClientTests
         {
             Request = request;
             Body = await request.Content!.ReadAsStringAsync(cancellationToken);
-            return new HttpResponseMessage(HttpStatusCode.OK) { RequestMessage = request };
+            var response = new HttpResponseMessage(statusCode) { RequestMessage = request };
+            if (responseBody is not null)
+                response.Content = new StringContent(responseBody, System.Text.Encoding.UTF8, "application/json");
+            return response;
         }
     }
 
@@ -1022,13 +1081,13 @@ public sealed class CallClientTests
         public TaskCompletionSource ReleaseHangup { get; } =
             new(TaskCreationOptions.RunContinuationsAsynchronously);
 
-        public Task RingAsync(string conversationId, CancellationToken cancellationToken = default)
+        public Task<string?> RingAsync(string conversationId, CancellationToken cancellationToken = default)
         {
             Actions.Add("ring");
-            return Task.CompletedTask;
+            return Task.FromResult<string?>(null);
         }
 
-        public Task OfferAsync(string conversationId, string offerSdp, CancellationToken cancellationToken = default)
+        public Task OfferAsync(string conversationId, string offerSdp, CancellationToken cancellationToken = default, string? callId = null)
         {
             Actions.Add($"offer:{offerSdp}");
             if (_failOffer)
@@ -1036,7 +1095,7 @@ public sealed class CallClientTests
             return Task.CompletedTask;
         }
 
-        public Task AnswerAsync(string conversationId, string answerSdp, CancellationToken cancellationToken = default)
+        public Task AnswerAsync(string conversationId, string answerSdp, CancellationToken cancellationToken = default, string? callId = null)
         {
             Actions.Add($"answer:{answerSdp}");
             if (_failAnswer)
@@ -1044,7 +1103,7 @@ public sealed class CallClientTests
             return Task.CompletedTask;
         }
 
-        public async Task IceAsync(string conversationId, string candidate, CancellationToken cancellationToken = default)
+        public async Task IceAsync(string conversationId, string candidate, CancellationToken cancellationToken = default, string? callId = null)
         {
             Actions.Add($"ice:{candidate}");
             IceStarted.TrySetResult();
@@ -1054,7 +1113,7 @@ public sealed class CallClientTests
                 await ReleaseIce.Task.WaitAsync(cancellationToken);
         }
 
-        public async Task HangupAsync(string conversationId, string? reason = null, CancellationToken cancellationToken = default)
+        public async Task HangupAsync(string conversationId, string? reason = null, CancellationToken cancellationToken = default, string? callId = null)
         {
             Actions.Add($"hangup:{reason}");
             HangupStarted.TrySetResult();
