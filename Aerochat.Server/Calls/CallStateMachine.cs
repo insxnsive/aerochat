@@ -91,7 +91,8 @@ public enum CallApplyResult
 {
     Applied,
     InvalidState,
-    Forbidden
+    Forbidden,
+    Mismatch
 }
 
 public sealed class CallSession(Guid conversationId, Guid callerId, Guid calleeId)
@@ -99,6 +100,7 @@ public sealed class CallSession(Guid conversationId, Guid callerId, Guid calleeI
     public Guid ConversationId { get; } = conversationId;
     public Guid CallerId { get; } = callerId;
     public Guid CalleeId { get; } = calleeId;
+    public Guid CallId { get; } = Guid.NewGuid();
     public CallStateMachine StateMachine { get; } = new();
 
     /// <summary>Setup deadline for pending states; null once the call is connected or ended.</summary>
@@ -154,7 +156,7 @@ public sealed class CallRegistry
     /// <summary>
     /// Applies a signal for an authenticated actor, enforcing the identities captured at ring and
     /// the role rules for the current conversation member pair. The validated counterpart is
-    /// returned as the only publish recipient.
+    /// returned as the only publish recipient, together with the generation actually applied.
     /// </summary>
     public CallApplyResult TryApply(
         Guid conversationId,
@@ -162,9 +164,12 @@ public sealed class CallRegistry
         Guid firstMemberId,
         Guid secondMemberId,
         CallAction action,
-        out Guid recipientId)
+        Guid? expectedCallId,
+        out Guid recipientId,
+        out Guid callId)
     {
         recipientId = Guid.Empty;
+        callId = Guid.Empty;
 
         lock (_gate)
         {
@@ -193,6 +198,11 @@ public sealed class CallRegistry
                 return CallApplyResult.Forbidden;
             }
 
+            if (expectedCallId is Guid expected && expected != session.CallId)
+            {
+                return CallApplyResult.Mismatch;
+            }
+
             CallState previousState = session.StateMachine.State;
             if (!session.StateMachine.TryApply(action))
             {
@@ -211,6 +221,7 @@ public sealed class CallRegistry
             }
 
             recipientId = isCaller ? session.CalleeId : session.CallerId;
+            callId = session.CallId;
             return CallApplyResult.Applied;
         }
     }

@@ -971,6 +971,42 @@ public sealed class ChatShellTests
         });
     }
 
+    [TestCase(false, null, false)]
+    [TestCase(false, "1", false)]
+    [TestCase(true, null, true)]
+    [TestCase(true, "", true)]
+    [TestCase(true, "0", true)]
+    [TestCase(true, "true", true)]
+    [TestCase(true, " 1", true)]
+    [TestCase(true, "1", false)]
+    public void Rtc_opt_in_blocks_live_calls_unless_exactly_enabled(
+        bool serverConfigured,
+        string? value,
+        bool expectedBlocked)
+    {
+        Assert.That(RtcOptIn.IsBlocked(serverConfigured, value), Is.EqualTo(expectedBlocked));
+    }
+
+    [Test]
+    public void Application_composition_gates_live_calls_behind_the_rtc_opt_in()
+    {
+        string appCode = File.ReadAllText(Path.GetFullPath(Path.Combine(
+            TestContext.CurrentContext.TestDirectory,
+            "../../../../../Aerochat/App.xaml.cs")));
+        int method = appCode.IndexOf("private ICallCoordinator? CreateCallCoordinator", StringComparison.Ordinal);
+        Assert.That(method, Is.GreaterThanOrEqualTo(0));
+        int gate = appCode.IndexOf("RtcOptIn.IsBlocked", method, StringComparison.Ordinal);
+        int signaling = appCode.IndexOf("CreateCallClient(authClient)", method, StringComparison.Ordinal);
+        int engine = appCode.IndexOf("new RtcPeerEngine", method, StringComparison.Ordinal);
+
+        Assert.That(gate, Is.GreaterThan(method));
+        Assert.Multiple(() =>
+        {
+            Assert.That(gate, Is.LessThan(signaling));
+            Assert.That(gate, Is.LessThan(engine));
+            Assert.That(appCode[gate..signaling], Does.Contain("return null;"));
+        });
+    }
     [Test]
     public void Chat_xaml_routes_outgoing_message_body_through_message_parser()
     {

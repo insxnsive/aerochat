@@ -778,6 +778,291 @@ public sealed class CallRestTests
         Assert.That(groupSink.Events.Any(envelope => envelope.Type == ScreenStarted), Is.False);
     }
 
+    [Test]
+    public async Task Call_generation_rejects_mismatched_ice_without_publish()
+    {
+        using var factory = new ApiWebApplicationFactory();
+        Guid conversationId = Guid.NewGuid();
+        (Guid callerId, Guid calleeId) = await SeedTwoMemberConversationAsync(
+            factory, conversationId, "call-generation-caller", "call-generation-callee");
+        GatewayHub gateway = factory.Services.GetRequiredService<GatewayHub>();
+        var callerSink = new RecordingSink("call-generation-caller-sink", callerId);
+        var calleeSink = new RecordingSink("call-generation-callee-sink", calleeId);
+        gateway.Register(callerSink);
+        gateway.Register(calleeSink);
+        using HttpClient caller = AuthorizedClient(factory, "call-generation-caller");
+        using HttpClient callee = AuthorizedClient(factory, "call-generation-callee");
+
+        using HttpResponseMessage ring = await caller.PostAsJsonAsync(
+            $"/conversations/{conversationId}/call/ring", new { reason = "start" });
+        Assert.That(ring.StatusCode, Is.EqualTo(HttpStatusCode.OK));
+        Guid liveCallId = CallIdFromResponse(await ring.Content.ReadAsStringAsync());
+        Assert.That(liveCallId, Is.Not.EqualTo(Guid.Empty));
+
+        foreach ((HttpClient client, string action, object body) in new (HttpClient, string, object)[]
+                 {
+                     (caller, "offer", new { sdp = "offer-sdp" }),
+                     (callee, "answer", new { sdp = "answer-sdp" })
+                 })
+        {
+            using HttpResponseMessage response = await client.PostAsJsonAsync(
+                $"/conversations/{conversationId}/call/{action}", body);
+            Assert.That(response.StatusCode, Is.EqualTo(HttpStatusCode.OK), action);
+        }
+
+        int callerEventCount = callerSink.Events.Count;
+        int calleeEventCount = calleeSink.Events.Count;
+
+        Guid staleCallId = Guid.NewGuid();
+        while (staleCallId == liveCallId)
+        {
+            staleCallId = Guid.NewGuid();
+        }
+
+        using HttpResponseMessage stale = await caller.PostAsJsonAsync(
+            $"/conversations/{conversationId}/call/ice",
+            new { candidate = "stale-candidate", callId = staleCallId });
+
+        Assert.That(stale.StatusCode, Is.EqualTo(HttpStatusCode.Conflict));
+        Assert.That(
+            await stale.Content.ReadAsStringAsync(),
+            Does.Contain("call_stale_generation"));
+        Assert.Multiple(() =>
+        {
+            Assert.That(callerSink.Events, Has.Count.EqualTo(callerEventCount));
+            Assert.That(calleeSink.Events, Has.Count.EqualTo(calleeEventCount));
+        });
+
+        using HttpResponseMessage legacy = await caller.PostAsJsonAsync(
+            $"/conversations/{conversationId}/call/ice", new { candidate = "legacy-candidate" });
+
+        Assert.That(legacy.StatusCode, Is.EqualTo(HttpStatusCode.OK));
+        Assert.Multiple(() =>
+        {
+            Assert.That(calleeSink.Events, Has.Count.EqualTo(calleeEventCount + 1));
+            Assert.That(callerSink.Events, Has.Count.EqualTo(callerEventCount));
+            Assert.That(calleeSink.Events[^1].Type, Is.EqualTo(GatewayEventType.CallIce));
+        });
+    }
+
+    [TestCase("offer")]
+    [TestCase("answer")]
+    [TestCase("ice")]
+    [TestCase("hangup")]
+    [TestCase("screen/start")]
+    [TestCase("screen/stop")]
+    public async Task Call_generation_rejects_stale_action_after_replacement(string action)
+    {
+        using var factory = new ApiWebApplicationFactory();
+        Guid conversationId = Guid.NewGuid();
+        (Guid callerId, Guid calleeId) = await SeedTwoMemberConversationAsync(
+            factory, conversationId, "call-replacement-caller", "call-replacement-callee");
+        GatewayHub gateway = factory.Services.GetRequiredService<GatewayHub>();
+        var callerSink = new RecordingSink("call-replacement-caller-sink", callerId);
+        var calleeSink = new RecordingSink("call-replacement-callee-sink", calleeId);
+        gateway.Register(callerSink);
+        gateway.Register(calleeSink);
+        using HttpClient caller = AuthorizedClient(factory, "call-replacement-caller");
+        using HttpClient callee = AuthorizedClient(factory, "call-replacement-callee");
+
+        async Task<(HttpStatusCode Status, string Body)> PostAsync(
+            HttpClient client, string path, object body)
+        {
+            using HttpResponseMessage response = await client.PostAsJsonAsync(
+                $"/conversations/{conversationId}/call/{path}", body);
+            return (response.StatusCode, await response.Content.ReadAsStringAsync());
+        }
+
+        (HttpStatusCode ringA, string ringABody) = await PostAsync(
+            caller, "ring", new { reason = "start" });
+        Assert.That(ringA, Is.EqualTo(HttpStatusCode.OK));
+        Guid generationA = CallIdFromResponse(ringABody);
+        Assert.That(generationA, Is.Not.EqualTo(Guid.Empty));
+        Assert.That(CallIdFromEvent(calleeSink.Events[^1]), Is.EqualTo(generationA));
+
+        Assert.That(
+            (await PostAsync(caller, "offer", new { sdp = "a-offer" })).Status,
+            Is.EqualTo(HttpStatusCode.OK));
+        Assert.That(
+            (await PostAsync(callee, "answer", new { sdp = "a-answer" })).Status,
+            Is.EqualTo(HttpStatusCode.OK));
+
+        int calleeBeforeHangup = calleeSink.Events.Count;
+        (HttpStatusCode hangupA, string hangupABody) = await PostAsync(
+            caller, "hangup", new { reason = "end-a" });
+        Assert.That(hangupA, Is.EqualTo(HttpStatusCode.OK));
+        Assert.That(CallIdFromResponse(hangupABody), Is.EqualTo(generationA));
+        Assert.Multiple(() =>
+        {
+            Assert.That(calleeSink.Events, Has.Count.EqualTo(calleeBeforeHangup + 1));
+            Assert.That(calleeSink.Events[^1].Type, Is.EqualTo(GatewayEventType.CallHangup));
+            Assert.That(CallIdFromEvent(calleeSink.Events[^1]), Is.EqualTo(generationA));
+        });
+
+        (HttpStatusCode ringB, string ringBBody) = await PostAsync(
+            caller, "ring", new { reason = "start" });
+        Assert.That(ringB, Is.EqualTo(HttpStatusCode.OK));
+        Guid generationB = CallIdFromResponse(ringBBody);
+        Assert.That(generationB, Is.Not.EqualTo(generationA));
+        Assert.That(CallIdFromEvent(calleeSink.Events[^1]), Is.EqualTo(generationB));
+
+        switch (action)
+        {
+            case "answer":
+                Assert.That(
+                    (await PostAsync(caller, "offer", new { sdp = "b-offer" })).Status,
+                    Is.EqualTo(HttpStatusCode.OK));
+                break;
+            case "screen/start":
+            case "screen/stop":
+                Assert.That(
+                    (await PostAsync(caller, "offer", new { sdp = "b-offer" })).Status,
+                    Is.EqualTo(HttpStatusCode.OK));
+                Assert.That(
+                    (await PostAsync(callee, "answer", new { sdp = "b-answer" })).Status,
+                    Is.EqualTo(HttpStatusCode.OK));
+                if (action == "screen/stop")
+                {
+                    Assert.That(
+                        (await PostAsync(caller, "screen/start", new { reason = "share-b" })).Status,
+                        Is.EqualTo(HttpStatusCode.OK));
+                }
+
+                break;
+        }
+
+        string expectedEvent = action switch
+        {
+            "offer" => GatewayEventType.CallOffer,
+            "answer" => GatewayEventType.CallAnswer,
+            "ice" => GatewayEventType.CallIce,
+            "hangup" => GatewayEventType.CallHangup,
+            "screen/start" => GatewayEventType.CallScreenStarted,
+            _ => GatewayEventType.CallScreenStopped
+        };
+
+        HttpClient actor = action == "answer" ? callee : caller;
+        HttpClient peer = action == "answer" ? caller : callee;
+        RecordingSink actorSink = action == "answer" ? calleeSink : callerSink;
+        RecordingSink peerSink = action == "answer" ? callerSink : calleeSink;
+        int actorSnapshot = actorSink.Events.Count;
+        int peerSnapshot = peerSink.Events.Count;
+
+        object staleBody = action switch
+        {
+            "offer" or "answer" => new { sdp = "stale-sdp", callId = generationA },
+            "ice" => new { candidate = "stale-candidate", callId = generationA },
+            "hangup" => new { reason = "stale-hangup", callId = generationA },
+            _ => new { reason = "stale-screen", callId = generationA }
+        };
+        (HttpStatusCode staleStatus, string staleText) = await PostAsync(actor, action, staleBody);
+        Assert.That(staleStatus, Is.EqualTo(HttpStatusCode.Conflict));
+        Assert.That(staleText, Does.Contain("call_stale_generation"));
+        Assert.Multiple(() =>
+        {
+            Assert.That(actorSink.Events, Has.Count.EqualTo(actorSnapshot));
+            Assert.That(peerSink.Events, Has.Count.EqualTo(peerSnapshot));
+        });
+
+        object validBody = action switch
+        {
+            "offer" or "answer" => new { sdp = "fresh-sdp", callId = generationB },
+            "ice" => new { candidate = "fresh-candidate", callId = generationB },
+            "hangup" => new { reason = "end-b", callId = generationB },
+            _ => new { reason = "fresh-screen", callId = generationB }
+        };
+        (HttpStatusCode validStatus, string validText) = await PostAsync(actor, action, validBody);
+        Assert.That(validStatus, Is.EqualTo(HttpStatusCode.OK));
+        Assert.That(CallIdFromResponse(validText), Is.EqualTo(generationB));
+        Assert.Multiple(() =>
+        {
+            Assert.That(peerSink.Events, Has.Count.EqualTo(peerSnapshot + 1));
+            Assert.That(peerSink.Events[^1].Type, Is.EqualTo(expectedEvent));
+            Assert.That(CallIdFromEvent(peerSink.Events[^1]), Is.EqualTo(generationB));
+            Assert.That(actorSink.Events, Has.Count.EqualTo(actorSnapshot));
+        });
+
+        if (action == "hangup")
+        {
+            (HttpStatusCode afterHangup, string afterHangupText) = await PostAsync(
+                caller, "offer", new { sdp = "late-offer", callId = generationB });
+            Assert.That(afterHangup, Is.EqualTo(HttpStatusCode.Conflict));
+            Assert.That(afterHangupText, Does.Contain("call_invalid_state"));
+        }
+    }
+
+    [Test]
+    public async Task Ring_rejects_supplied_generation_and_empty_ids_are_invalid()
+    {
+        using var factory = new ApiWebApplicationFactory();
+        Guid conversationId = Guid.NewGuid();
+        (Guid callerId, Guid calleeId) = await SeedTwoMemberConversationAsync(
+            factory, conversationId, "call-generation-input-caller", "call-generation-input-callee");
+        GatewayHub gateway = factory.Services.GetRequiredService<GatewayHub>();
+        var calleeSink = new RecordingSink("call-generation-input-callee-sink", calleeId);
+        gateway.Register(calleeSink);
+        using HttpClient caller = AuthorizedClient(factory, "call-generation-input-caller");
+        int baselineEvents = calleeSink.Events.Count;
+
+        async Task<(HttpStatusCode Status, string Body)> PostAsync(string path, object body)
+        {
+            using HttpResponseMessage response = await caller.PostAsJsonAsync(
+                $"/conversations/{conversationId}/call/{path}", body);
+            return (response.StatusCode, await response.Content.ReadAsStringAsync());
+        }
+
+        (HttpStatusCode suppliedRing, string suppliedRingText) = await PostAsync(
+            "ring", new { reason = "start", callId = Guid.NewGuid() });
+        Assert.That(suppliedRing, Is.EqualTo(HttpStatusCode.BadRequest));
+        Assert.That(suppliedRingText, Does.Contain("invalid_request"));
+        Assert.That(calleeSink.Events, Has.Count.EqualTo(baselineEvents));
+
+        (HttpStatusCode emptyRing, string emptyRingText) = await PostAsync(
+            "ring", new { reason = "start", callId = Guid.Empty });
+        Assert.That(emptyRing, Is.EqualTo(HttpStatusCode.BadRequest));
+        Assert.That(emptyRingText, Does.Contain("invalid_request"));
+        Assert.That(calleeSink.Events, Has.Count.EqualTo(baselineEvents));
+
+        (HttpStatusCode malformedRing, _) = await PostAsync(
+            "ring", new { reason = "start", callId = "not-a-guid" });
+        Assert.That(malformedRing, Is.EqualTo(HttpStatusCode.BadRequest));
+        Assert.That(calleeSink.Events, Has.Count.EqualTo(baselineEvents));
+
+        (HttpStatusCode legacyRing, string legacyRingBody) = await PostAsync(
+            "ring", new { reason = "start" });
+        Assert.That(legacyRing, Is.EqualTo(HttpStatusCode.OK));
+        Assert.That(CallIdFromResponse(legacyRingBody), Is.Not.EqualTo(Guid.Empty));
+
+        int calleeEvents = calleeSink.Events.Count;
+        (HttpStatusCode emptyOffer, string emptyOfferText) = await PostAsync(
+            "offer", new { sdp = "offer-sdp", callId = Guid.Empty });
+        Assert.That(emptyOffer, Is.EqualTo(HttpStatusCode.BadRequest));
+        Assert.That(emptyOfferText, Does.Contain("invalid_request"));
+        Assert.That(calleeSink.Events, Has.Count.EqualTo(calleeEvents));
+
+        (HttpStatusCode malformedOffer, _) = await PostAsync(
+            "offer", new { sdp = "offer-sdp", callId = 12345 });
+        Assert.That(malformedOffer, Is.EqualTo(HttpStatusCode.BadRequest));
+        Assert.That(calleeSink.Events, Has.Count.EqualTo(calleeEvents));
+
+        (HttpStatusCode legacyOffer, _) = await PostAsync(
+            "offer", new { sdp = "offer-sdp" });
+        Assert.That(legacyOffer, Is.EqualTo(HttpStatusCode.OK));
+        Assert.That(calleeSink.Events, Has.Count.EqualTo(calleeEvents + 1));
+    }
+
+    private static Guid CallIdFromResponse(string responseJson)
+    {
+        using JsonDocument document = JsonDocument.Parse(responseJson);
+        return document.RootElement.GetProperty("callId").GetGuid();
+    }
+
+    private static Guid CallIdFromEvent(GatewayEnvelope envelope)
+    {
+        using JsonDocument document = JsonDocument.Parse(GatewayJson.Serialize(envelope));
+        return document.RootElement.GetProperty("d").GetProperty("callId").GetGuid();
+    }
+
     private sealed class ManualTimeProvider(DateTimeOffset start) : TimeProvider
     {
         private DateTimeOffset _now = start;
