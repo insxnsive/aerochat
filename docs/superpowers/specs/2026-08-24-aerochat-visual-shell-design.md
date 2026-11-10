@@ -261,7 +261,7 @@ Mitigation: no redesign changes are in scope. Preserve XAML and assets whenever 
 
 The task is complete only when all of the following are true:
 
-- The repository at `C:/Users/insxn/Documents/chataero.v2` builds as a visual-only WPF solution.
+- The repository builds from the repository root as a visual-only WPF solution.
 - The app launches directly into a populated Home window without login or network access.
 - Retained visual surfaces open and render with deterministic sample content.
 - Local presentation interactions work without persistence or external side effects.

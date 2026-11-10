@@ -5,7 +5,7 @@
 This repository contains a WPF client plus a self-hostable server component, derived from the archived `not-nullptr/Aerochat` project. It preserves the Windows Live Messenger 2009 visual language and assets while live features land behind explicit connectivity boundaries.
 
 - Primary working branch: `visual-shell`
-- Local project path: `C:/Users/insxn/Documents/chataero.v2`
+- Working directory: repository root (where `Aerochat.sln` lives)
 - Solution: `Aerochat.sln`
 - Runtime project: `Aerochat/Aerochat.csproj`
 - Test project: `Aerochat.VisualShell.Tests/Aerochat.VisualShell.Tests.csproj`
@@ -105,10 +105,10 @@ generic controls when the existing visual control can be retained.
 #### RTC feasibility (Task 12, spike complete)
 
 - Verdict: **conditional proceed** with SIPSorcery on .NET 8 — see
-  `docs/superpowers/specs/webrtc-spike-results.md`. Pins that build:
+  `docs/superpowers/specs/webrtc-spike-results.md`. Pins in `Aerochat/Aerochat.csproj`:
   SIPSorcery/SIPSorceryMedia.Windows at **8.0.14**,
-  SIPSorceryMedia.Encoders at **8.0.7** (8.0.14 was never published for the
-  Encoders package — pinning it triggers a silent NU1603 float to 10.0.4),
+  SIPSorceryMedia.Encoders at **10.0.4** (compatible with `net8.0-windows10.0.17763`;
+  8.0.14 was never published for the Encoders package),
   TFMs raised to `net8.0-windows10.0.17763+`. Known high advisories are patched
   only in the net10 line; VP8 comes from SIPSorceryMedia.Encoders (not the
   net10-only SIPSorcery.VP8). Client RTC tasks must include the TFM-raise smoke.
@@ -253,7 +253,7 @@ Server-side test files:
 
 ## Exact verification commands
 
-Run from `C:/Users/insxn/Documents/chataero.v2`.
+Run from the repository root.
 
 Use x64 every time. Do not use the default Any CPU configuration because the project contains native-sensitive rendering dependencies and the solution explicitly maps x64.
 
