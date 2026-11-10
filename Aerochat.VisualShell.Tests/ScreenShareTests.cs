@@ -245,6 +245,74 @@ public sealed class ScreenShareTests
     }
 
     [Test]
+    public void Vp8_receive_admission_rejects_unsafe_frames_before_decode()
+    {
+        var admission = new Vp8ReceiveAdmission();
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(admission.TryAdmit(Vp8Interframe(), 0), Is.False, "interframe before any keyframe");
+            Assert.That(admission.TryAdmit(Vp8Keyframe(1921, 1080), 0), Is.False, "keyframe wider than 1920");
+            Assert.That(admission.TryAdmit(Vp8Keyframe(1920, 1081), 0), Is.False, "keyframe taller than 1080");
+            Assert.That(admission.TryAdmit(Vp8Keyframe(0, 360), 0), Is.False, "keyframe with zero width");
+            Assert.That(admission.TryAdmit(new byte[] { 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x80, 0x02, 0x68, 0x01 }, 0), Is.False, "keyframe without start code");
+            Assert.That(admission.TryAdmit(new byte[2], 0), Is.False, "frame shorter than the tag");
+            Assert.That(admission.TryAdmit(OversizedKeyframe(), 0), Is.False, "frame over the byte cap");
+            Assert.That(admission.TryAdmit(Vp8Keyframe(1920, 1080), 0), Is.True, "1080p keyframe");
+            Assert.That(admission.TryAdmit(Vp8Interframe(), 0), Is.True, "interframe after an admitted keyframe");
+            Assert.That(admission.TryAdmit(Vp8Keyframe(4000, 4000), 0), Is.False, "oversized resolution change");
+            Assert.That(admission.TryAdmit(Vp8Interframe(), 0), Is.False, "interframe after a rejected keyframe");
+        });
+    }
+
+    [Test]
+    public void Vp8_receive_admission_caps_frames_per_second_and_waits_for_a_keyframe()
+    {
+        var admission = new Vp8ReceiveAdmission();
+        int admitted = admission.TryAdmit(Vp8Keyframe(640, 360), 0) ? 1 : 0;
+        for (int index = 0; index < 40; index++)
+        {
+            if (admission.TryAdmit(Vp8Interframe(), 10))
+                admitted++;
+        }
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(admitted, Is.EqualTo(Vp8ReceiveAdmission.MaxFramesPerSecond));
+            Assert.That(admission.TryAdmit(Vp8Interframe(), 1000), Is.False, "interframe after a dropped frame");
+            Assert.That(admission.TryAdmit(Vp8Keyframe(640, 360), 1000), Is.True, "keyframe in the next second");
+            Assert.That(admission.TryAdmit(Vp8Interframe(), 1010), Is.True, "interframe after that keyframe");
+        });
+    }
+
+    [Test]
+    public async Task Vp8_endpoint_decodes_at_most_the_receive_budget_per_second()
+    {
+        using var encoder = new Vp8RtcVideoEndpoint();
+        using var decoder = new Vp8RtcVideoEndpoint(() => 0);
+        VideoFormat format = encoder.SourceFormats[0];
+        encoder.SetFormat(format);
+        decoder.SetFormat(format);
+        await encoder.StartAsync();
+        await decoder.StartAsync();
+        var samples = new List<byte[]>();
+        encoder.EncodedSample += (_, sample) => samples.Add(sample);
+        for (int index = 0; index < 45; index++)
+            encoder.Send(SolidFrame(320, 180));
+        int decoded = 0;
+        decoder.FrameDecoded += (_, _) => Interlocked.Increment(ref decoded);
+
+        foreach (byte[] sample in samples)
+            decoder.Receive(new IPEndPoint(IPAddress.Loopback, 5000), 0, sample, format);
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(samples, Has.Count.EqualTo(45));
+            Assert.That(decoded, Is.EqualTo(Vp8ReceiveAdmission.MaxFramesPerSecond));
+        });
+    }
+
+    [Test]
     public async Task Rtc_peer_engine_forwards_decoded_video_and_releases_endpoint_once()
     {
         var video = new RecordingRtcVideoEndpoint();
@@ -279,6 +347,18 @@ public sealed class ScreenShareTests
         }
 
         return new ScreenShareFrame(width, height, width * ScreenShareFrame.BytesPerPixel, pixels);
+    }
+
+    private static byte[] Vp8Keyframe(int width, int height) =>
+        [0x00, 0x00, 0x00, 0x9D, 0x01, 0x2A, (byte)width, (byte)(width >> 8), (byte)height, (byte)(height >> 8), 0x00, 0x00];
+
+    private static byte[] Vp8Interframe() => [0x01, 0x00, 0x00, 0x00];
+
+    private static byte[] OversizedKeyframe()
+    {
+        byte[] frame = new byte[Vp8ReceiveAdmission.MaxEncodedFrameBytes + 1];
+        Vp8Keyframe(640, 360).CopyTo(frame, 0);
+        return frame;
     }
     private sealed class RecordingScreenCaptureSource : IScreenCaptureSource
     {
