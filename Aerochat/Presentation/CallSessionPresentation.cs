@@ -43,6 +43,8 @@ public sealed class CallSessionPresentation : ObservableObject
         Sdp = sdp ?? Sdp;
         Candidate = candidate ?? Candidate;
         Reason = reason ?? Reason;
+        if (State == CallSessionState.Ended)
+            CallId = null;
     }
 
     /// <summary>
@@ -76,10 +78,37 @@ public sealed class CallSessionPresentation : ObservableObject
         if (CallId is null || CallId != callId)
             return false;
 
+        // An answer only fits a call this side is placing; for any other state it is ignored.
+        if (eventType == "call.answer"
+            && State is not (CallSessionState.Starting or CallSessionState.Ringing or CallSessionState.Offering))
+        {
+            return false;
+        }
+
         Apply(eventType, sdp, candidate, reason);
         if (eventType == "call.hangup")
             CallId = null;
         return true;
+    }
+
+    /// <summary>
+    /// Takes the pending incoming offer and its call id and marks the call as connecting in one step,
+    /// so a newer ring cannot replace the call between reading the offer and accepting it.
+    /// Returns false (and changes nothing) when no incoming offer is pending.
+    /// </summary>
+    public bool TryBeginAccept(out string? offer, out string? callId)
+    {
+        if (State == CallSessionState.Incoming && Sdp is not null)
+        {
+            offer = Sdp;
+            callId = CallId;
+            State = CallSessionState.Connecting;
+            return true;
+        }
+
+        offer = null;
+        callId = null;
+        return false;
     }
 
     public void SetLocalState(CallSessionState state)

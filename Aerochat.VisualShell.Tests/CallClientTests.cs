@@ -665,6 +665,139 @@ public sealed class CallClientTests
     }
 
     [Test]
+    public async Task A_coordinator_created_after_the_ring_ignores_other_calls_and_keeps_the_call_id()
+    {
+        const string current = "11111111-1111-1111-1111-111111111111";
+        const string other = "22222222-2222-2222-2222-222222222222";
+        PresentationState state = DemoData.Create();
+        string conversationId = state.Conversations[0].Id.ToString();
+        using var adapter = new PresentationAdapter(state, new NullTransport());
+        adapter.ApplyCallSignal(new CallSignalEventArgs("call.ring", conversationId, callId: current));
+        adapter.ApplyCallSignal(new CallSignalEventArgs("call.offer", conversationId, sdp: "offer-sdp", callId: current));
+        var signaling = new RecordingCallSignalingClient();
+        var engine = new RecordingRtcPeerEngine();
+        var transport = new RecordingCallTransport();
+        await using var coordinator = new CallCoordinator(
+            state, conversationId, signaling, engine, transport);
+
+        transport.Raise(new CallSignalEventArgs("call.hangup", conversationId, reason: "stale", callId: other));
+
+        CallSessionPresentation session = state.GetOrCreateCallSession(conversationId);
+        Assert.Multiple(() =>
+        {
+            Assert.That(session.State, Is.EqualTo(CallSessionState.Incoming));
+            Assert.That(engine.HangupCount, Is.Zero);
+        });
+
+        await coordinator.AcceptAsync();
+
+        Assert.That(signaling.CallIds, Is.EqualTo(new[] { current }));
+    }
+
+    [Test]
+    public async Task A_newer_ring_cannot_make_accept_answer_an_offer_the_session_no_longer_holds()
+    {
+        const string first = "11111111-1111-1111-1111-111111111111";
+        const string second = "22222222-2222-2222-2222-222222222222";
+        PresentationState state = DemoData.Create();
+        string conversationId = state.Conversations[0].Id.ToString();
+        using var adapter = new PresentationAdapter(state, new NullTransport());
+        var signaling = new RecordingCallSignalingClient();
+        var engine = new RecordingRtcPeerEngine();
+        var transport = new RecordingCallTransport();
+        bool armed = false;
+        bool injected = false;
+        await using var coordinator = new CallCoordinator(
+            state, conversationId, signaling, engine, transport,
+            action =>
+            {
+                // Stand in for the adapter applying a newer ring on the UI thread just before
+                // accept's first presentation write.
+                if (armed && !injected)
+                {
+                    injected = true;
+                    adapter.ApplyCallSignal(new CallSignalEventArgs("call.ring", conversationId, callId: second));
+                }
+
+                action();
+            });
+        transport.Raise(new CallSignalEventArgs("call.ring", conversationId, callId: first));
+        transport.Raise(new CallSignalEventArgs("call.offer", conversationId, sdp: "first-offer", callId: first));
+        armed = true;
+
+        try
+        {
+            await coordinator.AcceptAsync();
+        }
+        catch (InvalidOperationException)
+        {
+        }
+
+        Assert.That(
+            signaling.Actions.Where(action => action.StartsWith("answer:", StringComparison.Ordinal)),
+            Is.Empty,
+            "answered the old offer after a newer ring replaced it");
+    }
+
+    [Test]
+    public async Task Accepting_with_no_offer_throws_without_failing_or_hanging_up_the_call()
+    {
+        const string current = "11111111-1111-1111-1111-111111111111";
+        PresentationState state = DemoData.Create();
+        string conversationId = state.Conversations[0].Id.ToString();
+        var signaling = new RecordingCallSignalingClient();
+        var engine = new RecordingRtcPeerEngine();
+        var transport = new RecordingCallTransport();
+        await using var coordinator = new CallCoordinator(
+            state, conversationId, signaling, engine, transport);
+        transport.Raise(new CallSignalEventArgs("call.ring", conversationId, callId: current));
+
+        Assert.ThrowsAsync<InvalidOperationException>(() => coordinator.AcceptAsync());
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(state.GetOrCreateCallSession(conversationId).State, Is.EqualTo(CallSessionState.Incoming));
+            Assert.That(signaling.Actions.Where(action => action.StartsWith("hangup:", StringComparison.Ordinal)), Is.Empty);
+            Assert.That(engine.HangupCount, Is.Zero);
+        });
+    }
+
+    [Test]
+    public async Task A_cancelled_accept_leaves_the_incoming_call_ready_to_be_accepted_again()
+    {
+        const string current = "11111111-1111-1111-1111-111111111111";
+        PresentationState state = DemoData.Create();
+        string conversationId = state.Conversations[0].Id.ToString();
+        var signaling = new RecordingCallSignalingClient();
+        var engine = new RecordingRtcPeerEngine();
+        var transport = new RecordingCallTransport();
+        await using var coordinator = new CallCoordinator(
+            state, conversationId, signaling, engine, transport);
+        transport.Raise(new CallSignalEventArgs("call.ring", conversationId, callId: current));
+        transport.Raise(new CallSignalEventArgs("call.offer", conversationId, sdp: "offer-sdp", callId: current));
+        using var cancelled = new CancellationTokenSource();
+        cancelled.Cancel();
+
+        Assert.CatchAsync<OperationCanceledException>(() => coordinator.AcceptAsync(cancelled.Token));
+
+        CallSessionPresentation session = state.GetOrCreateCallSession(conversationId);
+        Assert.Multiple(() =>
+        {
+            Assert.That(session.State, Is.EqualTo(CallSessionState.Incoming));
+            Assert.That(session.Sdp, Is.EqualTo("offer-sdp"));
+            Assert.That(engine.AcceptedOffers, Is.Empty);
+        });
+
+        await coordinator.AcceptAsync();
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(engine.AcceptedOffers, Is.EqualTo(new[] { "offer-sdp" }));
+            Assert.That(signaling.CallIds, Is.EqualTo(new[] { current }));
+        });
+    }
+
+    [Test]
     public async Task Call_coordinator_releases_media_when_hangup_signaling_fails()
     {
         PresentationState state = DemoData.Create();
