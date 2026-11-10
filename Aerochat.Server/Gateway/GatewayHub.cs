@@ -31,6 +31,10 @@ public sealed class GatewayHub
     private readonly Dictionary<string, SinkState> _pendingReplacements = new(StringComparer.Ordinal);
     private readonly Dictionary<Guid, HashSet<string>> _pendingReplacementsByUser = [];
     private readonly Dictionary<string, RegistrationGate> _registrationGates = new(StringComparer.Ordinal);
+    private readonly Dictionary<string, AdmissionSlot> _admissionSlots = new(StringComparer.Ordinal);
+    private readonly Dictionary<Guid, int> _admissionsByUser = [];
+    private readonly int _maxConnectionsPerUser;
+    private readonly int _maxConnectionsTotal;
     private readonly LinkedList<GatewayEventRecord> _replay = [];
     private long _sequence;
 
@@ -52,10 +56,22 @@ public sealed class GatewayHub
             throw new ArgumentOutOfRangeException(nameof(options), "MaxFrameBytes must be positive.");
         }
 
+        if (options.MaxConnectionsPerUser <= 0)
+        {
+            throw new ArgumentOutOfRangeException(nameof(options), "MaxConnectionsPerUser must be positive.");
+        }
+
+        if (options.MaxConnectionsTotal <= 0)
+        {
+            throw new ArgumentOutOfRangeException(nameof(options), "MaxConnectionsTotal must be positive.");
+        }
+
         _instanceId = options.ResolveInstanceId();
         _replayCapacity = options.ReplayCapacity;
         _queueCapacity = options.QueueCapacity;
         _maxFrameBytes = options.MaxFrameBytes;
+        _maxConnectionsPerUser = options.MaxConnectionsPerUser;
+        _maxConnectionsTotal = options.MaxConnectionsTotal;
     }
 
     internal Action<GatewayEnvelope>? BeforeQueueInternalForTesting { get; set; }
@@ -71,6 +87,107 @@ public sealed class GatewayHub
         lock (_gate)
         {
             return action();
+        }
+    }
+
+    internal sealed class AdmissionSlot(Guid userId, string connectionId)
+    {
+        internal Guid UserId { get; } = userId;
+        internal string ConnectionId { get; } = connectionId;
+        internal int Holders { get; set; } = 1;
+    }
+
+    internal sealed class ConnectionLease(GatewayHub owner, AdmissionSlot slot) : IDisposable
+    {
+        private GatewayHub? _owner = owner;
+
+        public void Dispose() => Interlocked.Exchange(ref _owner, null)?.ReleaseAdmission(slot);
+    }
+
+    internal bool TryReserveConnection(
+        Guid userId,
+        string connectionId,
+        out ConnectionLease? lease,
+        IGatewaySink? expectedReplacement = null)
+    {
+        lease = null;
+        lock (_gate)
+        {
+            if (_admissionSlots.TryGetValue(connectionId, out AdmissionSlot? existing))
+            {
+                // Trusted internal handoff only; never take this authority from HTTP.
+                if (expectedReplacement is null
+                    || existing.UserId != userId
+                    || existing.Holders != 1
+                    || !_connections.TryGetValue(connectionId, out SinkState? old)
+                    || old.UserId != userId
+                    || !ReferenceEquals(old.Sink, expectedReplacement)
+                    || _pendingReplacements.ContainsKey(connectionId))
+                {
+                    return false;
+                }
+
+                existing.Holders++;
+                lease = new ConnectionLease(this, existing);
+                return true;
+            }
+
+            // A replacement request must refer to an existing reserved slot.
+            if (expectedReplacement is not null)
+            {
+                return false;
+            }
+
+            int count = _admissionsByUser.GetValueOrDefault(userId);
+            if (count >= _maxConnectionsPerUser || _admissionSlots.Count >= _maxConnectionsTotal)
+            {
+                return false;
+            }
+
+            var slot = new AdmissionSlot(userId, connectionId);
+            _admissionSlots.Add(connectionId, slot);
+            _admissionsByUser[userId] = count + 1;
+            lease = new ConnectionLease(this, slot);
+            return true;
+        }
+    }
+
+    private void ReleaseAdmission(AdmissionSlot slot)
+    {
+        lock (_gate)
+        {
+            if (!_admissionSlots.TryGetValue(slot.ConnectionId, out AdmissionSlot? current)
+                || !ReferenceEquals(current, slot))
+            {
+                return;
+            }
+
+            if (--slot.Holders != 0)
+            {
+                return;
+            }
+
+            _admissionSlots.Remove(slot.ConnectionId);
+            int count = _admissionsByUser[slot.UserId] - 1;
+            if (count == 0)
+            {
+                _admissionsByUser.Remove(slot.UserId);
+            }
+            else
+            {
+                _admissionsByUser[slot.UserId] = count;
+            }
+        }
+    }
+
+    internal int ReservedConnectionCount
+    {
+        get
+        {
+            lock (_gate)
+            {
+                return _admissionSlots.Count;
+            }
         }
     }
 

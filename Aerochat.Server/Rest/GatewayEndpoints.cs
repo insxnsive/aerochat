@@ -46,21 +46,42 @@ public static class GatewayEndpoints
         }
 
         string? lastEventId = GetExactQueryValue(httpContext.Request.QueryString.Value, "lastEventId");
-        using WebSocket socket = await httpContext.WebSockets.AcceptWebSocketAsync();
-        using var connection = new GatewayConnection(Guid.NewGuid().ToString("N"), user.Id, options);
-
-        if (clock.GetUtcNow() >= claims.ExpiresAt)
+        string connectionId = Guid.NewGuid().ToString("N");
+        if (!gateway.TryReserveConnection(user.Id, connectionId, out GatewayHub.ConnectionLease? lease))
         {
-            connection.Abort(GatewayAbortReason.PolicyViolation);
-            await socket.CloseAsync(WebSocketCloseStatus.PolicyViolation, "expired", CancellationToken.None);
-            return Results.Empty;
+            httpContext.Response.Headers["Retry-After"] = "1";
+            return Results.Json(
+                new ErrorDto("gateway_capacity_exceeded"),
+                statusCode: StatusCodes.Status429TooManyRequests);
         }
 
-        GatewayRegistrationResult registration = gateway.Register(connection, lastEventId);
+        using (lease)
+        {
+            // Lease is acquired BEFORE this await; it is released even when Accept throws.
+            using WebSocket socket = await httpContext.WebSockets.AcceptWebSocketAsync();
+            using var connection = new GatewayConnection(connectionId, user.Id, options);
+            try
+            {
+                if (clock.GetUtcNow() >= claims.ExpiresAt)
+                {
+                    connection.Abort(GatewayAbortReason.PolicyViolation);
+                    using var closeTimeout = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+                    await socket.CloseAsync(
+                        WebSocketCloseStatus.PolicyViolation, "expired", closeTimeout.Token);
+                    return Results.Empty;
+                }
 
-        await ServeSocketAsync(
-            httpContext, socket, connection, gateway, registration, claims.ExpiresAt, clock, cancellationToken);
-        return Results.Empty;
+                GatewayRegistrationResult registration = gateway.Register(connection, lastEventId);
+                await ServeSocketAsync(
+                    httpContext, socket, connection, gateway, registration, claims.ExpiresAt,
+                    clock, cancellationToken);
+                return Results.Empty;
+            }
+            finally
+            {
+                gateway.Remove(connection.ConnectionId, connection);
+            }
+        }
     }
 
     private static async Task ServeSocketAsync(
@@ -174,7 +195,8 @@ public static class GatewayEndpoints
                 && socket.State is WebSocketState.Open or WebSocketState.CloseReceived)
             {
                 WebSocketCloseStatus status = forcedCloseStatus ?? MapCloseStatus(connection.TerminalAbortReason);
-                await socket.CloseAsync(status, status.ToString(), CancellationToken.None).ConfigureAwait(false);
+                using var closeTimeout = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+                await socket.CloseAsync(status, status.ToString(), closeTimeout.Token).ConfigureAwait(false);
             }
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)

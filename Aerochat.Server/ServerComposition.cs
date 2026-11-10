@@ -41,6 +41,8 @@ internal static class ServerComposition
             QueueCapacity = builder.Configuration.GetValue("Gateway:QueueCapacity", 256),
             ReplayCapacity = builder.Configuration.GetValue("Gateway:ReplayCapacity", 4096),
             MaxFrameBytes = builder.Configuration.GetValue("Gateway:MaxFrameBytes", GatewayJson.DefaultMaxFrameBytes),
+            MaxConnectionsPerUser = builder.Configuration.GetValue("Gateway:MaxConnectionsPerUser", 4),
+            MaxConnectionsTotal = builder.Configuration.GetValue("Gateway:MaxConnectionsTotal", 256),
             AllowedOrigins = ParseAllowedOrigins(builder.Configuration["Gateway:AllowedOrigins"])
         };
         builder.Services.AddSingleton(gatewayOptions);
