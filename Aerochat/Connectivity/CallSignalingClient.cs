@@ -37,6 +37,8 @@ public sealed class CallSignalingClient : ICallSignalingClient, IScreenShareSign
     private readonly Uri _server;
     private readonly string? _token;
     private readonly Func<CancellationToken, Task<string?>>? _tokenLoader;
+    private const int MaxResponseBytes = 4 * 1024;
+    private static readonly TimeSpan ResponseReadTimeout = TimeSpan.FromSeconds(5);
     private int _disposed;
 
     public CallSignalingClient(HttpClient httpClient, Uri server, string token)
@@ -88,26 +90,55 @@ public sealed class CallSignalingClient : ICallSignalingClient, IScreenShareSign
             new Uri(_server, $"conversations/{Uri.EscapeDataString(conversationId)}/call/{action}"));
         request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", token);
         request.Content = JsonContent.Create(new { sdp, candidate, reason, callId });
-        using HttpResponseMessage response = await _httpClient.SendAsync(request, cancellationToken).ConfigureAwait(false);
+        using HttpResponseMessage response = await _httpClient
+            .SendAsync(request, HttpCompletionOption.ResponseHeadersRead, cancellationToken)
+            .ConfigureAwait(false);
         if (response.StatusCode == HttpStatusCode.Conflict
             && await ReadStringAsync(response, "error", cancellationToken).ConfigureAwait(false) == "call_stale_generation")
             throw new CallStaleGenerationException();
 
         response.EnsureSuccessStatusCode();
+        if (action != "ring")
+            return null;
+
         string? issued = await ReadStringAsync(response, "callId", cancellationToken).ConfigureAwait(false);
         return Guid.TryParse(issued, out Guid parsed) ? parsed.ToString("D") : null;
     }
 
+    // Reads one string property from a small JSON reply. A reply over the cap, or one that does not
+    // arrive within the read timeout, counts as no reply: nothing past the cap is read or parsed.
     private static async Task<string?> ReadStringAsync(
         HttpResponseMessage response, string property, CancellationToken cancellationToken)
     {
-        string body = await response.Content.ReadAsStringAsync(cancellationToken).ConfigureAwait(false);
-        if (string.IsNullOrWhiteSpace(body))
+        if (response.Content.Headers.ContentLength > MaxResponseBytes)
+            return null;
+
+        byte[] buffer = new byte[MaxResponseBytes + 1];
+        int total = 0;
+        using CancellationTokenSource readTimeout = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        readTimeout.CancelAfter(ResponseReadTimeout);
+        try
+        {
+            using System.IO.Stream stream = await response.Content.ReadAsStreamAsync(readTimeout.Token).ConfigureAwait(false);
+            while (total < buffer.Length)
+            {
+                int read = await stream.ReadAsync(buffer.AsMemory(total), readTimeout.Token).ConfigureAwait(false);
+                if (read == 0)
+                    break;
+                total += read;
+            }
+        }
+        catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
+        {
+            return null;
+        }
+
+        if (total == 0 || total > MaxResponseBytes)
             return null;
 
         try
         {
-            using JsonDocument document = JsonDocument.Parse(body);
+            using JsonDocument document = JsonDocument.Parse(buffer.AsMemory(0, total));
             return document.RootElement.ValueKind == JsonValueKind.Object
                 && document.RootElement.TryGetProperty(property, out JsonElement value)
                 && value.ValueKind == JsonValueKind.String
