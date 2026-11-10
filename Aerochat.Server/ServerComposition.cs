@@ -44,8 +44,19 @@ internal static class ServerComposition
             AllowedOrigins = ParseAllowedOrigins(builder.Configuration["Gateway:AllowedOrigins"])
         };
         builder.Services.AddSingleton(gatewayOptions);
-        builder.Services.AddSingleton<GatewayHub>();
         builder.Services.AddSingleton<CallRegistry>();
+        builder.Services.AddSingleton<GatewayHub>(sp =>
+        {
+            CallRegistry registry = sp.GetRequiredService<CallRegistry>();
+            registry.EnableGatewayPresence();
+            return new GatewayHub(sp.GetRequiredService<GatewayOptions>())
+            {
+                PresenceChanged = registry.SetGatewayPresence
+            };
+        });
+        builder.Services.AddSingleton<ConnectedCallCleanupService>();
+        builder.Services.AddHostedService<ConnectedCallCleanupService>(sp =>
+            sp.GetRequiredService<ConnectedCallCleanupService>());
         builder.Services.AddSingleton<IReadOnlyDictionary<string, OAuthProviderDefinition>>(providers);
         builder.Services.AddSingleton(sp => new SessionService(
             ReadSessionSigningKey(builder.Configuration),
