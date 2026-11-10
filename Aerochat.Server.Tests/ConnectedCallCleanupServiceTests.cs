@@ -131,7 +131,7 @@ public sealed class ConnectedCallCleanupServiceTests
     }
 
     [Test]
-    public async Task Repeated_failures_are_logged_per_tick_without_details()
+    public async Task Repeated_failures_are_throttled_without_details()
     {
         const string sensitive = "synthetic-secret-must-not-be-logged";
         var logger = new CapturingLogger();
@@ -154,11 +154,66 @@ public sealed class ConnectedCallCleanupServiceTests
         Assert.Multiple(() =>
         {
             Assert.That(attempts, Is.EqualTo(3));
-            Assert.That(logger.Entries.Count, Is.EqualTo(2));
+            Assert.That(logger.Entries.Count, Is.EqualTo(1));
             Assert.That(logger.Entries.All(entry => entry.Level == LogLevel.Warning), Is.True);
             Assert.That(logger.Entries.All(entry => entry.Exception is null), Is.True);
             Assert.That(logger.Entries.All(entry => !entry.Message.Contains(sensitive, StringComparison.Ordinal)), Is.True);
         });
+    }
+
+    [Test]
+    public async Task Sustained_failures_are_throttled_and_name_only_the_exception_type()
+    {
+        const string sensitive = "synthetic-secret-must-not-be-logged";
+        var logger = new CapturingLogger();
+        using var service = new ConnectedCallCleanupService(new CallRegistry(),
+            new GatewayHub(new GatewayOptions()), TimeProvider.System, logger);
+        int ticks = 0;
+        int attempts = 0;
+
+        await service.RunLoopAsync(
+            _ => ValueTask.FromResult(++ticks <= 61),
+            () =>
+            {
+                attempts++;
+                throw new InvalidOperationException(sensitive);
+            },
+            CancellationToken.None);
+
+        Assert.That(attempts, Is.EqualTo(61));
+        Assert.That(logger.Entries.Count, Is.EqualTo(2), "Only the first and every 60th consecutive failure are logged");
+        Assert.That(logger.Entries.All(entry => entry.EventId.Id == 4101), Is.True);
+        Assert.That(logger.Entries.All(entry => entry.Level == LogLevel.Warning), Is.True);
+        Assert.That(logger.Entries.All(entry => entry.Exception is null), Is.True);
+        Assert.That(logger.Entries.All(entry => !entry.Message.Contains(sensitive, StringComparison.Ordinal)), Is.True);
+        Assert.That(logger.Entries[0].Message, Does.Contain("InvalidOperationException"));
+        Assert.That(logger.Entries[0].Message, Does.Contain("consecutive failures: 1)"));
+        Assert.That(logger.Entries[1].Message, Does.Contain("consecutive failures: 60)"));
+    }
+
+    [Test]
+    public async Task A_successful_sweep_resets_the_failure_streak()
+    {
+        var logger = new CapturingLogger();
+        using var service = new ConnectedCallCleanupService(new CallRegistry(),
+            new GatewayHub(new GatewayOptions()), TimeProvider.System, logger);
+        int ticks = 0;
+        int attempts = 0;
+
+        await service.RunLoopAsync(
+            _ => ValueTask.FromResult(++ticks <= 3),
+            () =>
+            {
+                if (++attempts != 2)
+                {
+                    throw new InvalidOperationException("boom");
+                }
+            },
+            CancellationToken.None);
+
+        Assert.That(attempts, Is.EqualTo(3));
+        Assert.That(logger.Entries.Count, Is.EqualTo(2));
+        Assert.That(logger.Entries.All(entry => entry.Message.Contains("consecutive failures: 1)", StringComparison.Ordinal)), Is.True);
     }
 
     [Test]

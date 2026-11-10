@@ -8,6 +8,8 @@ internal sealed class ConnectedCallCleanupService(
     TimeProvider clock,
     ILogger<ConnectedCallCleanupService> logger) : BackgroundService
 {
+    private const int FailureLogInterval = 60;
+
     internal void Sweep()
     {
         IReadOnlyList<CallSession> ended = gateway.WithPresenceLock(registry.CollectDisconnectedCalls);
@@ -42,6 +44,7 @@ internal sealed class ConnectedCallCleanupService(
         Action sweep,
         CancellationToken stoppingToken)
     {
+        long consecutiveFailures = 0;
         try
         {
             while (await waitForTick(stoppingToken))
@@ -50,17 +53,24 @@ internal sealed class ConnectedCallCleanupService(
                 try
                 {
                     sweep();
+                    consecutiveFailures = 0;
                 }
                 catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
                 {
                     throw;
                 }
-                catch (Exception)
+                catch (Exception exception)
                 {
                     stoppingToken.ThrowIfCancellationRequested();
-                    logger.LogWarning(
-                        new EventId(4101, "ConnectedCallCleanupSweepFailed"),
-                        "Connected call cleanup sweep failed; continuing on the next scheduled tick.");
+                    consecutiveFailures++;
+                    if (consecutiveFailures == 1 || consecutiveFailures % FailureLogInterval == 0)
+                    {
+                        logger.LogWarning(
+                            new EventId(4101, "ConnectedCallCleanupSweepFailed"),
+                            "Connected call cleanup sweep failed ({ExceptionType}, consecutive failures: {ConsecutiveFailures}); continuing on the next scheduled tick.",
+                            exception.GetType().Name,
+                            consecutiveFailures);
+                    }
                 }
             }
         }
