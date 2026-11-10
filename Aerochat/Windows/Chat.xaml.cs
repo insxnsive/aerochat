@@ -3,6 +3,7 @@ using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Controls.Primitives;
 using System.Windows.Input;
+using System.Windows.Media.Imaging;
 using System.Windows.Threading;
 using Aerochat.Controls;
 using Aerochat.Connectivity;
@@ -454,12 +455,15 @@ public partial class Chat : Window
         UpdateCallControls();
     }
 
-    private async void MuteCallButton_Click(object sender, RoutedEventArgs e) =>
+    private async void MuteCallButton_PreviewMouseLeftButtonUp(object sender, MouseButtonEventArgs e)
+    {
+        e.Handled = true;
         await RunCallActionAsync(() =>
         {
             ToggleMuteCall();
             return Task.CompletedTask;
         });
+    }
 
     private void CallSession_PropertyChanged(object? sender, PropertyChangedEventArgs e)
     {
@@ -538,7 +542,10 @@ public partial class Chat : Window
         MuteCallButton.Visibility = session.State == CallSessionState.Connected
             ? Visibility.Visible
             : Visibility.Collapsed;
-        MuteCallButton.Content = Calls.IsMuted ? "Unmute" : "Mute";
+        MuteCallButton.Source = new BitmapImage(new Uri(Calls.IsMuted
+            ? "pack://application:,,,/Aerochat;component/Resources/AudioPlayer/vol_muted.png"
+            : "pack://application:,,,/Aerochat;component/Resources/AudioPlayer/vol_high.png"));
+        MuteCallButton.ToolTip = Calls.IsMuted ? "Unmute" : "Mute";
         LeaveCallButton.Visibility = session.State is CallSessionState.Idle or CallSessionState.Failed or CallSessionState.Ended
             ? Visibility.Collapsed
             : Visibility.Visible;
