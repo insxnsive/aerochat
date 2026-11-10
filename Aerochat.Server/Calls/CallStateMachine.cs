@@ -37,6 +37,8 @@ public sealed class CallStateMachine
                 (CallState.Idle, CallAction.Ring) => CallState.Ringing,
                 (CallState.Ringing, CallAction.Offer) => CallState.Offering,
                 (CallState.Offering, CallAction.Answer) => CallState.Connected,
+                (CallState.Ringing, CallAction.Ice) => CallState.Ringing,
+                (CallState.Offering, CallAction.Ice) => CallState.Offering,
                 (CallState.Connected, CallAction.Ice) => CallState.Connected,
                 (CallState.Idle or CallState.Ringing or CallState.Offering
                     or CallState.Answering or CallState.Connected, CallAction.Hangup) => CallState.Ended,
@@ -115,8 +117,13 @@ public sealed class CallRegistry
         {
             ReclaimExpired(conversationId);
 
-            if (!_sessions.TryGetValue(conversationId, out CallSession? session)
-                || !session.StateMachine.TryApply(action))
+            if (!_sessions.TryGetValue(conversationId, out CallSession? session))
+            {
+                return false;
+            }
+
+            CallState previousState = session.StateMachine.State;
+            if (!session.StateMachine.TryApply(action))
             {
                 return false;
             }
@@ -125,8 +132,10 @@ public sealed class CallRegistry
             {
                 _sessions.Remove(conversationId);
             }
-            else
+            else if (session.StateMachine.State != previousState)
             {
+                // Only a real pending-phase transition arms a fresh setup deadline; trickled ICE
+                // is relayed without moving the existing deadline.
                 ArmSetupDeadline(session);
             }
 
