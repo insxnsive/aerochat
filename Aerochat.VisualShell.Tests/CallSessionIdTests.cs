@@ -9,6 +9,69 @@ public sealed class CallSessionIdTests
     private const string Other = "22222222-2222-2222-2222-222222222222";
 
     [Test]
+    public void Accepting_takes_the_offer_and_blocks_a_newer_ring()
+    {
+        PresentationState state = DemoData.Create();
+        string conversationId = state.Conversations[0].Id.ToString();
+        using var adapter = new PresentationAdapter(state, new NullTransport());
+        adapter.ApplyCallSignal(new CallSignalEventArgs("call.ring", conversationId, callId: Current));
+        adapter.ApplyCallSignal(new CallSignalEventArgs("call.offer", conversationId, sdp: "offer-sdp", callId: Current));
+        CallSessionPresentation session = state.GetOrCreateCallSession(conversationId);
+
+        bool taken = session.TryBeginAccept(out string? offer, out string? callId);
+        adapter.ApplyCallSignal(new CallSignalEventArgs("call.ring", conversationId, callId: Other));
+        bool takenAgain = session.TryBeginAccept(out _, out _);
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(taken, Is.True);
+            Assert.That(offer, Is.EqualTo("offer-sdp"));
+            Assert.That(callId, Is.EqualTo(Current));
+            Assert.That(takenAgain, Is.False);
+            Assert.That(session.State, Is.EqualTo(CallSessionState.Connecting));
+            Assert.That(session.CallId, Is.EqualTo(Current));
+            Assert.That(session.Sdp, Is.EqualTo("offer-sdp"));
+        });
+    }
+
+    [Test]
+    public void A_matching_answer_while_incoming_is_ignored()
+    {
+        PresentationState state = DemoData.Create();
+        string conversationId = state.Conversations[0].Id.ToString();
+        using var adapter = new PresentationAdapter(state, new NullTransport());
+        adapter.ApplyCallSignal(new CallSignalEventArgs("call.ring", conversationId, callId: Current));
+        adapter.ApplyCallSignal(new CallSignalEventArgs("call.offer", conversationId, sdp: "offer-sdp", callId: Current));
+        CallSessionPresentation session = state.GetOrCreateCallSession(conversationId);
+
+        adapter.ApplyCallSignal(new CallSignalEventArgs("call.answer", conversationId, sdp: "answer-sdp", callId: Current));
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(session.State, Is.EqualTo(CallSessionState.Incoming));
+            Assert.That(session.Sdp, Is.EqualTo("offer-sdp"));
+        });
+    }
+
+    [Test]
+    public void A_coordinator_style_hangup_also_clears_the_call_id()
+    {
+        PresentationState state = DemoData.Create();
+        string conversationId = state.Conversations[0].Id.ToString();
+        using var adapter = new PresentationAdapter(state, new NullTransport());
+        adapter.ApplyCallSignal(new CallSignalEventArgs("call.ring", conversationId, callId: Current));
+        CallSessionPresentation session = state.GetOrCreateCallSession(conversationId);
+
+        state.ApplyCallSignal("call.hangup", conversationId, null, null, "peer_disconnected");
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(session.State, Is.EqualTo(CallSessionState.Ended));
+            Assert.That(session.CallId, Is.Null);
+        });
+    }
+
+    [Test]
     public void Stale_or_id_less_hangup_leaves_a_connected_call_connected()
     {
         PresentationState state = DemoData.Create();
