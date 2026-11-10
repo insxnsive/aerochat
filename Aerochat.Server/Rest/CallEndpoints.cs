@@ -92,35 +92,63 @@ public static class CallEndpoints
             return ConversationAuth.NotFound();
         }
 
-        bool isMember = await db.Participants
+        List<Guid> members = await db.Participants
             .AsNoTracking()
-            .AnyAsync(participant =>
-                participant.ConversationId == conversationGuid && participant.UserId == user.Id,
-                cancellationToken);
-        if (!isMember)
+            .Where(participant => participant.ConversationId == conversationGuid)
+            .Select(participant => participant.UserId)
+            .Distinct()
+            .ToListAsync(cancellationToken);
+        if (!members.Contains(user.Id))
         {
             return ConversationAuth.Forbidden();
         }
 
-        bool applied = action == CallAction.Ring
-            ? registry.TryStart(conversationGuid, out _)
-            : registry.TryApply(conversationGuid, action);
-        if (!applied)
+        string? kind = await db.Conversations
+            .AsNoTracking()
+            .Where(conversation => conversation.Id == conversationGuid)
+            .Select(conversation => conversation.Kind)
+            .SingleOrDefaultAsync(cancellationToken);
+        if (kind != "dm" || members.Count != 2)
         {
-            return Results.Json(new ErrorDto("call_invalid_state"), statusCode: StatusCodes.Status409Conflict);
+            return Results.Json(
+                new ErrorDto("call_invalid_conversation"),
+                statusCode: StatusCodes.Status409Conflict);
         }
 
-        List<Guid> audience = await db.Participants
-            .AsNoTracking()
-            .Where(participant =>
-                participant.ConversationId == conversationGuid && participant.UserId != user.Id)
-            .Select(participant => participant.UserId)
-            .Distinct()
-            .ToListAsync(cancellationToken);
+        Guid otherMemberId = members[0] == user.Id ? members[1] : members[0];
+        Guid recipientId;
+        if (action == CallAction.Ring)
+        {
+            if (!registry.TryStart(conversationGuid, user.Id, otherMemberId, out _))
+            {
+                return Results.Json(
+                    new ErrorDto("call_invalid_state"),
+                    statusCode: StatusCodes.Status409Conflict);
+            }
+
+            recipientId = otherMemberId;
+        }
+        else
+        {
+            CallApplyResult result = registry.TryApply(
+                conversationGuid, user.Id, members[0], members[1], action, out recipientId);
+            if (result == CallApplyResult.Forbidden)
+            {
+                return ConversationAuth.Forbidden();
+            }
+
+            if (result != CallApplyResult.Applied)
+            {
+                return Results.Json(
+                    new ErrorDto("call_invalid_state"),
+                    statusCode: StatusCodes.Status409Conflict);
+            }
+        }
+
         gateway.Publish(
             eventType,
             new CallSignalData(conversationGuid, request.Sdp, request.Candidate, request.Reason),
-            audience);
+            [recipientId]);
 
         return Results.Ok(new { conversationId = conversationGuid });
     }
