@@ -5,7 +5,8 @@ namespace Aerochat.Server.Calls;
 internal sealed class ConnectedCallCleanupService(
     CallRegistry registry,
     GatewayHub gateway,
-    TimeProvider clock) : BackgroundService
+    TimeProvider clock,
+    ILogger<ConnectedCallCleanupService> logger) : BackgroundService
 {
     internal void Sweep()
     {
@@ -19,18 +20,41 @@ internal sealed class ConnectedCallCleanupService(
         }
     }
 
-    protected override async Task ExecuteAsync(CancellationToken stoppingToken)
+    internal async Task RunLoopAsync(
+        Func<CancellationToken, ValueTask<bool>> waitForTick,
+        Action sweep,
+        CancellationToken stoppingToken)
     {
-        using var timer = new PeriodicTimer(TimeSpan.FromSeconds(1), clock);
         try
         {
-            while (await timer.WaitForNextTickAsync(stoppingToken))
+            while (await waitForTick(stoppingToken))
             {
-                Sweep();
+                stoppingToken.ThrowIfCancellationRequested();
+                try
+                {
+                    sweep();
+                }
+                catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
+                {
+                    throw;
+                }
+                catch (Exception)
+                {
+                    stoppingToken.ThrowIfCancellationRequested();
+                    logger.LogWarning(
+                        new EventId(4101, "ConnectedCallCleanupSweepFailed"),
+                        "Connected call cleanup sweep failed; continuing on the next scheduled tick.");
+                }
             }
         }
         catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
         {
         }
+    }
+
+    protected override async Task ExecuteAsync(CancellationToken stoppingToken)
+    {
+        using var timer = new PeriodicTimer(TimeSpan.FromSeconds(1), clock);
+        await RunLoopAsync(timer.WaitForNextTickAsync, Sweep, stoppingToken);
     }
 }
