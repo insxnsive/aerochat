@@ -70,6 +70,9 @@ public sealed class CallCoordinator : ICallCoordinator
         _transport = transport;
         _dispatch = dispatch ?? (action => action());
 
+        // The ring may have reached the adapter before this coordinator existed; follow that call.
+        _callId = Session.CallId;
+
         _transport.CallSignalReceived += OnCallSignalReceived;
         _engine.IceCandidateReady += OnIceCandidateReady;
         _engine.StateChanged += OnRtcStateChanged;
@@ -181,7 +184,28 @@ public sealed class CallCoordinator : ICallCoordinator
     public async Task AcceptAsync(CancellationToken cancellationToken = default)
     {
         ThrowIfDisposed();
-        await _operations.WaitAsync(cancellationToken).ConfigureAwait(false);
+
+        // Take the offer and the call id and mark the call as accepted right away, before waiting for
+        // the operations lock. The presentation write runs on the UI thread (ApplyPresentation is
+        // synchronous), so a newer ring from the adapter cannot replace the call while this accept waits.
+        string? acceptedOffer = null;
+        string? acceptedCallId = null;
+        ApplyPresentation(() => Session.TryBeginAccept(out acceptedOffer, out acceptedCallId));
+        if (acceptedOffer is null && Session.Sdp is null)
+            throw new InvalidOperationException("No incoming call offer is available.");
+
+        try
+        {
+            await _operations.WaitAsync(cancellationToken).ConfigureAwait(false);
+        }
+        catch
+        {
+            // Never got to accept: put the call back so it can be accepted again.
+            if (acceptedOffer is not null)
+                ApplyPresentation(() => Session.SetLocalState(CallSessionState.Incoming));
+            throw;
+        }
+
         try
         {
             _hangupCompleted = false;
@@ -189,9 +213,18 @@ public sealed class CallCoordinator : ICallCoordinator
             if (_role == CallRole.Outgoing)
                 throw new InvalidOperationException("An outgoing call cannot accept its own offer.");
             _role = CallRole.Incoming;
-            string offer = Session.Sdp
+            if (acceptedCallId is not null)
+            {
+                if (_callId is not null && _callId != acceptedCallId)
+                    throw new InvalidOperationException("The call changed before it could be accepted.");
+                _callId = acceptedCallId;
+            }
+
+            string offer = acceptedOffer
+                ?? Session.Sdp
                 ?? throw new InvalidOperationException("No incoming call offer is available.");
-            ApplyPresentation(() => Session.SetLocalState(CallSessionState.Connecting));
+            if (acceptedOffer is null)
+                ApplyPresentation(() => Session.SetLocalState(CallSessionState.Connecting));
             string answer = await _engine.AcceptOffer(offer, cancellationToken).ConfigureAwait(false);
             _remoteDescriptionApplied = true;
             DrainPendingCandidates();
