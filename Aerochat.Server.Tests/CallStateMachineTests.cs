@@ -101,7 +101,7 @@ public sealed class CallStateMachineTests
 
         Assert.That(
             registry.TryApply(
-                conversationId, callerId, callerId, calleeId, CallAction.Hangup, out _),
+                conversationId, callerId, callerId, calleeId, CallAction.Hangup, null, out _, out _),
             Is.EqualTo(CallApplyResult.Applied));
         Assert.That(registry.TryStart(conversationId, callerId, calleeId, out CallSession? replacement), Is.True);
         Assert.That(replacement, Is.Not.Null);
@@ -119,21 +119,95 @@ public sealed class CallStateMachineTests
         Assert.That(registry.TryStart(conversationId, callerId, calleeId, out _), Is.True);
 
         Assert.That(
-            registry.TryApply(conversationId, calleeId, callerId, calleeId, CallAction.Offer, out _),
+            registry.TryApply(
+                conversationId, calleeId, callerId, calleeId, CallAction.Offer, null, out _, out _),
             Is.EqualTo(CallApplyResult.Forbidden));
         Assert.That(
-            registry.TryApply(conversationId, callerId, callerId, calleeId, CallAction.Offer, out Guid recipient),
+            registry.TryApply(
+                conversationId, callerId, callerId, calleeId, CallAction.Offer, null,
+                out Guid recipient, out Guid offerGeneration),
             Is.EqualTo(CallApplyResult.Applied));
         Assert.That(recipient, Is.EqualTo(calleeId));
         Assert.That(
-            registry.TryApply(conversationId, callerId, callerId, calleeId, CallAction.Answer, out _),
+            registry.TryApply(
+                conversationId, callerId, callerId, calleeId, CallAction.Answer, null, out _, out _),
             Is.EqualTo(CallApplyResult.Forbidden));
         Assert.That(
-            registry.TryApply(conversationId, strangerId, callerId, calleeId, CallAction.Ice, out _),
+            registry.TryApply(
+                conversationId, strangerId, callerId, calleeId, CallAction.Ice, null, out _, out _),
             Is.EqualTo(CallApplyResult.Forbidden));
         Assert.That(
-            registry.TryApply(conversationId, calleeId, callerId, calleeId, CallAction.Answer, out Guid callerRecipient),
+            registry.TryApply(
+                conversationId, calleeId, callerId, calleeId, CallAction.Answer, null,
+                out Guid callerRecipient, out Guid answerGeneration),
             Is.EqualTo(CallApplyResult.Applied));
         Assert.That(callerRecipient, Is.EqualTo(callerId));
+        Assert.That(offerGeneration, Is.EqualTo(answerGeneration));
+    }
+
+    [Test]
+    public void Registry_rejects_mismatched_generation_without_mutation()
+    {
+        var registry = new CallRegistry();
+        Guid conversationId = Guid.NewGuid();
+        Guid callerId = Guid.NewGuid();
+        Guid calleeId = Guid.NewGuid();
+        Assert.That(registry.TryStart(conversationId, callerId, calleeId, out CallSession? session), Is.True);
+        Assert.That(session, Is.Not.Null);
+
+        Assert.That(
+            registry.TryApply(
+                conversationId, callerId, callerId, calleeId, CallAction.Offer, Guid.NewGuid(),
+                out Guid recipient, out Guid callId),
+            Is.EqualTo(CallApplyResult.Mismatch));
+        Assert.Multiple(() =>
+        {
+            Assert.That(recipient, Is.EqualTo(Guid.Empty));
+            Assert.That(callId, Is.EqualTo(Guid.Empty));
+            Assert.That(session!.StateMachine.State, Is.EqualTo(CallState.Ringing));
+        });
+
+        Assert.That(
+            registry.TryApply(
+                conversationId, callerId, callerId, calleeId, CallAction.Offer, null,
+                out Guid acceptedRecipient, out Guid appliedGeneration),
+            Is.EqualTo(CallApplyResult.Applied));
+        Assert.That(acceptedRecipient, Is.EqualTo(calleeId));
+        Assert.That(appliedGeneration, Is.EqualTo(session!.CallId));
+    }
+
+    [Test]
+    public void Captured_recipient_and_generation_stay_bound_to_the_replaced_call()
+    {
+        var registry = new CallRegistry();
+        Guid conversationId = Guid.NewGuid();
+        Guid callerId = Guid.NewGuid();
+        Guid calleeId = Guid.NewGuid();
+
+        Assert.That(registry.TryStart(conversationId, callerId, calleeId, out CallSession? first), Is.True);
+        Guid firstGeneration = first!.CallId;
+
+        Assert.That(
+            registry.TryApply(
+                conversationId, callerId, callerId, calleeId, CallAction.Hangup, firstGeneration,
+                out Guid firstRecipient, out Guid capturedGeneration),
+            Is.EqualTo(CallApplyResult.Applied));
+        Assert.That(firstRecipient, Is.EqualTo(calleeId));
+        Assert.That(capturedGeneration, Is.EqualTo(firstGeneration));
+
+        Assert.That(registry.TryStart(conversationId, callerId, calleeId, out CallSession? replacement), Is.True);
+        Assert.That(replacement, Is.Not.Null);
+        Assert.That(replacement!.CallId, Is.Not.EqualTo(firstGeneration));
+
+        Assert.That(
+            registry.TryApply(
+                conversationId, callerId, callerId, calleeId, CallAction.Offer, replacement.CallId,
+                out Guid replacementRecipient, out Guid replacementGeneration),
+            Is.EqualTo(CallApplyResult.Applied));
+        Assert.That(replacementRecipient, Is.EqualTo(calleeId));
+        Assert.That(replacementGeneration, Is.EqualTo(replacement.CallId));
+
+        Assert.That(capturedGeneration, Is.EqualTo(firstGeneration));
+        Assert.That(firstRecipient, Is.EqualTo(calleeId));
     }
 }
