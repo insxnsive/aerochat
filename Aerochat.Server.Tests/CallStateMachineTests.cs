@@ -57,6 +57,36 @@ public sealed class CallStateMachineTests
     }
 
     [Test]
+    public void Screen_share_start_stop_requires_a_connected_call_and_rejects_duplicates()
+    {
+        foreach (CallState state in Enum.GetValues<CallState>().Where(candidate => candidate != CallState.Connected))
+        {
+            var machine = new CallStateMachine(state);
+
+            Assert.That(machine.TryApply(CallAction.ScreenStart), Is.False, state.ToString());
+            Assert.That(machine.TryApply(CallAction.ScreenStop), Is.False, state.ToString());
+            Assert.That(machine.IsScreenSharing, Is.False, state.ToString());
+            Assert.That(machine.State, Is.EqualTo(state), state.ToString());
+        }
+
+        var connected = new CallStateMachine(CallState.Connected);
+
+        Assert.That(connected.TryApply(CallAction.ScreenStart), Is.True);
+        Assert.That(connected.IsScreenSharing, Is.True);
+        Assert.That(connected.TryApply(CallAction.ScreenStart), Is.False);
+        Assert.That(connected.IsScreenSharing, Is.True);
+        Assert.That(connected.TryApply(CallAction.ScreenStop), Is.True);
+        Assert.That(connected.IsScreenSharing, Is.False);
+        Assert.That(connected.TryApply(CallAction.ScreenStop), Is.False);
+        Assert.That(connected.State, Is.EqualTo(CallState.Connected));
+
+        Assert.That(connected.TryApply(CallAction.ScreenStart), Is.True);
+        Assert.That(connected.TryApply(CallAction.Hangup), Is.True);
+        Assert.That(connected.IsScreenSharing, Is.False);
+        Assert.That(connected.State, Is.EqualTo(CallState.Ended));
+    }
+
+    [Test]
     public void Registry_allows_one_active_call_per_conversation()
     {
         var registry = new CallRegistry();
