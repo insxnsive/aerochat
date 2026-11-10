@@ -107,6 +107,13 @@ public partial class App : Application
         ConversationPresentation conversation,
         IAuthClient authClient)
     {
+        if (RtcOptIn.IsBlocked(
+                TryGetConfiguredServer(out _),
+                Environment.GetEnvironmentVariable(RtcOptIn.EnvironmentVariable)))
+        {
+            return null;
+        }
+
         CallSignalingClient? signaling = CreateCallClient(authClient);
         if (signaling is null || _chatTransport is null)
             return new OfflineCallCoordinator(state, conversation.Id.ToString());
