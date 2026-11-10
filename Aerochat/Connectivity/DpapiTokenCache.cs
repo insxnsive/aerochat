@@ -6,14 +6,21 @@ namespace Aerochat.Connectivity;
 
 public sealed class DpapiTokenCache : ITokenCache
 {
-    private static readonly byte[] Entropy = Encoding.UTF8.GetBytes("Aerochat.Session.v1");
     private static readonly UTF8Encoding StrictUtf8 = new(encoderShouldEmitUTF8Identifier: false, throwOnInvalidBytes: true);
     private static readonly SemaphoreSlim SaveGate = new(1, 1);
 
     private readonly string _path;
+    private readonly byte[] _entropy;
 
-    public DpapiTokenCache(string? path = null)
+    public DpapiTokenCache(Uri server, string? path = null)
     {
+        ArgumentNullException.ThrowIfNull(server);
+
+        if (!server.IsAbsoluteUri)
+            throw new ArgumentException("The token cache requires an absolute server URI.", nameof(server));
+
+        _entropy = Encoding.UTF8.GetBytes($"Aerochat.Session.v2|{server.Scheme}://{server.IdnHost}:{server.Port}");
+
         _path = string.IsNullOrWhiteSpace(path)
             ? Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "Aerochat", "session.bin")
             : path;
@@ -27,7 +34,7 @@ public sealed class DpapiTokenCache : ITokenCache
         try
         {
             byte[] protectedToken = await File.ReadAllBytesAsync(_path, cancellationToken);
-            byte[] tokenBytes = ProtectedData.Unprotect(protectedToken, Entropy, DataProtectionScope.CurrentUser);
+            byte[] tokenBytes = ProtectedData.Unprotect(protectedToken, _entropy, DataProtectionScope.CurrentUser);
             string token = StrictUtf8.GetString(tokenBytes);
             if (string.IsNullOrWhiteSpace(token))
                 throw new DecoderFallbackException();
@@ -52,7 +59,7 @@ public sealed class DpapiTokenCache : ITokenCache
 
         byte[] protectedToken = ProtectedData.Protect(
             Encoding.UTF8.GetBytes(token),
-            Entropy,
+            _entropy,
             DataProtectionScope.CurrentUser);
         string temporaryPath = $"{_path}.{Guid.NewGuid():N}.tmp";
 

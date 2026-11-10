@@ -69,7 +69,7 @@ public sealed class OAuthAuthClient : IAuthClient
         new(
             new HttpClient(),
             serverUri,
-            new DpapiTokenCache(tokenCachePath),
+            new DpapiTokenCache(serverUri, tokenCachePath),
             new ShellBrowserLauncher(),
             () => new LoopbackCallbackListener());
 
