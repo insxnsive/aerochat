@@ -374,6 +374,148 @@ public sealed class GatewayWebSocketIntegrationTests
         }
     }
 
+    [Test]
+    public async Task Gateway_rejects_excess_user_upgrade_before_accept()
+    {
+        using var fixture = await LoopbackServerFixture.StartAsync(
+            maxConnectionsPerUser: 1, maxConnectionsTotal: 2);
+        (Guid userId, string token) = await CreateUserAsync(fixture, "admission-user");
+        using WebSocket first = await ConnectAsync(fixture.BaseUrl, token);
+        Assert.That(await ReceiveTextFrameAsync(first), Does.Contain("gateway.ready"));
+        GatewayHub hub = fixture.Services.GetRequiredService<GatewayHub>();
+        using var client = new HttpClient();
+        using var request = new HttpRequestMessage(HttpMethod.Get,
+            $"{fixture.BaseUrl}/ws?token={Uri.EscapeDataString(token)}");
+        request.Version = HttpVersion.Version11;
+        request.VersionPolicy = HttpVersionPolicy.RequestVersionExact;
+        request.Headers.TryAddWithoutValidation("Connection", "Upgrade");
+        request.Headers.TryAddWithoutValidation("Upgrade", "websocket");
+        request.Headers.TryAddWithoutValidation("Sec-WebSocket-Version", "13");
+        request.Headers.TryAddWithoutValidation("Sec-WebSocket-Key", "dGhlIHNhbXBsZSBub25jZQ==");
+        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+        using var response = await client.SendAsync(request,
+            HttpCompletionOption.ResponseHeadersRead, timeout.Token);
+        Assert.That(response.StatusCode, Is.EqualTo(HttpStatusCode.TooManyRequests));
+        Assert.That(response.Headers.RetryAfter?.Delta, Is.EqualTo(TimeSpan.FromSeconds(1)));
+        Assert.That(await response.Content.ReadAsStringAsync(),
+            Does.Contain("gateway_capacity_exceeded"));
+        Assert.That(hub.ActiveConnectionCount, Is.EqualTo(1));
+
+        hub.Publish(GatewayEventType.PresenceUpdated, new PresenceUpdatedData(userId, "away"), [userId]);
+        Assert.That(await ReceiveTextFrameAsync(first), Does.Contain("presence.updated"));
+    }
+
+    [Test]
+    public async Task Global_cap_rejects_while_another_user_below_own_cap_is_admitted()
+    {
+        using var fixture = await LoopbackServerFixture.StartAsync(
+            maxConnectionsPerUser: 2, maxConnectionsTotal: 2);
+        (_, string firstToken) = await CreateUserAsync(fixture, "global-first");
+        (_, string secondToken) = await CreateUserAsync(fixture, "global-second");
+        using WebSocket first = await ConnectAsync(fixture.BaseUrl, firstToken);
+        Assert.That(await ReceiveTextFrameAsync(first), Does.Contain("gateway.ready"));
+        using WebSocket second = await ConnectAsync(fixture.BaseUrl, secondToken);
+        Assert.That(await ReceiveTextFrameAsync(second), Does.Contain("gateway.ready"));
+
+        (HttpStatusCode status, string body, TimeSpan? retryAfter) =
+            await SendUpgradeAsync(fixture.BaseUrl, firstToken);
+        Assert.Multiple(() =>
+        {
+            Assert.That(status, Is.EqualTo(HttpStatusCode.TooManyRequests));
+            Assert.That(body, Does.Contain("gateway_capacity_exceeded"));
+            Assert.That(retryAfter, Is.EqualTo(TimeSpan.FromSeconds(1)));
+        });
+        Assert.That(fixture.Services.GetRequiredService<GatewayHub>().ActiveConnectionCount, Is.EqualTo(2));
+    }
+
+    [TestCase("disconnect")]
+    [TestCase("invalid-cursor")]
+    [TestCase("expiry")]
+    public async Task Endpoint_releases_admission_slot_when_the_socket_ends(string scenario)
+    {
+        using var fixture = await LoopbackServerFixture.StartAsync(
+            maxConnectionsPerUser: 1, maxConnectionsTotal: 1);
+        (_, string token) = await CreateUserAsync(fixture, $"release-{scenario}");
+        GatewayHub hub = fixture.Services.GetRequiredService<GatewayHub>();
+
+        switch (scenario)
+        {
+            case "disconnect":
+            {
+                using WebSocket socket = await ConnectAsync(fixture.BaseUrl, token);
+                Assert.That(await ReceiveTextFrameAsync(socket), Does.Contain("gateway.ready"));
+                await CloseGracefullyAsync(socket);
+                break;
+            }
+            case "invalid-cursor":
+            {
+                using WebSocket socket = await ConnectAsync(fixture.BaseUrl, token, lastEventId: "not-a-cursor");
+                WebSocketReceiveResult close = await ReceiveRawAsync(socket);
+                Assert.That(close.MessageType, Is.EqualTo(WebSocketMessageType.Close));
+                Assert.That(close.CloseStatus, Is.EqualTo(WebSocketCloseStatus.PolicyViolation));
+                break;
+            }
+            default:
+            {
+                string shortLived = fixture.Services.GetRequiredService<SessionService>().Issue(
+                    new Identity("github", $"release-{scenario}", $"release-{scenario}"),
+                    TimeSpan.FromSeconds(5));
+                using WebSocket socket = await ConnectAsync(fixture.BaseUrl, shortLived);
+                Assert.That(await ReceiveTextFrameAsync(socket), Does.Contain("gateway.ready"));
+                var buffer = new byte[4096];
+                using var window = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+                try
+                {
+                    await socket.ReceiveAsync(new ArraySegment<byte>(buffer), window.Token);
+                }
+                catch (WebSocketException)
+                {
+                    // Expiry aborts the transport; either close frame or abort is a release path.
+                }
+                break;
+            }
+        }
+
+        await WaitForAdmissionReleaseAsync(hub);
+        using WebSocket replacement = await ConnectAsync(fixture.BaseUrl, token);
+        Assert.That(await ReceiveTextFrameAsync(replacement), Does.Contain("gateway.ready"));
+    }
+
+    private static async Task<(HttpStatusCode Status, string Body, TimeSpan? RetryAfter)> SendUpgradeAsync(
+        string baseUrl,
+        string token)
+    {
+        using var client = new HttpClient();
+        using var request = new HttpRequestMessage(
+            HttpMethod.Get, $"{baseUrl}/ws?token={Uri.EscapeDataString(token)}");
+        request.Version = HttpVersion.Version11;
+        request.VersionPolicy = HttpVersionPolicy.RequestVersionExact;
+        request.Headers.TryAddWithoutValidation("Connection", "Upgrade");
+        request.Headers.TryAddWithoutValidation("Upgrade", "websocket");
+        request.Headers.TryAddWithoutValidation("Sec-WebSocket-Version", "13");
+        request.Headers.TryAddWithoutValidation("Sec-WebSocket-Key", "dGhlIHNhbXBsZSBub25jZQ==");
+        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+        using HttpResponseMessage response = await client.SendAsync(
+            request, HttpCompletionOption.ResponseHeadersRead, timeout.Token);
+        string body = await response.Content.ReadAsStringAsync(timeout.Token);
+        return (response.StatusCode, body, response.Headers.RetryAfter?.Delta);
+    }
+
+    private static async Task WaitForAdmissionReleaseAsync(GatewayHub hub)
+    {
+        for (int attempt = 0; attempt < 100; attempt++)
+        {
+            if (hub.ReservedConnectionCount == 0 && hub.ActiveConnectionCount == 0)
+            {
+                return;
+            }
+
+            await Task.Delay(50);
+        }
+
+        Assert.That(hub.ReservedConnectionCount, Is.Zero, "Admission slot was not released in time.");
+    }
+
     private static async Task<string> PostMessageAsync(HttpClient client, string baseUrl, Guid conversation)
     {
         string body = $"payload-{Guid.NewGuid():N}";

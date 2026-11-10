@@ -40,7 +40,9 @@ public sealed class LoopbackServerFixture : IAsyncDisposable, IDisposable
         string? instanceId = null,
         int? replayCapacity = null,
         int? queueCapacity = null,
-        string? allowedOrigins = null)
+        string? allowedOrigins = null,
+        int? maxConnectionsPerUser = null,
+        int? maxConnectionsTotal = null)
     {
         var options = new WebApplicationOptions { EnvironmentName = "Testing" };
         var builder = WebApplication.CreateBuilder(options);
@@ -66,6 +68,18 @@ public sealed class LoopbackServerFixture : IAsyncDisposable, IDisposable
         if (allowedOrigins is not null)
         {
             builder.Configuration["Gateway:AllowedOrigins"] = allowedOrigins;
+        }
+
+        if (maxConnectionsPerUser is not null)
+        {
+            builder.Configuration["Gateway:MaxConnectionsPerUser"] =
+                maxConnectionsPerUser.Value.ToString(System.Globalization.CultureInfo.InvariantCulture);
+        }
+
+        if (maxConnectionsTotal is not null)
+        {
+            builder.Configuration["Gateway:MaxConnectionsTotal"] =
+                maxConnectionsTotal.Value.ToString(System.Globalization.CultureInfo.InvariantCulture);
         }
 
         var connection = new SqliteConnection("Data Source=:memory:");

@@ -650,6 +650,140 @@ public sealed class GatewayHubTests
         Assert.That(transitions, Is.EqualTo(new[] { (userId, true), (userId, false) }));
     }
 
+    [Test]
+    public void Admission_enforces_per_user_and_global_caps()
+    {
+        Guid first = Guid.NewGuid();
+        Guid second = Guid.NewGuid();
+        var hub = new GatewayHub(new GatewayOptions
+        {
+            InstanceId = "hub",
+            MaxConnectionsPerUser = 2,
+            MaxConnectionsTotal = 3
+        });
+
+        Assert.That(hub.TryReserveConnection(first, "first-1", out GatewayHub.ConnectionLease? firstLease), Is.True);
+        Assert.That(hub.TryReserveConnection(first, "first-2", out GatewayHub.ConnectionLease? secondLease), Is.True);
+        Assert.That(hub.TryReserveConnection(first, "first-3", out _), Is.False);
+        Assert.That(hub.TryReserveConnection(second, "second-1", out GatewayHub.ConnectionLease? thirdLease), Is.True);
+        Assert.That(hub.TryReserveConnection(second, "second-2", out _), Is.False);
+        Assert.That(hub.ReservedConnectionCount, Is.EqualTo(3));
+
+        firstLease!.Dispose();
+        secondLease!.Dispose();
+        thirdLease!.Dispose();
+        Assert.That(hub.ReservedConnectionCount, Is.Zero);
+        Assert.That(hub.TryReserveConnection(second, "second-2", out GatewayHub.ConnectionLease? retry), Is.True);
+        retry!.Dispose();
+        Assert.That(hub.ReservedConnectionCount, Is.Zero);
+    }
+
+    [Test]
+    public void Parallel_reservations_cannot_exceed_the_user_cap()
+    {
+        Guid userId = Guid.NewGuid();
+        var hub = new GatewayHub(new GatewayOptions
+        {
+            InstanceId = "hub",
+            MaxConnectionsPerUser = 4,
+            MaxConnectionsTotal = 64
+        });
+        using var barrier = new Barrier(16);
+        var leases = new System.Collections.Concurrent.ConcurrentBag<GatewayHub.ConnectionLease>();
+        var tasks = new List<Task>();
+
+        for (int index = 0; index < 16; index++)
+        {
+            int captured = index;
+            tasks.Add(Task.Run(() =>
+            {
+                barrier.SignalAndWait();
+                if (hub.TryReserveConnection(userId, $"parallel-{captured}", out GatewayHub.ConnectionLease? lease))
+                {
+                    leases.Add(lease!);
+                }
+            }));
+        }
+
+        Assert.That(Task.WaitAll([.. tasks], TimeSpan.FromSeconds(5)), Is.True);
+        Assert.That(leases.Count, Is.EqualTo(4));
+        Assert.That(hub.ReservedConnectionCount, Is.EqualTo(4));
+
+        foreach (GatewayHub.ConnectionLease lease in leases)
+        {
+            lease.Dispose();
+        }
+
+        Assert.That(hub.ReservedConnectionCount, Is.Zero);
+    }
+
+    [Test]
+    public void Admission_lease_disposal_is_idempotent_and_reusable()
+    {
+        Guid userId = Guid.NewGuid();
+        var hub = new GatewayHub(new GatewayOptions
+        {
+            InstanceId = "hub",
+            MaxConnectionsPerUser = 1,
+            MaxConnectionsTotal = 4
+        });
+
+        Assert.That(hub.TryReserveConnection(userId, "lease", out GatewayHub.ConnectionLease? lease), Is.True);
+        lease!.Dispose();
+        lease.Dispose();
+        Assert.That(hub.ReservedConnectionCount, Is.Zero);
+        Assert.That(hub.TryReserveConnection(userId, "lease", out GatewayHub.ConnectionLease? again), Is.True);
+        again!.Dispose();
+        Assert.That(hub.ReservedConnectionCount, Is.Zero);
+    }
+
+    [Test]
+    public void Same_id_replacement_holders_and_authority_are_enforced()
+    {
+        Guid userId = Guid.NewGuid();
+        Guid otherUserId = Guid.NewGuid();
+        var hub = new GatewayHub(new GatewayOptions
+        {
+            InstanceId = "hub",
+            MaxConnectionsPerUser = 1,
+            MaxConnectionsTotal = 1
+        });
+        var sink = new RecordingSink("shared", userId);
+        Assert.That(hub.TryReserveConnection(userId, "shared", out GatewayHub.ConnectionLease? first), Is.True);
+        Assert.That(hub.Register(sink).Registered, Is.True);
+
+        Assert.That(
+            hub.TryReserveConnection(userId, "shared", out GatewayHub.ConnectionLease? second, expectedReplacement: sink),
+            Is.True);
+        Assert.That(hub.TryReserveConnection(userId, "shared", out _, expectedReplacement: sink), Is.False);
+        Assert.That(hub.TryReserveConnection(otherUserId, "shared", out _, expectedReplacement: sink), Is.False);
+        Assert.That(
+            hub.TryReserveConnection(userId, "shared", out _, expectedReplacement: new RecordingSink("shared", userId)),
+            Is.False);
+        Assert.That(hub.TryReserveConnection(userId, "shared", out _), Is.False);
+        Assert.That(hub.ReservedConnectionCount, Is.EqualTo(1));
+
+        Assert.That(hub.TryReserveConnection(otherUserId, "other", out _), Is.False);
+
+        first!.Dispose();
+        Assert.That(hub.TryReserveConnection(otherUserId, "other", out _), Is.False);
+
+        second!.Dispose();
+        Assert.That(hub.TryReserveConnection(otherUserId, "other", out GatewayHub.ConnectionLease? other), Is.True);
+        other!.Dispose();
+    }
+
+    [Test]
+    public void Non_positive_admission_caps_are_rejected()
+    {
+        Assert.That(
+            () => new GatewayHub(new GatewayOptions { InstanceId = "hub", MaxConnectionsPerUser = 0 }),
+            Throws.TypeOf<ArgumentOutOfRangeException>());
+        Assert.That(
+            () => new GatewayHub(new GatewayOptions { InstanceId = "hub", MaxConnectionsTotal = -1 }),
+            Throws.TypeOf<ArgumentOutOfRangeException>());
+    }
+
     private sealed class RecordingSink(string connectionId, Guid userId, CancellationToken disconnected = default) : IGatewaySink
     {
         public string ConnectionId { get; } = connectionId;
