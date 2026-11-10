@@ -398,6 +398,45 @@ public sealed class GatewayTransportTests
     }
 
     [Test]
+    public async Task Gateway_client_delivers_screen_share_call_events()
+    {
+        const string started =
+            "{\"t\":\"call.screen.started\",\"eventId\":\"gateway:5\",\"d\":{\"conversationId\":\"conversation-1\"}}";
+        const string stopped =
+            "{\"t\":\"call.screen.stopped\",\"eventId\":\"gateway:6\",\"d\":{\"conversationId\":\"conversation-1\"}}";
+        var socket = new ScriptedGatewaySocket(textFrames: new[] { started, stopped });
+        var received = new List<string>();
+        var bothReceived = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        await using var client = new GatewayClient(
+            () => socket,
+            jitter: null,
+            delay: (_, _) => Task.CompletedTask);
+        client.CallSignalReceived += (_, call) =>
+        {
+            received.Add(call.EventType);
+            if (received.Count == 2)
+                bothReceived.TrySetResult();
+        };
+
+        try
+        {
+            await client.ConnectAsync(new Uri("ws://gateway.example"), "token")
+                .WaitAsync(TimeSpan.FromSeconds(5));
+            await bothReceived.Task.WaitAsync(TimeSpan.FromSeconds(5));
+
+            Assert.Multiple(() =>
+            {
+                Assert.That(received, Is.EqualTo(new[] { "call.screen.started", "call.screen.stopped" }));
+                Assert.That(client.LastEventId, Is.EqualTo("gateway:6"));
+            });
+        }
+        finally
+        {
+            socket.Abort();
+        }
+    }
+
+    [Test]
     public async Task Gateway_client_continues_processing_next_message_frame_after_handler_throws()
     {
         const string firstFrame =

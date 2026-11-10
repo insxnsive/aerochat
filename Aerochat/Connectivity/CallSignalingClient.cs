@@ -13,7 +13,13 @@ public interface ICallSignalingClient : IAsyncDisposable
     Task HangupAsync(string conversationId, string? reason = null, CancellationToken cancellationToken = default);
 }
 
-public sealed class CallSignalingClient : ICallSignalingClient
+public interface IScreenShareSignalingClient
+{
+    Task ScreenStartAsync(string conversationId, CancellationToken cancellationToken = default);
+    Task ScreenStopAsync(string conversationId, CancellationToken cancellationToken = default);
+}
+
+public sealed class CallSignalingClient : ICallSignalingClient, IScreenShareSignalingClient
 {
     private readonly HttpClient _httpClient;
     private readonly Uri _server;
@@ -50,6 +56,12 @@ public sealed class CallSignalingClient : ICallSignalingClient
 
     public Task HangupAsync(string conversationId, string? reason = null, CancellationToken cancellationToken = default) =>
         SendAsync("hangup", conversationId, null, null, reason, cancellationToken);
+
+    public Task ScreenStartAsync(string conversationId, CancellationToken cancellationToken = default) =>
+        SendAsync("screen/start", conversationId, null, null, null, cancellationToken);
+
+    public Task ScreenStopAsync(string conversationId, CancellationToken cancellationToken = default) =>
+        SendAsync("screen/stop", conversationId, null, null, null, cancellationToken);
 
     private async Task SendAsync(
         string action, string conversationId, string? sdp, string? candidate, string? reason,

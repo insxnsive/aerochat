@@ -482,6 +482,8 @@ public sealed class GatewayClient : IChatTransport
             case "call.answer":
             case "call.ice":
             case "call.hangup":
+            case "call.screen.started":
+            case "call.screen.stopped":
                 if (GatewayProtocol.TryParseCallSignal(frame, out CallSignalEventArgs? call))
                     InvokeSubscribers(CallSignalReceived, call!);
                 break;
