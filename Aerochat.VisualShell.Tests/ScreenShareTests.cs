@@ -313,6 +313,25 @@ public sealed class ScreenShareTests
     }
 
     [Test]
+    public void Installed_rtp_frame_reassembly_limit_stays_within_the_receive_byte_cap()
+    {
+        var peer = new SIPSorcery.Net.RTCPeerConnection(null);
+        try
+        {
+            peer.addTrack(new SIPSorcery.Net.MediaStreamTrack(
+                new List<VideoFormat> { new VideoFormat(VideoCodecsEnum.VP8, 96) },
+                SIPSorcery.Net.MediaStreamStatusEnum.SendRecv));
+
+            Assert.That(peer.MaxReconstructedVideoFrameSize,
+                Is.LessThanOrEqualTo(Vp8ReceiveAdmission.MaxEncodedFrameBytes));
+        }
+        finally
+        {
+            peer.Close("test");
+        }
+    }
+
+    [Test]
     public async Task Rtc_peer_engine_forwards_decoded_video_and_releases_endpoint_once()
     {
         var video = new RecordingRtcVideoEndpoint();
