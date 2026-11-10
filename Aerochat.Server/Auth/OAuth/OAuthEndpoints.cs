@@ -1,3 +1,4 @@
+using Aerochat.Server.Hardening;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Routing;
@@ -10,8 +11,27 @@ public static class OAuthEndpoints
     {
         endpoints.MapGet(
             "/auth/{provider}/start",
-            (string provider, string? returnUri, OAuthFlowService flow) =>
+            (
+                string provider,
+                string? returnUri,
+                OAuthFlowService flow,
+                HttpContext context,
+                OAuthStartRateLimiter admission) =>
             {
+                RateLimitDecision decision = admission.TryAcquire(
+                    context.Connection.RemoteIpAddress);
+                if (!decision.Allowed)
+                {
+                    int retryAfter = Math.Max(
+                        1,
+                        (int)Math.Ceiling(decision.RetryAfter.TotalSeconds));
+                    context.Response.Headers["Retry-After"] =
+                        retryAfter.ToString(System.Globalization.CultureInfo.InvariantCulture);
+                    return Results.Json(
+                        new { error = "rate_limited" },
+                        statusCode: StatusCodes.Status429TooManyRequests);
+                }
+
                 try
                 {
                     OAuthStartResult result = flow.Start(provider, returnUri ?? string.Empty);
