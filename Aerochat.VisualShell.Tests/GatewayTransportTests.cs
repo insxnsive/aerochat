@@ -54,6 +54,28 @@ public sealed class GatewayTransportTests
     }
 
     [Test]
+    public void Presentation_adapter_ignores_numeric_or_combined_presence_status()
+    {
+        PresentationState state = DemoData.Create();
+        using var adapter = new PresentationAdapter(state, new NullTransport());
+        PersonPresentation person = state.Conversations
+            .SelectMany(conversation => conversation.Participants)
+            .Single(item => item.Id == 1001);
+
+        adapter.ApplyPresenceUpdated(new PresenceUpdatedEventArgs("1001", "Online"));
+        Assert.That(person.Presence.Status, Is.EqualTo(PresenceStatus.Online));
+
+        adapter.ApplyPresenceUpdated(new PresenceUpdatedEventArgs("1001", "2"));
+        adapter.ApplyPresenceUpdated(new PresenceUpdatedEventArgs("1001", "Online,Away"));
+
+        Assert.That(person.Presence.Status, Is.EqualTo(PresenceStatus.Online));
+
+        adapter.ApplyPresenceUpdated(new PresenceUpdatedEventArgs("1001", "busy"));
+
+        Assert.That(person.Presence.Status, Is.EqualTo(PresenceStatus.Busy));
+    }
+
+    [Test]
     public void Gateway_frame_parser_reads_wire_shape_without_event_side_effects()
     {
         bool parsed = GatewayProtocol.TryParseFrame(

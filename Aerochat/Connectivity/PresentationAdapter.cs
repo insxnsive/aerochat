@@ -41,7 +41,8 @@ public sealed class PresentationAdapter : IDisposable
         ArgumentNullException.ThrowIfNull(update);
         if (!StableIdMapper.TryMap(update.UserId, out ulong userId)
             || !Enum.TryParse(update.Status, ignoreCase: true, out PresenceStatus status)
-            || !Enum.IsDefined(status))
+            || !Enum.IsDefined(status)
+            || !string.Equals(status.ToString(), update.Status, StringComparison.OrdinalIgnoreCase))
         {
             return;
         }
