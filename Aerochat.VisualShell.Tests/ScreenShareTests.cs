@@ -1,0 +1,181 @@
+using Aerochat.Connectivity.Rtc;
+using SIPSorceryMedia.Abstractions;
+
+namespace Aerochat.VisualShell.Tests;
+
+public sealed class ScreenShareTests
+{
+    [TestCase(VideoPixelFormatsEnum.Bgr, new byte[] { 1, 2, 3, 4, 5, 6 }, new byte[] { 1, 2, 3, 0xFF, 4, 5, 6, 0xFF })]
+    [TestCase(VideoPixelFormatsEnum.Rgb, new byte[] { 1, 2, 3, 4, 5, 6 }, new byte[] { 3, 2, 1, 0xFF, 6, 5, 4, 0xFF })]
+    [TestCase(VideoPixelFormatsEnum.Bgra, new byte[] { 1, 2, 3, 4, 5, 6, 7, 8 }, new byte[] { 1, 2, 3, 4, 5, 6, 7, 8 })]
+    [TestCase(VideoPixelFormatsEnum.Rgba, new byte[] { 1, 2, 3, 4, 5, 6, 7, 8 }, new byte[] { 3, 2, 1, 4, 7, 6, 5, 8 })]
+    public void Decoded_video_pixels_are_packed_into_owned_bgra_frames(VideoPixelFormatsEnum format, byte[] source, byte[] expected)
+    {
+        int sourceStride = format is VideoPixelFormatsEnum.Bgr or VideoPixelFormatsEnum.Rgb ? 6 : 8;
+        bool converted = ScreenSharePixelConverter.TryConvertToBgra(source, width: 2, height: 1, sourceStride, format, out ScreenShareFrame? frame);
+        Assert.Multiple(() =>
+        {
+            Assert.That(converted, Is.True);
+            Assert.That(frame, Is.Not.Null);
+            Assert.That(frame!.Stride, Is.EqualTo(8));
+            Assert.That(frame.Pixels.ToArray(), Is.EqualTo(expected));
+        });
+    }
+
+    [Test]
+    public void Decoded_video_rejects_planar_or_malformed_samples()
+    {
+        Assert.Multiple(() =>
+        {
+            Assert.That(ScreenSharePixelConverter.TryConvertToBgra(new byte[8], 2, 1, 8, VideoPixelFormatsEnum.I420, out _), Is.False);
+            Assert.That(ScreenSharePixelConverter.TryConvertToBgra(new byte[7], 2, 1, 8, VideoPixelFormatsEnum.Bgra, out _), Is.False);
+        });
+    }
+
+    [Test]
+    public void Screen_share_frame_owns_its_pixel_buffer()
+    {
+        byte[] source = [1, 2, 3, 4];
+        var frame = new ScreenShareFrame(1, 1, 4, source);
+        source[0] = 99;
+        Assert.That(frame.Pixels.ToArray(), Is.EqualTo(new byte[] { 1, 2, 3, 4 }));
+    }
+
+    [Test]
+    public void Screen_share_frame_rejects_oversized_or_malformed_buffers()
+    {
+        Assert.Multiple(() =>
+        {
+            Assert.That(() => new ScreenShareFrame(1922, 1080, 1922 * 4, new byte[1922 * 4 * 1080]), Throws.TypeOf<ArgumentOutOfRangeException>());
+            Assert.That(() => new ScreenShareFrame(2, 2, 8, new byte[15]), Throws.TypeOf<ArgumentException>());
+            Assert.That(() => new ScreenShareFrame(2, 2, 7, new byte[14]), Throws.TypeOf<ArgumentOutOfRangeException>());
+        });
+    }
+
+    [Test]
+    public async Task Screen_share_publisher_caps_frames_and_does_not_publish_after_stop()
+    {
+        var source = new RecordingScreenCaptureSource();
+        var sink = new RecordingScreenShareFrameSink(expectedFrames: 2);
+        await using var publisher = new ScreenSharePublisher(source, sink, framesPerSecond: 15);
+        await publisher.StartAsync();
+        source.Raise(FrameAt(TimeSpan.Zero));
+        source.Raise(FrameAt(TimeSpan.FromMilliseconds(20)));
+        source.Raise(FrameAt(TimeSpan.FromMilliseconds(67)));
+        await sink.ExpectedFrames.WaitAsync(TimeSpan.FromSeconds(2));
+        await publisher.StopAsync();
+        source.Raise(FrameAt(TimeSpan.FromMilliseconds(134)));
+        Assert.Multiple(() =>
+        {
+            Assert.That(sink.Frames.Select(frame => frame.CapturedAt), Is.EqualTo(new[] { TimeSpan.Zero, TimeSpan.FromMilliseconds(67) }));
+            Assert.That(source.StartCount, Is.EqualTo(1));
+            Assert.That(source.StopCount, Is.EqualTo(1));
+            Assert.That(source.SubscriberCount, Is.Zero);
+        });
+    }
+
+    [Test]
+    public async Task Screen_share_publisher_disposal_stops_and_disposes_source_once()
+    {
+        var source = new RecordingScreenCaptureSource();
+        var sink = new RecordingScreenShareFrameSink(expectedFrames: 0);
+        var publisher = new ScreenSharePublisher(source, sink, framesPerSecond: 15);
+        await publisher.StartAsync();
+        await publisher.DisposeAsync();
+        await publisher.DisposeAsync();
+        Assert.Multiple(() =>
+        {
+            Assert.That(source.StopCount, Is.EqualTo(1));
+            Assert.That(source.DisposeCount, Is.EqualTo(1));
+            Assert.That(source.SubscriberCount, Is.Zero);
+        });
+    }
+
+    [Test]
+    public async Task Cancelling_the_start_operation_after_success_does_not_cancel_the_share_lifetime()
+    {
+        var source = new RecordingScreenCaptureSource();
+        var sink = new CancellationAwareScreenShareFrameSink();
+        await using var publisher = new ScreenSharePublisher(source, sink, framesPerSecond: 15);
+        using var startup = new CancellationTokenSource();
+        await publisher.StartAsync(startup.Token);
+        startup.Cancel();
+        source.Raise(FrameAt(TimeSpan.Zero));
+        Assert.That(sink.FrameCount, Is.EqualTo(1));
+    }
+
+    [TestCase(3840, 2160, 1920, 1080)]
+    [TestCase(2560, 1440, 1920, 1080)]
+    [TestCase(1280, 720, 1280, 720)]
+    [TestCase(2160, 3840, 606, 1080)]
+    public void Screen_share_dimensions_cap_at_1080p_without_upscaling(int width, int height, int expectedWidth, int expectedHeight)
+    {
+        ScreenShareSize size = ScreenShareSize.Constrain(width, height);
+        Assert.Multiple(() =>
+        {
+            Assert.That(size.Width, Is.EqualTo(expectedWidth));
+            Assert.That(size.Height, Is.EqualTo(expectedHeight));
+            Assert.That(size.Width % 2, Is.Zero);
+            Assert.That(size.Height % 2, Is.Zero);
+        });
+    }
+
+    [Test]
+    public void Screen_share_frame_gate_caps_publication_at_fifteen_fps()
+    {
+        var gate = new ScreenShareFrameRateGate(15);
+        Assert.Multiple(() =>
+        {
+            Assert.That(gate.ShouldPublish(TimeSpan.Zero), Is.True);
+            Assert.That(gate.ShouldPublish(TimeSpan.FromMilliseconds(20)), Is.False);
+            Assert.That(gate.ShouldPublish(TimeSpan.FromMilliseconds(66)), Is.False);
+            Assert.That(gate.ShouldPublish(TimeSpan.FromMilliseconds(67)), Is.True);
+            Assert.That(gate.ShouldPublish(TimeSpan.FromMilliseconds(100)), Is.False);
+            Assert.That(gate.ShouldPublish(TimeSpan.FromMilliseconds(134)), Is.True);
+        });
+    }
+
+    private static ScreenShareFrame FrameAt(TimeSpan capturedAt) => new(1, 1, 4, [0, 0, 0, 0xFF], capturedAt);
+
+    private sealed class RecordingScreenCaptureSource : IScreenCaptureSource
+    {
+        private EventHandler<ScreenShareFrame>? _frameReceived;
+        public int SubscriberCount { get; private set; }
+        public int StartCount { get; private set; }
+        public int StopCount { get; private set; }
+        public int DisposeCount { get; private set; }
+        public event EventHandler<ScreenShareFrame>? FrameReceived
+        {
+            add { _frameReceived += value; SubscriberCount++; }
+            remove { _frameReceived -= value; SubscriberCount--; }
+        }
+        public Task StartAsync(CancellationToken cancellationToken = default) { StartCount++; return Task.CompletedTask; }
+        public Task StopAsync(CancellationToken cancellationToken = default) { StopCount++; return Task.CompletedTask; }
+        public ValueTask DisposeAsync() { DisposeCount++; return ValueTask.CompletedTask; }
+        public void Raise(ScreenShareFrame frame) => _frameReceived?.Invoke(this, frame);
+    }
+
+    private sealed class RecordingScreenShareFrameSink(int expectedFrames) : IScreenShareFrameSink
+    {
+        private readonly TaskCompletionSource _expectedFrames = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        public List<ScreenShareFrame> Frames { get; } = [];
+        public Task ExpectedFrames => expectedFrames == 0 ? Task.CompletedTask : _expectedFrames.Task;
+        public Task SendAsync(ScreenShareFrame frame, CancellationToken cancellationToken = default)
+        {
+            Frames.Add(frame);
+            if (Frames.Count >= expectedFrames) _expectedFrames.TrySetResult();
+            return Task.CompletedTask;
+        }
+    }
+
+    private sealed class CancellationAwareScreenShareFrameSink : IScreenShareFrameSink
+    {
+        public int FrameCount { get; private set; }
+        public Task SendAsync(ScreenShareFrame frame, CancellationToken cancellationToken = default)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            FrameCount++;
+            return Task.CompletedTask;
+        }
+    }
+}
