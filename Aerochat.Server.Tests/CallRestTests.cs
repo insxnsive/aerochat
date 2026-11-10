@@ -53,19 +53,20 @@ public sealed class CallRestTests
         GatewayHub gateway = factory.Services.GetRequiredService<GatewayHub>();
         gateway.Register(senderSink);
         gateway.Register(receiverSink);
-        using HttpClient client = AuthorizedClient(factory, "call-happy-sender");
+        using HttpClient callerClient = AuthorizedClient(factory, "call-happy-sender");
+        using HttpClient calleeClient = AuthorizedClient(factory, "call-happy-receiver");
 
-        (string Path, object Body)[] steps =
+        (string Path, HttpClient Client, object Body)[] steps =
         [
-            ($"ring", new { reason = "start" }),
-            ($"offer", new { sdp = "offer-sdp" }),
-            ($"answer", new { sdp = "answer-sdp" }),
-            ($"ice", new { candidate = "candidate" }),
-            ($"hangup", new { reason = "done" })
+            ("ring", callerClient, new { reason = "start" }),
+            ("offer", callerClient, new { sdp = "offer-sdp" }),
+            ("answer", calleeClient, new { sdp = "answer-sdp" }),
+            ("ice", callerClient, new { candidate = "candidate" }),
+            ("hangup", callerClient, new { reason = "done" })
         ];
-        foreach ((string path, object body) in steps)
+        foreach ((string path, HttpClient stepClient, object body) in steps)
         {
-            using HttpResponseMessage response = await client.PostAsJsonAsync(
+            using HttpResponseMessage response = await stepClient.PostAsJsonAsync(
                 $"/conversations/{conversationId}/call/{path}", body);
             Assert.That(response.StatusCode, Is.EqualTo(HttpStatusCode.OK), path);
         }
@@ -77,13 +78,16 @@ public sealed class CallRestTests
             {
                 GatewayEventType.CallRing,
                 GatewayEventType.CallOffer,
-                GatewayEventType.CallAnswer,
                 GatewayEventType.CallIce,
                 GatewayEventType.CallHangup
             }));
         Assert.That(
-            senderSink.Events.Any(envelope => envelope.Type.StartsWith("call.", StringComparison.Ordinal)),
-            Is.False);
+            senderSink.Events.Where(envelope => envelope.Type.StartsWith("call.", StringComparison.Ordinal))
+                .Select(envelope => envelope.Type),
+            Is.EqualTo(new[]
+            {
+                GatewayEventType.CallAnswer
+            }));
         JsonElement data = JsonDocument.Parse(
             GatewayJson.Serialize(receiverSink.Events.Single(envelope => envelope.Type == GatewayEventType.CallOffer)))
             .RootElement.GetProperty("d");
@@ -96,16 +100,18 @@ public sealed class CallRestTests
     {
         using var factory = new ApiWebApplicationFactory();
         Guid conversationId = Guid.NewGuid();
-        (Guid memberId, _) = await SeedConversationAsync(factory, conversationId, "call-illegal", null);
-        var sink = new RecordingSink("call-illegal-sink", memberId);
+        (Guid callerId, Guid calleeId) = await SeedTwoMemberConversationAsync(
+            factory, conversationId, "call-illegal-caller", "call-illegal-callee");
+        var sink = new RecordingSink("call-illegal-sink", calleeId);
         factory.Services.GetRequiredService<GatewayHub>().Register(sink);
-        using HttpClient client = AuthorizedClient(factory, "call-illegal");
+        using HttpClient client = AuthorizedClient(factory, "call-illegal-callee");
 
         using HttpResponseMessage response = await client.PostAsJsonAsync(
             $"/conversations/{conversationId}/call/answer", new { sdp = "answer" });
 
         Assert.That(response.StatusCode, Is.EqualTo(HttpStatusCode.Conflict));
         Assert.That(sink.Events.Any(envelope => envelope.Type.StartsWith("call.", StringComparison.Ordinal)), Is.False);
+        Assert.That(callerId, Is.Not.EqualTo(calleeId));
     }
 
     [Test]
@@ -353,6 +359,243 @@ public sealed class CallRestTests
         Assert.That(
             await PostAsync(deadlineCaller, deadlineId, "ring", new { reason = "replacement" }),
             Is.EqualTo(HttpStatusCode.OK));
+    }
+
+    [TestCase("GroupWithTwoMembers")]
+    [TestCase("DmWithOneMember")]
+    [TestCase("DmWithThreeMembers")]
+    [TestCase("CalleeOffering")]
+    [TestCase("CallerAnswering")]
+    [TestCase("ValidTwoPartyLifecycle")]
+    [TestCase("ReplacedParticipant")]
+    public async Task Dm_call_identity_enforces_topology_roles_and_recipient(string scenario)
+    {
+        var clock = new ManualTimeProvider(new DateTimeOffset(2100, 1, 1, 12, 0, 0, TimeSpan.Zero));
+        using var factory = new ApiWebApplicationFactory { Clock = clock };
+        GatewayHub gateway = factory.Services.GetRequiredService<GatewayHub>();
+        string prefix = $"call-identity-{scenario.ToLowerInvariant()}";
+        DateTimeOffset now = new(2026, 8, 25, 12, 0, 0, TimeSpan.Zero);
+        Guid conversationId = Guid.NewGuid();
+        string kind = scenario == "GroupWithTwoMembers" ? "group" : "dm";
+        int memberCount = scenario switch
+        {
+            "DmWithOneMember" => 1,
+            "DmWithThreeMembers" => 3,
+            _ => 2
+        };
+        string[] providers = Enumerable.Range(0, memberCount)
+            .Select(index => $"{prefix}-member-{index}")
+            .ToArray();
+        Guid[] memberIds = providers.Select(_ => Guid.NewGuid()).ToArray();
+
+        await factory.SeedAsync(db =>
+        {
+            for (int index = 0; index < memberIds.Length; index++)
+            {
+                db.Users.Add(new ExternalUserEntity
+                {
+                    Id = memberIds[index], Provider = "github", ProviderUserId = providers[index],
+                    DisplayName = providers[index], CreatedAt = now, UpdatedAt = now
+                });
+            }
+
+            var conversation = new ConversationEntity
+            {
+                Id = conversationId, Kind = kind, CreatedAt = now
+            };
+            foreach (Guid memberId in memberIds)
+            {
+                conversation.Participants.Add(new ParticipantEntity { UserId = memberId, JoinedAt = now });
+            }
+
+            db.Conversations.Add(conversation);
+            return Task.CompletedTask;
+        });
+
+        var sinks = new Dictionary<Guid, RecordingSink>();
+        var clients = new List<HttpClient>();
+        try
+        {
+            foreach (Guid memberId in memberIds)
+            {
+                string providerId = providers[Array.IndexOf(memberIds, memberId)];
+                var sink = new RecordingSink($"{providerId}-sink", memberId);
+                gateway.Register(sink);
+                sinks[memberId] = sink;
+                clients.Add(AuthorizedClient(factory, providerId));
+            }
+
+            int MemberEvents(Guid memberId) => sinks[memberId].Events
+                .Count(envelope => envelope.Type.StartsWith("call.", StringComparison.Ordinal));
+            int CallEvents(RecordingSink sink) => sink.Events
+                .Count(envelope => envelope.Type.StartsWith("call.", StringComparison.Ordinal));
+            int AllEvents() => memberIds.Sum(MemberEvents);
+            async Task<HttpStatusCode> PostAsync(HttpClient client, string action, object body)
+            {
+                using HttpResponseMessage response = await client.PostAsJsonAsync(
+                    $"/conversations/{conversationId}/call/{action}", body);
+                return response.StatusCode;
+            }
+
+            if (scenario is "GroupWithTwoMembers" or "DmWithOneMember" or "DmWithThreeMembers")
+            {
+                using HttpResponseMessage response = await clients[0].PostAsJsonAsync(
+                    $"/conversations/{conversationId}/call/ring", new { reason = "start" });
+
+                Assert.That(response.StatusCode, Is.EqualTo(HttpStatusCode.Conflict));
+                Assert.That(await response.Content.ReadAsStringAsync(), Does.Contain("call_invalid_conversation"));
+                Assert.That(AllEvents(), Is.Zero);
+                return;
+            }
+
+            HttpClient Caller = clients[0];
+            HttpClient Callee = clients[1];
+            Guid CallerId = memberIds[0];
+            Guid CalleeId = memberIds[1];
+
+            if (scenario == "CalleeOffering")
+            {
+                Assert.That(
+                    await PostAsync(Caller, "ring", new { reason = "start" }),
+                    Is.EqualTo(HttpStatusCode.OK));
+                Assert.That(MemberEvents(CalleeId), Is.EqualTo(1));
+
+                Assert.That(
+                    await PostAsync(Callee, "offer", new { sdp = "callee-offer" }),
+                    Is.EqualTo(HttpStatusCode.Forbidden));
+                Assert.That(MemberEvents(CalleeId), Is.EqualTo(1));
+                Assert.That(MemberEvents(CallerId), Is.Zero);
+
+                Assert.That(
+                    await PostAsync(Caller, "offer", new { sdp = "caller-offer" }),
+                    Is.EqualTo(HttpStatusCode.OK));
+                Assert.That(MemberEvents(CalleeId), Is.EqualTo(2));
+
+                Assert.That(
+                    await PostAsync(Callee, "answer", new { sdp = "callee-answer" }),
+                    Is.EqualTo(HttpStatusCode.OK));
+                Assert.That(MemberEvents(CallerId), Is.EqualTo(1));
+                return;
+            }
+
+            if (scenario == "CallerAnswering")
+            {
+                Assert.That(
+                    await PostAsync(Caller, "ring", new { reason = "start" }),
+                    Is.EqualTo(HttpStatusCode.OK));
+                Assert.That(
+                    await PostAsync(Caller, "offer", new { sdp = "caller-offer" }),
+                    Is.EqualTo(HttpStatusCode.OK));
+                Assert.That(MemberEvents(CalleeId), Is.EqualTo(2));
+
+                Assert.That(
+                    await PostAsync(Caller, "answer", new { sdp = "caller-answer" }),
+                    Is.EqualTo(HttpStatusCode.Forbidden));
+                Assert.That(MemberEvents(CalleeId), Is.EqualTo(2));
+                Assert.That(MemberEvents(CallerId), Is.Zero);
+
+                Assert.That(
+                    await PostAsync(Callee, "answer", new { sdp = "callee-answer" }),
+                    Is.EqualTo(HttpStatusCode.OK));
+                Assert.That(MemberEvents(CallerId), Is.EqualTo(1));
+                return;
+            }
+
+            if (scenario == "ValidTwoPartyLifecycle")
+            {
+                Assert.That(
+                    await PostAsync(Caller, "ring", new { reason = "start" }),
+                    Is.EqualTo(HttpStatusCode.OK));
+                Assert.That(
+                    await PostAsync(Caller, "offer", new { sdp = "caller-offer" }),
+                    Is.EqualTo(HttpStatusCode.OK));
+                Assert.That(
+                    await PostAsync(Callee, "answer", new { sdp = "callee-answer" }),
+                    Is.EqualTo(HttpStatusCode.OK));
+                Assert.That(
+                    await PostAsync(Callee, "ice", new { candidate = "callee-candidate" }),
+                    Is.EqualTo(HttpStatusCode.OK));
+                Assert.That(
+                    await PostAsync(Caller, "hangup", new { reason = "done" }),
+                    Is.EqualTo(HttpStatusCode.OK));
+
+                Assert.That(
+                    sinks[CalleeId].Events
+                        .Where(envelope => envelope.Type.StartsWith("call.", StringComparison.Ordinal))
+                        .Select(envelope => envelope.Type),
+                    Is.EqualTo(new[]
+                    {
+                        GatewayEventType.CallRing,
+                        GatewayEventType.CallOffer,
+                        GatewayEventType.CallHangup
+                    }));
+                Assert.That(
+                    sinks[CallerId].Events
+                        .Where(envelope => envelope.Type.StartsWith("call.", StringComparison.Ordinal))
+                        .Select(envelope => envelope.Type),
+                    Is.EqualTo(new[]
+                    {
+                        GatewayEventType.CallAnswer,
+                        GatewayEventType.CallIce
+                    }));
+                return;
+            }
+
+            Assert.That(
+                await PostAsync(Caller, "ring", new { reason = "start" }),
+                Is.EqualTo(HttpStatusCode.OK));
+            Assert.That(MemberEvents(CalleeId), Is.EqualTo(1));
+
+            Guid replacementId = Guid.NewGuid();
+            string replacementProvider = $"{prefix}-replacement";
+            await factory.SeedAsync(db =>
+            {
+                ParticipantEntity? replaced = db.Participants.SingleOrDefault(
+                    participant => participant.ConversationId == conversationId
+                        && participant.UserId == CalleeId);
+                if (replaced is not null)
+                {
+                    db.Participants.Remove(replaced);
+                }
+
+                db.Users.Add(new ExternalUserEntity
+                {
+                    Id = replacementId, Provider = "github", ProviderUserId = replacementProvider,
+                    DisplayName = replacementProvider, CreatedAt = now, UpdatedAt = now
+                });
+                db.Participants.Add(new ParticipantEntity
+                {
+                    ConversationId = conversationId, UserId = replacementId, JoinedAt = now
+                });
+                return Task.CompletedTask;
+            });
+            var replacementSink = new RecordingSink($"{replacementProvider}-sink", replacementId);
+            gateway.Register(replacementSink);
+            using HttpClient replacement = AuthorizedClient(factory, replacementProvider);
+
+            Assert.That(
+                await PostAsync(replacement, "answer", new { sdp = "replacement-answer" }),
+                Is.EqualTo(HttpStatusCode.Forbidden));
+            Assert.That(CallEvents(replacementSink), Is.Zero);
+
+            Assert.That(
+                await PostAsync(Callee, "answer", new { sdp = "removed-callee-answer" }),
+                Is.EqualTo(HttpStatusCode.Forbidden));
+            Assert.That(MemberEvents(CalleeId), Is.EqualTo(1));
+
+            Assert.That(
+                await PostAsync(Caller, "ice", new { candidate = "caller-candidate" }),
+                Is.EqualTo(HttpStatusCode.Forbidden));
+            Assert.That(CallEvents(replacementSink), Is.Zero);
+            Assert.That(MemberEvents(CalleeId), Is.EqualTo(1));
+        }
+        finally
+        {
+            foreach (HttpClient client in clients)
+            {
+                client.Dispose();
+            }
+        }
     }
 
     private sealed class ManualTimeProvider(DateTimeOffset start) : TimeProvider

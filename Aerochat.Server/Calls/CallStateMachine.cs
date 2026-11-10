@@ -56,9 +56,18 @@ public sealed class CallStateMachine
     }
 }
 
-public sealed class CallSession(Guid conversationId)
+public enum CallApplyResult
+{
+    Applied,
+    InvalidState,
+    Forbidden
+}
+
+public sealed class CallSession(Guid conversationId, Guid callerId, Guid calleeId)
 {
     public Guid ConversationId { get; } = conversationId;
+    public Guid CallerId { get; } = callerId;
+    public Guid CalleeId { get; } = calleeId;
     public CallStateMachine StateMachine { get; } = new();
 
     /// <summary>Setup deadline for pending states; null once the call is connected or ended.</summary>
@@ -86,19 +95,19 @@ public sealed class CallRegistry
         _clock = clock;
     }
 
-    public bool TryStart(Guid conversationId, out CallSession? session)
+    public bool TryStart(Guid conversationId, Guid callerId, Guid calleeId, out CallSession? session)
     {
         lock (_gate)
         {
             ReclaimExpired(conversationId);
 
-            if (_sessions.ContainsKey(conversationId))
+            if (callerId == calleeId || _sessions.ContainsKey(conversationId))
             {
                 session = null;
                 return false;
             }
 
-            session = new CallSession(conversationId);
+            session = new CallSession(conversationId, callerId, calleeId);
             if (!session.StateMachine.TryApply(CallAction.Ring))
             {
                 session = null;
@@ -111,21 +120,52 @@ public sealed class CallRegistry
         }
     }
 
-    public bool TryApply(Guid conversationId, CallAction action)
+    /// <summary>
+    /// Applies a signal for an authenticated actor, enforcing the identities captured at ring and
+    /// the role rules for the current conversation member pair. The validated counterpart is
+    /// returned as the only publish recipient.
+    /// </summary>
+    public CallApplyResult TryApply(
+        Guid conversationId,
+        Guid actorId,
+        Guid firstMemberId,
+        Guid secondMemberId,
+        CallAction action,
+        out Guid recipientId)
     {
+        recipientId = Guid.Empty;
+
         lock (_gate)
         {
             ReclaimExpired(conversationId);
 
             if (!_sessions.TryGetValue(conversationId, out CallSession? session))
             {
-                return false;
+                return CallApplyResult.InvalidState;
+            }
+
+            if (!MatchesMemberPair(session, firstMemberId, secondMemberId))
+            {
+                return CallApplyResult.Forbidden;
+            }
+
+            bool isCaller = actorId == session.CallerId;
+            bool isCallee = actorId == session.CalleeId;
+            if (!isCaller && !isCallee)
+            {
+                return CallApplyResult.Forbidden;
+            }
+
+            if ((action == CallAction.Offer && !isCaller)
+                || (action == CallAction.Answer && !isCallee))
+            {
+                return CallApplyResult.Forbidden;
             }
 
             CallState previousState = session.StateMachine.State;
             if (!session.StateMachine.TryApply(action))
             {
-                return false;
+                return CallApplyResult.InvalidState;
             }
 
             if (session.StateMachine.State == CallState.Ended)
@@ -139,9 +179,14 @@ public sealed class CallRegistry
                 ArmSetupDeadline(session);
             }
 
-            return true;
+            recipientId = isCaller ? session.CalleeId : session.CallerId;
+            return CallApplyResult.Applied;
         }
     }
+
+    private static bool MatchesMemberPair(CallSession session, Guid firstMemberId, Guid secondMemberId) =>
+        (session.CallerId == firstMemberId && session.CalleeId == secondMemberId)
+        || (session.CallerId == secondMemberId && session.CalleeId == firstMemberId);
 
     private void ArmSetupDeadline(CallSession session)
     {
