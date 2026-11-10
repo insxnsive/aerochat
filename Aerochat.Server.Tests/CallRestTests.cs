@@ -598,6 +598,186 @@ public sealed class CallRestTests
         }
     }
 
+    [TestCase("Caller")]
+    [TestCase("Callee")]
+    public async Task Connected_screen_share_start_stop_publish_to_other_participants_only(string actor)
+    {
+        const string ScreenStarted = "call.screen.started";
+        const string ScreenStopped = "call.screen.stopped";
+        using var factory = new ApiWebApplicationFactory();
+        Guid conversationId = Guid.NewGuid();
+        string prefix = $"screen-{actor.ToLowerInvariant()}";
+        (Guid callerId, Guid calleeId) = await SeedTwoMemberConversationAsync(
+            factory, conversationId, $"{prefix}-caller", $"{prefix}-callee");
+        var callerSink = new RecordingSink($"{prefix}-caller-sink", callerId);
+        var calleeSink = new RecordingSink($"{prefix}-callee-sink", calleeId);
+        GatewayHub gateway = factory.Services.GetRequiredService<GatewayHub>();
+        gateway.Register(callerSink);
+        gateway.Register(calleeSink);
+        using HttpClient caller = AuthorizedClient(factory, $"{prefix}-caller");
+        using HttpClient callee = AuthorizedClient(factory, $"{prefix}-callee");
+        bool callerIsActor = actor == "Caller";
+        HttpClient screening = callerIsActor ? caller : callee;
+        HttpClient other = callerIsActor ? callee : caller;
+        RecordingSink otherSink = callerIsActor ? calleeSink : callerSink;
+        RecordingSink actorSink = callerIsActor ? callerSink : calleeSink;
+
+        async Task<HttpStatusCode> PostAsync(HttpClient client, string action)
+        {
+            object body = action is "offer" or "answer"
+                ? new { sdp = $"{action}-sdp" }
+                : new { reason = "screen" };
+            using HttpResponseMessage response = await client.PostAsJsonAsync(
+                $"/conversations/{conversationId}/call/{action}", body);
+            return response.StatusCode;
+        }
+
+        int ScreenEvents(RecordingSink sink) => sink.Events
+            .Count(envelope => envelope.Type is ScreenStarted or ScreenStopped);
+
+        Assert.That(await PostAsync(screening, "screen/start"), Is.EqualTo(HttpStatusCode.Conflict));
+        Assert.That(await PostAsync(screening, "screen/stop"), Is.EqualTo(HttpStatusCode.Conflict));
+        Assert.That(ScreenEvents(otherSink), Is.Zero);
+
+        Assert.That(await PostAsync(caller, "ring"), Is.EqualTo(HttpStatusCode.OK));
+        Assert.That(await PostAsync(caller, "offer"), Is.EqualTo(HttpStatusCode.OK));
+        Assert.That(await PostAsync(callee, "answer"), Is.EqualTo(HttpStatusCode.OK));
+
+        int otherBefore = ScreenEvents(otherSink);
+        Assert.That(await PostAsync(screening, "screen/start"), Is.EqualTo(HttpStatusCode.OK));
+        Assert.That(ScreenEvents(otherSink), Is.EqualTo(otherBefore + 1));
+        Assert.That(otherSink.Events.Last().Type, Is.EqualTo(ScreenStarted));
+        Assert.That(ScreenEvents(actorSink), Is.Zero);
+
+        Assert.That(await PostAsync(screening, "screen/start"), Is.EqualTo(HttpStatusCode.Conflict));
+        Assert.That(ScreenEvents(otherSink), Is.EqualTo(otherBefore + 1));
+
+        Assert.That(await PostAsync(screening, "screen/stop"), Is.EqualTo(HttpStatusCode.OK));
+        Assert.That(ScreenEvents(otherSink), Is.EqualTo(otherBefore + 2));
+        Assert.That(otherSink.Events.Last().Type, Is.EqualTo(ScreenStopped));
+
+        Assert.That(await PostAsync(screening, "screen/stop"), Is.EqualTo(HttpStatusCode.Conflict));
+        Assert.That(ScreenEvents(otherSink), Is.EqualTo(otherBefore + 2));
+
+        Assert.That(await PostAsync(screening, "screen/start"), Is.EqualTo(HttpStatusCode.OK));
+        Assert.That(await PostAsync(screening, "screen/stop"), Is.EqualTo(HttpStatusCode.OK));
+        Assert.That(ScreenEvents(otherSink), Is.EqualTo(otherBefore + 4));
+
+        Assert.That(await PostAsync(caller, "hangup"), Is.EqualTo(HttpStatusCode.OK));
+
+        Assert.That(await PostAsync(screening, "screen/start"), Is.EqualTo(HttpStatusCode.Conflict));
+        Assert.That(await PostAsync(screening, "screen/stop"), Is.EqualTo(HttpStatusCode.Conflict));
+        Assert.That(ScreenEvents(otherSink), Is.EqualTo(otherBefore + 4));
+    }
+
+    [Test]
+    public async Task Screen_share_endpoints_enforce_membership_identity_and_topology()
+    {
+        const string ScreenStarted = "call.screen.started";
+        using var factory = new ApiWebApplicationFactory();
+        GatewayHub gateway = factory.Services.GetRequiredService<GatewayHub>();
+        DateTimeOffset now = new(2026, 8, 25, 12, 0, 0, TimeSpan.Zero);
+
+        Guid dmId = Guid.NewGuid();
+        (Guid callerId, Guid calleeId) = await SeedTwoMemberConversationAsync(
+            factory, dmId, "screen-guard-caller", "screen-guard-callee");
+        var calleeSink = new RecordingSink("screen-guard-callee-sink", calleeId);
+        gateway.Register(calleeSink);
+
+        (Guid outsiderId, _) = await SeedConversationAsync(
+            factory, Guid.NewGuid(), "screen-guard-outsider", null);
+        using HttpClient outsider = AuthorizedClient(factory, "screen-guard-outsider");
+        using HttpResponseMessage outsiderResponse = await outsider.PostAsJsonAsync(
+            $"/conversations/{dmId}/call/screen/start", new { reason = "screen" });
+        Assert.That(outsiderId, Is.Not.EqualTo(callerId));
+        Assert.That(outsiderResponse.StatusCode, Is.EqualTo(HttpStatusCode.Forbidden));
+        Assert.That(calleeSink.Events.Any(envelope => envelope.Type == ScreenStarted), Is.False);
+
+        using HttpClient caller = AuthorizedClient(factory, "screen-guard-caller");
+        using HttpClient callee = AuthorizedClient(factory, "screen-guard-callee");
+        foreach ((HttpClient client, string action, object body) in new (HttpClient, string, object)[]
+                 {
+                     (caller, "ring", new { reason = "start" }),
+                     (caller, "offer", new { sdp = "offer-sdp" }),
+                     (callee, "answer", new { sdp = "answer-sdp" })
+                 })
+        {
+            using HttpResponseMessage response = await client.PostAsJsonAsync(
+                $"/conversations/{dmId}/call/{action}", body);
+            Assert.That(response.StatusCode, Is.EqualTo(HttpStatusCode.OK), action);
+        }
+
+        Guid replacementId = Guid.NewGuid();
+        await factory.SeedAsync(db =>
+        {
+            ParticipantEntity? replaced = db.Participants.SingleOrDefault(
+                participant => participant.ConversationId == dmId && participant.UserId == calleeId);
+            if (replaced is not null)
+            {
+                db.Participants.Remove(replaced);
+            }
+
+            db.Users.Add(new ExternalUserEntity
+            {
+                Id = replacementId, Provider = "github", ProviderUserId = "screen-guard-replacement",
+                DisplayName = "screen-guard-replacement", CreatedAt = now, UpdatedAt = now
+            });
+            db.Participants.Add(new ParticipantEntity
+            {
+                ConversationId = dmId, UserId = replacementId, JoinedAt = now
+            });
+            return Task.CompletedTask;
+        });
+        var replacementSink = new RecordingSink("screen-guard-replacement-sink", replacementId);
+        gateway.Register(replacementSink);
+        using HttpClient replacement = AuthorizedClient(factory, "screen-guard-replacement");
+
+        using HttpResponseMessage changedMember = await replacement.PostAsJsonAsync(
+            $"/conversations/{dmId}/call/screen/start", new { reason = "screen" });
+        using HttpResponseMessage changedPair = await caller.PostAsJsonAsync(
+            $"/conversations/{dmId}/call/screen/start", new { reason = "screen" });
+        Assert.Multiple(() =>
+        {
+            Assert.That(changedMember.StatusCode, Is.EqualTo(HttpStatusCode.Forbidden));
+            Assert.That(changedPair.StatusCode, Is.EqualTo(HttpStatusCode.Forbidden));
+            Assert.That(replacementSink.Events.Any(envelope => envelope.Type == ScreenStarted), Is.False);
+        });
+
+        Guid groupId = Guid.NewGuid();
+        Guid groupCallerId = Guid.NewGuid();
+        Guid groupOtherId = Guid.NewGuid();
+        await factory.SeedAsync(db =>
+        {
+            db.Users.AddRange(
+                new ExternalUserEntity
+                {
+                    Id = groupCallerId, Provider = "github", ProviderUserId = "screen-guard-group-caller",
+                    DisplayName = "screen-guard-group-caller", CreatedAt = now, UpdatedAt = now
+                },
+                new ExternalUserEntity
+                {
+                    Id = groupOtherId, Provider = "github", ProviderUserId = "screen-guard-group-other",
+                    DisplayName = "screen-guard-group-other", CreatedAt = now, UpdatedAt = now
+                });
+            var group = new ConversationEntity { Id = groupId, Kind = "group", CreatedAt = now };
+            group.Participants.Add(new ParticipantEntity { UserId = groupCallerId, JoinedAt = now });
+            group.Participants.Add(new ParticipantEntity { UserId = groupOtherId, JoinedAt = now });
+            db.Conversations.Add(group);
+            return Task.CompletedTask;
+        });
+        var groupSink = new RecordingSink("screen-guard-group-sink", groupOtherId);
+        gateway.Register(groupSink);
+        using HttpClient groupCaller = AuthorizedClient(factory, "screen-guard-group-caller");
+
+        using HttpResponseMessage groupResponse = await groupCaller.PostAsJsonAsync(
+            $"/conversations/{groupId}/call/screen/start", new { reason = "screen" });
+        Assert.That(groupResponse.StatusCode, Is.EqualTo(HttpStatusCode.Conflict));
+        Assert.That(
+            await groupResponse.Content.ReadAsStringAsync(),
+            Does.Contain("call_invalid_conversation"));
+        Assert.That(groupSink.Events.Any(envelope => envelope.Type == ScreenStarted), Is.False);
+    }
+
     private sealed class ManualTimeProvider(DateTimeOffset start) : TimeProvider
     {
         private DateTimeOffset _now = start;

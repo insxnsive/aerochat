@@ -14,6 +14,8 @@ public static class GatewayEventType
     public const string CallAnswer = "call.answer";
     public const string CallIce = "call.ice";
     public const string CallHangup = "call.hangup";
+    public const string CallScreenStarted = "call.screen.started";
+    public const string CallScreenStopped = "call.screen.stopped";
     public const string Ready = "gateway.ready";
     public const string ResyncRequired = "gateway.resync_required";
 }
