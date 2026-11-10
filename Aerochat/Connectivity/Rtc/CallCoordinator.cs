@@ -1,4 +1,5 @@
 using Aerochat.Presentation;
+using System.Text;
 
 namespace Aerochat.Connectivity.Rtc;
 
@@ -36,6 +37,8 @@ public sealed class CallCoordinator : ICallCoordinator
     private readonly object _disposeGate = new();
     private readonly object _backgroundGate = new();
     private readonly List<Task> _backgroundTasks = [];
+    private const int MaxPendingCandidates = 64;
+    private const int MaxPendingCandidateBytes = 32 * 1024;
     private Task? _disposeTask;
     private int _disposed;
     private bool _muted;
@@ -80,6 +83,7 @@ public sealed class CallCoordinator : ICallCoordinator
         {
             _hangupCompleted = false;
             _remoteDescriptionApplied = false;
+            _pendingCandidates.Clear();
             _muted = false;
             _role = CallRole.Outgoing;
             ApplyPresentation(() => _state.BeginOutgoingCall(_conversationId));
@@ -253,6 +257,8 @@ public sealed class CallCoordinator : ICallCoordinator
                 case "call.offer":
                     if (_role == CallRole.Outgoing)
                         break;
+                    if (signal.EventType == "call.ring")
+                        _pendingCandidates.Clear();
                     _role = CallRole.Incoming;
                     _hangupCompleted = false;
                     ApplyPresentation(() => _state.ApplyCallSignal(
@@ -278,7 +284,7 @@ public sealed class CallCoordinator : ICallCoordinator
                 case "call.ice" when signal.Candidate is not null:
                     var candidate = new RtcIceCandidate(signal.Candidate);
                     if (!_remoteDescriptionApplied)
-                        _pendingCandidates.Add(candidate);
+                        QueueCandidate(candidate);
                     else
                         _engine.AddIceCandidate(candidate);
                     ApplyPresentation(() => _state.ApplyCallSignal(
@@ -426,6 +432,16 @@ public sealed class CallCoordinator : ICallCoordinator
         {
             _operations.Release();
         }
+    }
+
+    private void QueueCandidate(RtcIceCandidate candidate)
+    {
+        if (_pendingCandidates.Count >= MaxPendingCandidates)
+            return;
+
+        int queuedBytes = _pendingCandidates.Sum(item => Encoding.UTF8.GetByteCount(item.Candidate));
+        if (queuedBytes + Encoding.UTF8.GetByteCount(candidate.Candidate) <= MaxPendingCandidateBytes)
+            _pendingCandidates.Add(candidate);
     }
 
     private void DrainPendingCandidates()
