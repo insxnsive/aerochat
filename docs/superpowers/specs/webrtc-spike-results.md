@@ -21,7 +21,7 @@ Time-boxed feasibility spike in isolated `task12-rtc-spike` worktree. Scratch pr
 | Probe | Pin | TFM | Result |
 |---|---|---|---|
 | `spike/AudioLoopback` | SIPSorcery 8.0.14 + SIPSorceryMedia.Windows 8.0.14 | net8.0-windows10.0.17763 | **compiles, 0 errors** |
-| `spike/ScreenCaptureVp8` | SIPSorcery 8.0.14 + SIPSorceryMedia.Encoders 8.0.14 | net8.0-windows10.0.19041 | **compiles, 0 errors** |
+| `spike/ScreenCaptureVp8` | Requested SIPSorcery 8.0.14 + SIPSorceryMedia.Encoders 8.0.14 (invalid encoder pin) | net8.0-windows10.0.19041 | Prior build does not verify the supported Encoders 8.0.7 pin; probe rebuild required |
 | `spike/PeerRelay` | (WebSocket relay, no RTC pkg) | net8.0 | **compiles, 0 errors** |
 
 ## Results
@@ -32,7 +32,7 @@ Worker sandbox could not restore any package (NU1301 SSL/Schannel failure inside
 
 ### 2. Windows.Graphics.Capture -> VP8 — PARTIALLY VERIFIED (build-level)
 
-Same restore story. Compiles with `SIPSorceryMedia.Encoders` 8.0.14 providing VP8 encoding (the plan's assumed `SIPSorcery.VP8` dependency does not exist for net8). Runtime capture/encode NOT exercised. Reproduce: `dotnet run --project spike/ScreenCaptureVp8 -c Debug`.
+The scratch probe still requests the invalid SIPSorceryMedia.Encoders 8.0.14 pin. The supported application pins Encoders 8.0.7; a rebuild of this probe with that pin is not verified here. Runtime capture/encode was not exercised. The plan's assumed SIPSorcery.VP8 package does not provide the net8 dependency used by the application.
 
 ### 3. Two peers over localhost WebSocket relay — PARTIALLY VERIFIED (build-level)
 
