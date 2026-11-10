@@ -815,7 +815,7 @@ public sealed class ChatShellTests
             var status = chat.FindName("CallStatusTextBlock") as System.Windows.Controls.TextBlock;
             var start = (System.Windows.Controls.Button)chat.FindName("StartCallButton");
             var accept = (System.Windows.Controls.Button)chat.FindName("AcceptCallButton");
-            var mute = (System.Windows.Controls.Button)chat.FindName("MuteCallButton");
+            var mute = (System.Windows.Controls.Image)chat.FindName("MuteCallButton");
             var leave = (System.Windows.Controls.Image)chat.FindName("LeaveCallButton");
 
             Assert.That(status, Is.Not.Null);
@@ -884,13 +884,13 @@ public sealed class ChatShellTests
             Assert.Multiple(() =>
             {
                 Assert.That(status.Text, Is.EqualTo("Connected · Muted"));
-                Assert.That(mute.Content, Is.EqualTo("Unmute"));
+                Assert.That(mute.ToolTip, Is.EqualTo("Unmute"));
             });
             chat.ToggleMuteCall();
             Assert.Multiple(() =>
             {
                 Assert.That(status.Text, Is.EqualTo("Connected"));
-                Assert.That(mute.Content, Is.EqualTo("Mute"));
+                Assert.That(mute.ToolTip, Is.EqualTo("Mute"));
             });
 
             session.Fail("Call setup failed");
@@ -909,6 +909,42 @@ public sealed class ChatShellTests
                 Assert.That(leave.Visibility, Is.EqualTo(System.Windows.Visibility.Collapsed));
                 Assert.That(callBar.Success, Is.True);
                 Assert.That(callBar.Value, Does.Not.Contain("<controls:AudioPlayer"));
+            });
+            chat.Close();
+        });
+    }
+
+    [Test]
+    public void Chat_mute_button_uses_packaged_volume_art_for_each_mute_state()
+    {
+        WpfTestHost.Run(() =>
+        {
+            PresentationState state = DemoData.Create();
+            ConversationPresentation conversation = state.Conversations.First(item => !item.IsGroup);
+            CallSessionPresentation session = state.GetOrCreateCallSession(conversation.Id.ToString());
+            var calls = new RecordingCallCoordinator(session);
+            var chat = new Chat(state, conversation, new WindowNavigator(state), liveMessages: null, calls);
+            chat.Show();
+            chat.UpdateLayout();
+            session.SetLocalState(CallSessionState.Connected);
+            System.Windows.Threading.Dispatcher.CurrentDispatcher.Invoke(
+                () => { }, System.Windows.Threading.DispatcherPriority.Background);
+
+            var mute = chat.FindName("MuteCallButton") as System.Windows.Controls.Image;
+            Assert.That(mute, Is.Not.Null);
+            Assert.That(mute!.Source?.ToString(), Does.EndWith("/Resources/AudioPlayer/vol_high.png"));
+
+            mute.RaiseEvent(new System.Windows.Input.MouseButtonEventArgs(
+                System.Windows.Input.Mouse.PrimaryDevice, 0, System.Windows.Input.MouseButton.Left)
+            {
+                RoutedEvent = System.Windows.UIElement.PreviewMouseLeftButtonUpEvent
+            });
+
+            Assert.Multiple(() =>
+            {
+                Assert.That(calls.ToggleMuteCount, Is.EqualTo(1));
+                Assert.That(mute.Source?.ToString(), Does.EndWith("/Resources/AudioPlayer/vol_muted.png"));
+                Assert.That(mute.ToolTip, Is.EqualTo("Unmute"));
             });
             chat.Close();
         });

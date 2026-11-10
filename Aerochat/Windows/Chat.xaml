@@ -1724,7 +1724,7 @@
                                    Text="{Binding CallStatusText, RelativeSource={RelativeSource AncestorType=local:Chat}}" />
                         <Button x:Name="StartCallButton" Content="Start Call" Margin="8,0,4,0" Padding="5,0" Click="StartCallButton_Click" />
                         <Button x:Name="AcceptCallButton" Content="Accept Call" Margin="8,0,4,0" Padding="5,0" Click="AcceptCallButton_Click" Visibility="Collapsed" />
-                        <Button x:Name="MuteCallButton" Content="Mute" Margin="8,0,4,0" Padding="5,0" Click="MuteCallButton_Click" Visibility="Collapsed" />
+                        <Image UseLayoutRounding="True" Margin="8,0,0,0" x:Name="MuteCallButton" PreviewMouseLeftButtonUp="MuteCallButton_PreviewMouseLeftButtonUp" Cursor="Hand" Source="/Aerochat;component/Resources/AudioPlayer/vol_high.png" ToolTip="Mute" Width="24" Height="24" Visibility="Collapsed" />
                         <Image UseLayoutRounding="True" Margin="8,0,0,0" x:Name="LeaveCallButton" PreviewMouseLeftButtonUp="LeaveCallButton_PreviewMouseLeftButtonUp" Cursor="Hand" Source="/Aerochat;component/Resources/Message/LeaveCall.png" Width="16" Height="16" />
                     </StackPanel>
                 </Grid>
