@@ -530,6 +530,126 @@ public sealed class GatewayHubTests
         Assert.That(GatewayCursor.TryParse(cursor, out _, out _), Is.False);
     }
 
+    [Test]
+    public void Presence_transitions_only_on_the_first_and_last_connection()
+    {
+        Guid userId = Guid.NewGuid();
+        var hub = new GatewayHub(new GatewayOptions { InstanceId = "hub" });
+        var transitions = new List<(Guid UserId, bool Connected)>();
+        hub.PresenceChanged = (id, connected) => transitions.Add((id, connected));
+        var first = new RecordingSink("presence-first", userId);
+        var second = new RecordingSink("presence-second", userId);
+
+        hub.Register(first);
+        hub.Register(second);
+        hub.Remove(first.ConnectionId, first);
+        hub.Remove(second.ConnectionId, second);
+
+        Assert.That(transitions, Is.EqualTo(new[] { (userId, true), (userId, false) }));
+    }
+
+    [Test]
+    public void Successful_same_id_replacement_never_reports_offline()
+    {
+        Guid userId = Guid.NewGuid();
+        var hub = new GatewayHub(new GatewayOptions { InstanceId = "hub" });
+        var transitions = new List<(Guid UserId, bool Connected)>();
+        hub.PresenceChanged = (id, connected) => transitions.Add((id, connected));
+        var old = new RecordingSink("same", userId);
+        Assert.That(hub.Register(old).Registered, Is.True);
+        var replacement = new BlockingHandoffSink("same", userId, failLive: false);
+
+        Task<GatewayRegistrationResult> registration = Task.Run(() => hub.Register(replacement));
+        Assert.That(replacement.ReadyStarted.Wait(TimeSpan.FromSeconds(1)), Is.True);
+        replacement.ReleaseReady.Set();
+        Assert.That(registration.Wait(TimeSpan.FromSeconds(2)), Is.True);
+        Assert.That(registration.Result.Registered, Is.True);
+
+        Assert.That(transitions, Is.EqualTo(new[] { (userId, true) }));
+
+        Assert.That(hub.Remove(replacement.ConnectionId, replacement), Is.True);
+        Assert.That(transitions, Is.EqualTo(new[] { (userId, true), (userId, false) }));
+    }
+
+    [Test]
+    public void Failed_replacement_keeps_the_existing_presence()
+    {
+        Guid userId = Guid.NewGuid();
+        var hub = new GatewayHub(new GatewayOptions { InstanceId = "hub" });
+        var transitions = new List<(Guid UserId, bool Connected)>();
+        hub.PresenceChanged = (id, connected) => transitions.Add((id, connected));
+        var old = new RecordingSink("same", userId);
+        Assert.That(hub.Register(old).Registered, Is.True);
+        var replacement = new BlockingHandoffSink("same", userId, failLive: true);
+
+        Task<GatewayRegistrationResult> registration = Task.Run(() => hub.Register(replacement));
+        Assert.That(replacement.ReadyStarted.Wait(TimeSpan.FromSeconds(1)), Is.True);
+        Task publish = Task.Run(() => hub.Publish(
+            GatewayEventType.PresenceUpdated,
+            new PresenceUpdatedData(userId, "online"),
+            [userId]));
+        Assert.That(publish.Wait(TimeSpan.FromMilliseconds(250)), Is.False);
+        replacement.ReleaseReady.Set();
+        Assert.That(Task.WaitAll([registration, publish], TimeSpan.FromSeconds(2)), Is.True);
+
+        Assert.That(registration.Result.Registered, Is.False);
+        Assert.That(transitions, Is.EqualTo(new[] { (userId, true) }));
+
+        Assert.That(hub.Remove(old.ConnectionId, old), Is.True);
+        Assert.That(transitions, Is.EqualTo(new[] { (userId, true), (userId, false) }));
+    }
+
+    [Test]
+    public void Enqueue_failure_on_the_last_connection_reports_offline()
+    {
+        Guid userId = Guid.NewGuid();
+        var hub = new GatewayHub(new GatewayOptions { InstanceId = "hub" });
+        var transitions = new List<(Guid UserId, bool Connected)>();
+        hub.PresenceChanged = (id, connected) => transitions.Add((id, connected));
+        var sink = new BoundedSink("bounded", userId, acceptedEnqueues: 1);
+        Assert.That(hub.Register(sink).Registered, Is.True);
+
+        hub.Publish(GatewayEventType.TypingStarted, new TypingStartedData(Guid.NewGuid(), userId), [userId]);
+
+        Assert.That(hub.ActiveConnectionCount, Is.Zero);
+        Assert.That(transitions, Is.EqualTo(new[] { (userId, true), (userId, false) }));
+    }
+
+    [Test]
+    public void Cancelled_last_connection_reports_offline()
+    {
+        Guid userId = Guid.NewGuid();
+        var hub = new GatewayHub(new GatewayOptions { InstanceId = "hub" });
+        var transitions = new List<(Guid UserId, bool Connected)>();
+        hub.PresenceChanged = (id, connected) => transitions.Add((id, connected));
+        using var disconnected = new CancellationTokenSource();
+        var sink = new RecordingSink("cancel", userId, disconnected.Token);
+        Assert.That(hub.Register(sink).Registered, Is.True);
+
+        disconnected.Cancel();
+
+        Assert.That(hub.ActiveConnectionCount, Is.Zero);
+        Assert.That(transitions, Is.EqualTo(new[] { (userId, true), (userId, false) }));
+    }
+
+    [Test]
+    public void Failed_registration_rollback_clears_presence()
+    {
+        Guid userId = Guid.NewGuid();
+        var hub = new GatewayHub(new GatewayOptions { InstanceId = "hub" });
+        var transitions = new List<(Guid UserId, bool Connected)>();
+        hub.PresenceChanged = (id, connected) => transitions.Add((id, connected));
+        using var disconnected = new CancellationTokenSource();
+        disconnected.Cancel();
+        var sink = new RecordingSink("rolled-back", userId, disconnected.Token);
+
+        GatewayRegistrationResult result = hub.Register(sink);
+
+        Assert.That(result.Registered, Is.False);
+        Assert.That(hub.ActiveConnectionCount, Is.Zero);
+        Assert.That(transitions, Is.EqualTo(new[] { (userId, true), (userId, false) }));
+    }
+
     private sealed class RecordingSink(string connectionId, Guid userId, CancellationToken disconnected = default) : IGatewaySink
     {
         public string ConnectionId { get; } = connectionId;
