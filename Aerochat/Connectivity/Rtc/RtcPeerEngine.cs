@@ -20,35 +20,54 @@ public sealed record RtcIceCandidate(string Candidate, string? SdpMid = null, in
 /// Owns the SIPSorcery peer and optional Windows media endpoint. No SIPSorcery
 /// types cross this connectivity boundary.
 /// </summary>
-public sealed class RtcPeerEngine : IRtcPeerEngine
+public sealed class RtcPeerEngine : IRtcPeerEngine, IScreenShareFrameSource, IScreenShareFrameSink
 {
     private readonly object _gate = new();
     private readonly object _disposeGate = new();
     private readonly Func<IRtcAudioEndpoint?> _audioEndpointFactory;
+    private readonly Func<IRtcVideoEndpoint?> _videoEndpointFactory;
     private Task? _disposeTask;
     private RTCPeerConnection? _peer;
     private IRtcAudioEndpoint? _audio;
+    private IRtcVideoEndpoint? _video;
     private Action<uint, byte[]>? _encodedSampleHandler;
     private Action<List<AudioFormat>>? _formatsHandler;
     private Action<IPEndPoint, SDPMediaTypesEnum, RTPPacket>? _rtpHandler;
+    private Action<uint, byte[]>? _videoEncodedSampleHandler;
+    private Action<List<VideoFormat>>? _videoFormatsHandler;
+    private Action<IPEndPoint, uint, byte[], VideoFormat>? _videoFrameHandler;
+    private EventHandler<ScreenShareFrame>? _decodedFrameHandler;
     private bool _initialized;
     private bool _audioStarted;
+    private bool _videoStarted;
     private bool _muted;
     private bool _disposed;
 
     public RtcPeerEngine(bool useAudioDevices = true)
-        : this(() => useAudioDevices ? new WindowsRtcAudioEndpoint() : null)
+        : this(
+            () => useAudioDevices ? new WindowsRtcAudioEndpoint() : null,
+            () => new Vp8RtcVideoEndpoint())
     {
     }
 
     internal RtcPeerEngine(Func<IRtcAudioEndpoint?> audioEndpointFactory)
+        : this(audioEndpointFactory, () => null)
+    {
+    }
+
+    internal RtcPeerEngine(
+        Func<IRtcAudioEndpoint?> audioEndpointFactory,
+        Func<IRtcVideoEndpoint?> videoEndpointFactory)
     {
         _audioEndpointFactory = audioEndpointFactory
             ?? throw new ArgumentNullException(nameof(audioEndpointFactory));
+        _videoEndpointFactory = videoEndpointFactory
+            ?? throw new ArgumentNullException(nameof(videoEndpointFactory));
     }
 
     public event EventHandler<RtcPeerState>? StateChanged;
     public event EventHandler<RtcIceCandidate>? IceCandidateReady;
+    public event EventHandler<ScreenShareFrame>? FrameReceived;
     public RtcPeerState State { get; private set; } = RtcPeerState.New;
 
     public Task InitializeAsync(CancellationToken cancellationToken = default)
@@ -96,8 +115,25 @@ public sealed class RtcPeerEngine : IRtcPeerEngine
                     new[] { SDPWellKnownMediaFormatsEnum.PCMU }));
             }
 
+            _video = _videoEndpointFactory();
+            if (_video is not null)
+            {
+                IRtcVideoEndpoint video = _video;
+                _videoEncodedSampleHandler = _peer.SendVideo;
+                _videoFormatsHandler = formats => video.SetFormat(formats.First());
+                _videoFrameHandler = video.Receive;
+                _decodedFrameHandler = (_, frame) => FrameReceived?.Invoke(this, frame);
+                video.EncodedSample += _videoEncodedSampleHandler;
+                video.FrameDecoded += _decodedFrameHandler;
+                _peer.OnVideoFormatsNegotiated += _videoFormatsHandler;
+                _peer.OnVideoFrameReceived += _videoFrameHandler;
+                _peer.addTrack(new MediaStreamTrack(
+                    video.SourceFormats.ToList(), MediaStreamStatusEnum.SendRecv));
+            }
+
             _initialized = true;
             _audioStarted = false;
+            _videoStarted = false;
             _muted = false;
             if (State == RtcPeerState.Closed)
                 State = RtcPeerState.New;
@@ -128,6 +164,7 @@ public sealed class RtcPeerEngine : IRtcPeerEngine
         RTCSessionDescriptionInit answer = _peer.createAnswer(null);
         await _peer.setLocalDescription(answer).ConfigureAwait(false);
         await StartAudioAsync().ConfigureAwait(false);
+        await StartVideoAsync().ConfigureAwait(false);
         return answer.sdp;
     }
 
@@ -142,6 +179,7 @@ public sealed class RtcPeerEngine : IRtcPeerEngine
         });
         ThrowIfDescriptionFailed(remoteResult);
         await StartAudioAsync().ConfigureAwait(false);
+        await StartVideoAsync().ConfigureAwait(false);
     }
 
     public void AddIceCandidate(RtcIceCandidate candidate)
@@ -155,6 +193,23 @@ public sealed class RtcPeerEngine : IRtcPeerEngine
             sdpMid = candidate.SdpMid,
             sdpMLineIndex = candidate.SdpMLineIndex.HasValue ? checked((ushort)candidate.SdpMLineIndex.Value) : (ushort)0
         });
+    }
+
+    public Task SendAsync(ScreenShareFrame frame, CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(frame);
+        cancellationToken.ThrowIfCancellationRequested();
+        IRtcVideoEndpoint video;
+        lock (_gate)
+        {
+            ObjectDisposedException.ThrowIf(_disposed, this);
+            video = _video ?? throw new InvalidOperationException("The RTC video endpoint is unavailable.");
+            if (!_videoStarted)
+                throw new InvalidOperationException("The RTC video endpoint has not started.");
+        }
+
+        video.Send(frame);
+        return Task.CompletedTask;
     }
 
     public void Mute()
@@ -187,27 +242,43 @@ public sealed class RtcPeerEngine : IRtcPeerEngine
     {
         RTCPeerConnection? peer;
         IRtcAudioEndpoint? audio;
+        IRtcVideoEndpoint? video;
         Action<uint, byte[]>? encodedSampleHandler;
         Action<List<AudioFormat>>? formatsHandler;
         Action<IPEndPoint, SDPMediaTypesEnum, RTPPacket>? rtpHandler;
+        Action<uint, byte[]>? videoEncodedSampleHandler;
+        Action<List<VideoFormat>>? videoFormatsHandler;
+        Action<IPEndPoint, uint, byte[], VideoFormat>? videoFrameHandler;
+        EventHandler<ScreenShareFrame>? decodedFrameHandler;
         lock (_gate)
         {
             peer = _peer;
             audio = _audio;
+            video = _video;
             encodedSampleHandler = _encodedSampleHandler;
             formatsHandler = _formatsHandler;
             rtpHandler = _rtpHandler;
+            videoEncodedSampleHandler = _videoEncodedSampleHandler;
+            videoFormatsHandler = _videoFormatsHandler;
+            videoFrameHandler = _videoFrameHandler;
+            decodedFrameHandler = _decodedFrameHandler;
             _peer = null;
             _audio = null;
+            _video = null;
             _encodedSampleHandler = null;
             _formatsHandler = null;
             _rtpHandler = null;
+            _videoEncodedSampleHandler = null;
+            _videoFormatsHandler = null;
+            _videoFrameHandler = null;
+            _decodedFrameHandler = null;
             _initialized = false;
             _audioStarted = false;
+            _videoStarted = false;
             _muted = false;
         }
 
-        if (peer is null && audio is null)
+        if (peer is null && audio is null && video is null)
             return;
 
         if (audio is not null && encodedSampleHandler is not null)
@@ -216,10 +287,41 @@ public sealed class RtcPeerEngine : IRtcPeerEngine
             peer.OnAudioFormatsNegotiated -= formatsHandler;
         if (peer is not null && rtpHandler is not null)
             peer.OnRtpPacketReceived -= rtpHandler;
+        if (video is not null && videoEncodedSampleHandler is not null)
+            video.EncodedSample -= videoEncodedSampleHandler;
+        if (video is not null && decodedFrameHandler is not null)
+            video.FrameDecoded -= decodedFrameHandler;
+        if (peer is not null && videoFormatsHandler is not null)
+            peer.OnVideoFormatsNegotiated -= videoFormatsHandler;
+        if (peer is not null && videoFrameHandler is not null)
+            peer.OnVideoFrameReceived -= videoFrameHandler;
         peer?.Close(reason);
-        if (audio is not null)
-            await audio.StopAsync().ConfigureAwait(false);
+        Exception? cleanupFailure = null;
+        try
+        {
+            if (audio is not null)
+                await audio.StopAsync().ConfigureAwait(false);
+        }
+        catch (Exception exception)
+        {
+            cleanupFailure = exception;
+        }
+        try
+        {
+            if (video is not null)
+                await video.StopAsync().ConfigureAwait(false);
+        }
+        catch (Exception exception)
+        {
+            cleanupFailure ??= exception;
+        }
+        finally
+        {
+            video?.Dispose();
+        }
         SetState(RtcPeerState.Closed);
+        if (cleanupFailure is not null)
+            System.Runtime.ExceptionServices.ExceptionDispatchInfo.Capture(cleanupFailure).Throw();
     }
 
     public ValueTask DisposeAsync()
@@ -271,6 +373,29 @@ public sealed class RtcPeerEngine : IRtcPeerEngine
         {
             lock (_gate)
                 _audioStarted = false;
+            throw;
+        }
+    }
+
+    private async Task StartVideoAsync()
+    {
+        IRtcVideoEndpoint? video;
+        lock (_gate)
+        {
+            if (_videoStarted || _video is null)
+                return;
+            _videoStarted = true;
+            video = _video;
+        }
+
+        try
+        {
+            await video.StartAsync().ConfigureAwait(false);
+        }
+        catch
+        {
+            lock (_gate)
+                _videoStarted = false;
             throw;
         }
     }
