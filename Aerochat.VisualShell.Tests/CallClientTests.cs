@@ -168,6 +168,45 @@ public sealed class CallClientTests
     }
 
     [Test]
+    public async Task Signaling_client_never_reads_a_reply_past_the_size_cap()
+    {
+        string padding = new('x', 1024 * 1024);
+        var ringBody = new CountingStream(System.Text.Encoding.UTF8.GetBytes(
+            "{\"callId\":\"6F9619FF-8B86-D011-B42D-00C04FC964FF\",\"pad\":\"" + padding + "\"}"));
+        var iceBody = new CountingStream(System.Text.Encoding.UTF8.GetBytes(
+            "{\"callId\":\"6F9619FF-8B86-D011-B42D-00C04FC964FF\"}"));
+        var conflictBody = new CountingStream(System.Text.Encoding.UTF8.GetBytes(
+            "{\"error\":\"call_stale_generation\",\"pad\":\"" + padding + "\"}"));
+        using var ringClient = new HttpClient(new StreamingHandler(HttpStatusCode.OK, ringBody));
+        using var iceClient = new HttpClient(new StreamingHandler(HttpStatusCode.OK, iceBody));
+        using var conflictClient = new HttpClient(new StreamingHandler(HttpStatusCode.Conflict, conflictBody));
+        var server = new Uri("https://server.test/");
+
+        string? issued = await new CallSignalingClient(ringClient, server, "token").RingAsync("conversation-1");
+        await new CallSignalingClient(iceClient, server, "token")
+            .IceAsync("conversation-1", "candidate-1", callId: "6f9619ff-8b86-d011-b42d-00c04fc964ff");
+        Exception? conflict = null;
+        try
+        {
+            await new CallSignalingClient(conflictClient, server, "token")
+                .HangupAsync("conversation-1", "bye", callId: "6f9619ff-8b86-d011-b42d-00c04fc964ff");
+        }
+        catch (Exception exception)
+        {
+            conflict = exception;
+        }
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(issued, Is.Null, "oversized ring reply was parsed");
+            Assert.That(ringBody.BytesRead, Is.LessThanOrEqualTo(4 * 1024 + 1), "ring reply read past the cap");
+            Assert.That(iceBody.BytesRead, Is.Zero, "a reply that is not needed was read");
+            Assert.That(conflict, Is.TypeOf<HttpRequestException>(), "oversized 409 reply was parsed");
+            Assert.That(conflictBody.BytesRead, Is.LessThanOrEqualTo(4 * 1024 + 1), "409 reply read past the cap");
+        });
+    }
+
+    [Test]
     public async Task Signaling_client_disposes_its_http_client_exactly_once()
     {
         var httpClient = new RecordingHttpClient(new RecordingHandler());
@@ -979,6 +1018,46 @@ public sealed class CallClientTests
                 response.Content = new StringContent(responseBody, System.Text.Encoding.UTF8, "application/json");
             return response;
         }
+    }
+
+    private sealed class StreamingHandler(HttpStatusCode statusCode, System.IO.Stream body) : HttpMessageHandler
+    {
+        protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken) =>
+            Task.FromResult(new HttpResponseMessage(statusCode)
+            {
+                RequestMessage = request,
+                Content = new StreamContent(body)
+            });
+    }
+
+    // A reply body with no known length that counts how many bytes the client reads.
+    private sealed class CountingStream(byte[] content) : System.IO.Stream
+    {
+        private int _position;
+
+        public int BytesRead => _position;
+        public override bool CanRead => true;
+        public override bool CanSeek => false;
+        public override bool CanWrite => false;
+        public override long Length => throw new NotSupportedException();
+        public override long Position
+        {
+            get => _position;
+            set => throw new NotSupportedException();
+        }
+
+        public override int Read(byte[] buffer, int offset, int count)
+        {
+            int read = Math.Min(count, content.Length - _position);
+            Array.Copy(content, _position, buffer, offset, read);
+            _position += read;
+            return read;
+        }
+
+        public override void Flush() { }
+        public override long Seek(long offset, System.IO.SeekOrigin origin) => throw new NotSupportedException();
+        public override void SetLength(long value) => throw new NotSupportedException();
+        public override void Write(byte[] buffer, int offset, int count) => throw new NotSupportedException();
     }
 
     private sealed class RecordingHttpClient : HttpClient
