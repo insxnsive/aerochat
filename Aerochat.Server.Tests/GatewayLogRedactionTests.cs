@@ -127,6 +127,66 @@ public sealed class GatewayLogRedactionTests
             "Session token appeared in captured server logs");
     }
 
+    [Test]
+    public async Task Loopback_host_does_not_log_session_token()
+    {
+        var capture = new RecordingProvider();
+        string token;
+        using (var fixture = await LoopbackServerFixture.StartAsync(configureLogging: logging =>
+        {
+            logging.AddProvider(capture);
+            logging.AddFilter("Microsoft.AspNetCore.Hosting.Diagnostics", LogLevel.Information);
+            logging.AddFilter<RecordingProvider>("Microsoft.AspNetCore.Hosting.Diagnostics", LogLevel.Information);
+            logging.AddFilter("Aerochat.RedactionProbe", LogLevel.Information);
+        }))
+        {
+            await fixture.SeedAsync(db =>
+            {
+                DateTimeOffset now = DateTimeOffset.UtcNow;
+                db.Users.Add(new ExternalUserEntity
+                {
+                    Id = Guid.NewGuid(),
+                    Provider = "github",
+                    ProviderUserId = "loopback-redaction",
+                    DisplayName = "Loopback log test",
+                    CreatedAt = now,
+                    UpdatedAt = now
+                });
+                return Task.CompletedTask;
+            });
+            token = fixture.Services.GetRequiredService<SessionService>()
+                .Issue(new Identity("github", "loopback-redaction", "Loopback log test"));
+            fixture.Services.GetRequiredService<ILoggerFactory>()
+                .CreateLogger("Aerochat.RedactionProbe").LogInformation("redaction-capture-active");
+            using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+            using var socket = new ClientWebSocket();
+            var uri = new UriBuilder(fixture.BaseUrl)
+            {
+                Scheme = "ws",
+                Path = "/ws",
+                Query = "token=" + Uri.EscapeDataString(token)
+            };
+            await socket.ConnectAsync(uri.Uri, timeout.Token);
+            var buffer = new byte[8192];
+            WebSocketReceiveResult ready = await socket.ReceiveAsync(
+                new ArraySegment<byte>(buffer), timeout.Token);
+            Assert.That(ready.MessageType, Is.EqualTo(WebSocketMessageType.Text));
+            Assert.That(Encoding.UTF8.GetString(buffer, 0, ready.Count), Does.Contain("gateway.ready"));
+            await socket.CloseAsync(WebSocketCloseStatus.NormalClosure, "done", timeout.Token);
+        }
+
+        // Fixture stopped/disposed first, including request-finish logs.
+        string[] emitted = capture.Entries.ToArray();
+        Assert.That(
+            emitted.Any(entry => entry.Contains("redaction-capture-active", StringComparison.Ordinal)),
+            Is.True);
+        Assert.That(
+            emitted.Any(entry => entry.Contains(token, StringComparison.Ordinal)
+                || entry.Contains(Uri.EscapeDataString(token), StringComparison.Ordinal)),
+            Is.False,
+            "Session token appeared in captured server logs");
+    }
+
     private sealed class RecordingProvider : ILoggerProvider, ISupportExternalScope
     {
         internal ConcurrentQueue<string> Entries { get; } = new();
