@@ -161,9 +161,48 @@ public sealed class ConnectedCallCleanupServiceTests
         });
     }
 
+    [Test]
+    public void One_failed_hangup_publish_does_not_drop_the_rest_of_the_batch()
+    {
+        const string sensitive = "synthetic-secret-must-not-be-logged";
+        var logger = new CapturingLogger();
+        using var service = new ConnectedCallCleanupService(new CallRegistry(),
+            new GatewayHub(new GatewayOptions()), TimeProvider.System, logger);
+        var first = new CallSession(Guid.NewGuid(), Guid.NewGuid(), Guid.NewGuid());
+        var second = new CallSession(Guid.NewGuid(), Guid.NewGuid(), Guid.NewGuid());
+        var third = new CallSession(Guid.NewGuid(), Guid.NewGuid(), Guid.NewGuid());
+        var published = new List<Guid>();
+        Exception? failure = null;
+        try
+        {
+            service.NotifyEnded(new[] { first, second, third }, session =>
+            {
+                if (session == second)
+                {
+                    throw new InvalidOperationException(sensitive);
+                }
+
+                published.Add(session.CallId);
+            });
+        }
+        catch (Exception exception)
+        {
+            failure = exception;
+        }
+
+        Assert.That(published.Count, Is.EqualTo(2), "Third call must still be notified after the second fails");
+        Assert.That(published, Is.EqualTo(new[] { first.CallId, third.CallId }));
+        Assert.That(failure, Is.Null);
+        Assert.That(logger.Entries.Count, Is.EqualTo(1));
+        Assert.That(logger.Entries[0].Level, Is.EqualTo(LogLevel.Warning));
+        Assert.That(logger.Entries[0].EventId.Id, Is.EqualTo(4102));
+        Assert.That(logger.Entries[0].Exception, Is.Null);
+        Assert.That(logger.Entries[0].Message, Does.Not.Contain(sensitive));
+    }
+
     private sealed class CapturingLogger : ILogger<ConnectedCallCleanupService>
     {
-        internal List<(LogLevel Level, string Message, Exception? Exception)> Entries { get; } = [];
+        internal List<(LogLevel Level, string Message, Exception? Exception, EventId EventId)> Entries { get; } = [];
 
         public bool IsEnabled(LogLevel logLevel) => true;
 
@@ -175,6 +214,6 @@ public sealed class ConnectedCallCleanupServiceTests
             TState state,
             Exception? exception,
             Func<TState, Exception?, string> formatter) =>
-            Entries.Add((logLevel, formatter(state, exception), exception));
+            Entries.Add((logLevel, formatter(state, exception), exception, eventId));
     }
 }

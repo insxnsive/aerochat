@@ -11,14 +11,31 @@ internal sealed class ConnectedCallCleanupService(
     internal void Sweep()
     {
         IReadOnlyList<CallSession> ended = gateway.WithPresenceLock(registry.CollectDisconnectedCalls);
+        NotifyEnded(ended, PublishHangup);
+    }
+
+    internal void NotifyEnded(IReadOnlyList<CallSession> ended, Action<CallSession> publish)
+    {
         foreach (CallSession session in ended)
         {
-            gateway.Publish(
-                GatewayEventType.CallHangup,
-                new CallSignalData(session.ConversationId, null, null, "peer_disconnected", session.CallId),
-                new[] { session.CallerId, session.CalleeId });
+            try
+            {
+                publish(session);
+            }
+            catch (Exception)
+            {
+                logger.LogWarning(
+                    new EventId(4102, "ConnectedCallHangupPublishFailed"),
+                    "Connected call hangup notification failed; continuing with the remaining calls.");
+            }
         }
     }
+
+    private void PublishHangup(CallSession session) =>
+        gateway.Publish(
+            GatewayEventType.CallHangup,
+            new CallSignalData(session.ConversationId, null, null, "peer_disconnected", session.CallId),
+            new[] { session.CallerId, session.CalleeId });
 
     internal async Task RunLoopAsync(
         Func<CancellationToken, ValueTask<bool>> waitForTick,
