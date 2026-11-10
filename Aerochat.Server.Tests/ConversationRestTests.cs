@@ -404,25 +404,86 @@ public sealed class ConversationRestTests
         Assert.That(response.StatusCode, Is.EqualTo(HttpStatusCode.BadRequest));
     }
 
+    [TestCase(100)]
+    [TestCase(101)]
+    [TestCase(int.MaxValue)]
+    public async Task History_page_limit_is_bounded_before_query(int limit)
+    {
+        using var factory = new ApiWebApplicationFactory();
+        string providerUserId = $"history-limit-{limit}";
+        (Guid conversationId, _) =
+            await SeedConversationWithMessagesAsync(factory, providerUserId, 101);
+        using HttpClient client = CreateAuthorizedClient(factory, providerUserId);
+
+        factory.MessageQueryLimits.Clear();
+        using HttpResponseMessage response = await client.GetAsync(
+            $"/conversations/{conversationId}/messages?limit={limit.ToString(CultureInfo.InvariantCulture)}");
+        var options = new JsonSerializerOptions(JsonSerializerDefaults.Web);
+
+        if (limit == 100)
+        {
+            var page = JsonSerializer.Deserialize<MessagePageDto>(
+                await response.Content.ReadAsStringAsync(), options);
+
+            Assert.Multiple(() =>
+            {
+                Assert.That(response.StatusCode, Is.EqualTo(HttpStatusCode.OK));
+                Assert.That(page, Is.Not.Null);
+                Assert.That(page!.Items, Has.Count.EqualTo(100));
+                Assert.That(page.Items[0].Body, Is.EqualTo("message-0"));
+                Assert.That(page.Items[^1].Body, Is.EqualTo("message-99"));
+                Assert.That(page.NextBefore, Is.Not.Null.And.Not.Empty);
+                Assert.That(factory.MessageQueryLimits, Does.Contain(101));
+            });
+
+            factory.MessageQueryLimits.Clear();
+            using HttpResponseMessage second = await client.GetAsync(
+                $"/conversations/{conversationId}/messages?limit=100&before={Uri.EscapeDataString(page!.NextBefore!)}");
+            var secondPage = JsonSerializer.Deserialize<MessagePageDto>(
+                await second.Content.ReadAsStringAsync(), options);
+
+            Assert.Multiple(() =>
+            {
+                Assert.That(second.StatusCode, Is.EqualTo(HttpStatusCode.OK));
+                Assert.That(secondPage, Is.Not.Null);
+                Assert.That(secondPage!.Items, Has.Count.EqualTo(1));
+                Assert.That(secondPage.Items[0].Body, Is.EqualTo("message-100"));
+                Assert.That(secondPage.NextBefore, Is.Null);
+            });
+            return;
+        }
+
+        string errorBody = await response.Content.ReadAsStringAsync();
+        Assert.Multiple(() =>
+        {
+            Assert.That(response.StatusCode, Is.EqualTo(HttpStatusCode.BadRequest));
+            Assert.That(errorBody, Does.Contain("invalid_request"));
+            Assert.That(factory.MessageQueryLimits, Is.Empty);
+        });
+    }
+
     [Test]
-    public async Task Int_max_value_limit_is_accepted_without_overflow()
+    public async Task History_default_limit_returns_fifty_items_and_cursor()
     {
         using var factory = new ApiWebApplicationFactory();
         (Guid conversationId, _) =
-            await SeedConversationWithMessagesAsync(factory, "max-limit", 1);
-        using HttpClient client = CreateAuthorizedClient(factory, "max-limit");
+            await SeedConversationWithMessagesAsync(factory, "default-limit", 60);
+        using HttpClient client = CreateAuthorizedClient(factory, "default-limit");
 
         using HttpResponseMessage response = await client.GetAsync(
-            $"/conversations/{conversationId}/messages?limit={int.MaxValue.ToString(CultureInfo.InvariantCulture)}");
+            $"/conversations/{conversationId}/messages");
         var page = JsonSerializer.Deserialize<MessagePageDto>(
             await response.Content.ReadAsStringAsync(),
             new JsonSerializerOptions(JsonSerializerDefaults.Web));
 
-        Assert.That(response.StatusCode, Is.EqualTo(HttpStatusCode.OK));
-        Assert.That(factory.MessageQueryLimits, Does.Contain(int.MaxValue));
-        Assert.That(page, Is.Not.Null);
-        Assert.That(page!.Items, Has.Count.EqualTo(1));
-        Assert.That(page.NextBefore, Is.Null);
+        Assert.Multiple(() =>
+        {
+            Assert.That(response.StatusCode, Is.EqualTo(HttpStatusCode.OK));
+            Assert.That(page, Is.Not.Null);
+            Assert.That(page!.Items, Has.Count.EqualTo(50));
+            Assert.That(page.NextBefore, Is.Not.Null.And.Not.Empty);
+            Assert.That(factory.MessageQueryLimits, Does.Contain(51));
+        });
     }
 
     [Test]

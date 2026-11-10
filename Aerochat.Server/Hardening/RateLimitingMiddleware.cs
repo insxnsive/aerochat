@@ -47,6 +47,10 @@ public sealed class RateLimitingMiddleware(RequestDelegate next)
                 && parts.Length == 2
                 && string.Equals(parts[0], "gifs", StringComparison.OrdinalIgnoreCase)
                 && string.Equals(parts[1], "search", StringComparison.OrdinalIgnoreCase))
+            || (HttpMethods.IsGet(context.Request.Method)
+                && parts.Length == 3
+                && string.Equals(parts[0], "conversations", StringComparison.OrdinalIgnoreCase)
+                && string.Equals(parts[2], "messages", StringComparison.OrdinalIgnoreCase))
             || (HttpMethods.IsPost(context.Request.Method)
                 && parts.Length == 3
                 && string.Equals(parts[0], "conversations", StringComparison.OrdinalIgnoreCase)
