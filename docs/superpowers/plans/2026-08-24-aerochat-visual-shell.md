@@ -6,7 +6,7 @@
 
 **Architecture:** Preserve the existing XAML, image resources, scenes, localization, control templates, and WLM 2009 styling. Replace backend-fed view models with plain presentation models owned by one process-local `PresentationState`, route retained windows through `WindowNavigator`, and prove the boundary with static repository tests plus STA window-construction tests.
 
-**Tech Stack:** C# 12, .NET 8 WPF (`net8.0-windows7.0`), NUnit 3.14.0, NUnit3TestAdapter 4.5.0, Microsoft.NET.Test.Sdk 17.8.0, XamlAnimatedGif 2.3.0.
+**Tech Stack:** C# 12, .NET 8 WPF (`net8.0-windows10.0.17763`), NUnit 3.14.0, NUnit3TestAdapter 4.5.0, Microsoft.NET.Test.Sdk 17.8.0, XamlAnimatedGif 2.3.0.
 
 **Spec:** `docs/superpowers/specs/2026-08-24-aerochat-visual-shell-design.md`
 
@@ -147,7 +147,7 @@ Use this exact project shape:
 ```xml
 <Project Sdk="Microsoft.NET.Sdk">
   <PropertyGroup>
-    <TargetFramework>net8.0-windows7.0</TargetFramework>
+    <TargetFramework>net8.0-windows10.0.17763</TargetFramework>
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
     <IsPackable>false</IsPackable>
@@ -1088,7 +1088,7 @@ Expected: FAIL on current backend directories, package/project references, sourc
 
 - [ ] **Step 5: Simplify the product project**
 
-Remove all three `ProjectReference` elements and all backend package references. Remove custom apphost configuration, copied sound assets that no longer play, WebView content, settings-generator entries, protobuf folders, and backend compile/resource declarations. Keep `UseWPF`, `net8.0-windows7.0`, x64, icon, XAML resources, scenes, ads used by demo state, locales, and `XamlAnimatedGif`.
+Remove all three `ProjectReference` elements and all backend package references. Remove custom apphost configuration, copied sound assets that no longer play, WebView content, settings-generator entries, protobuf folders, and backend compile/resource declarations. Keep `UseWPF`, `net8.0-windows10.0.17763`, x64, icon, XAML resources, scenes, ads used by demo state, locales, and `XamlAnimatedGif`.
 
 - [ ] **Step 6: Delete backend and obsolete paths**
 
@@ -1139,7 +1139,7 @@ Expected: clean working tree, passing tests, 0 build errors, and no whitespace e
 
 - [ ] **Step 2: Launch the compiled executable directly**
 
-Run `Aerochat/bin/x64/Debug/net8.0-windows7.0/Aerochat.exe` as a tracked background process. Do not use a release from upstream and do not enter credentials.
+Run `Aerochat/bin/x64/Debug/net8.0-windows10.0.17763/Aerochat.exe` as a tracked background process. Do not use a release from upstream and do not enter credentials.
 
 - [ ] **Step 3: Inspect and exercise Home**
 

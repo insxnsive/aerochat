@@ -9,7 +9,7 @@ This repository contains a WPF client plus a self-hostable server component, der
 - Solution: `Aerochat.sln`
 - Runtime project: `Aerochat/Aerochat.csproj`
 - Test project: `Aerochat.VisualShell.Tests/Aerochat.VisualShell.Tests.csproj`
-- Runtime target: `.NET 8 WPF`, `net8.0-windows7.0`, x64 only
+- Runtime target: `.NET 8 WPF`, `net8.0-windows10.0.17763`, x64 only
 - Rendering package: `XamlAnimatedGif` 2.3.0
 - The final verified solution build passed with 0 warnings and 0 errors.
 - No remote push is part of this project workflow.
@@ -296,7 +296,7 @@ The Task 5 verified baseline is 125 passing tests, 0 failures, 0 skips, and a so
 Compiled executable:
 
 ```text
-Aerochat/bin/x64/Debug/net8.0-windows7.0/Aerochat.exe
+Aerochat/bin/x64/Debug/net8.0-windows10.0.17763/Aerochat.exe
 ```
 
 For a manual smoke run:
