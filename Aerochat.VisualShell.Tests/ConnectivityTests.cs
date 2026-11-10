@@ -10,6 +10,8 @@ namespace Aerochat.VisualShell.Tests;
 
 public sealed class ConnectivityTests
 {
+    private static readonly Uri TestServer = new("https://server.test/");
+
     [Test]
     public async Task Conversation_catalog_client_loads_authorized_guid_conversations()
     {
@@ -57,7 +59,7 @@ public sealed class ConnectivityTests
 
         try
         {
-            var cache = new DpapiTokenCache(path);
+            var cache = new DpapiTokenCache(TestServer, path);
 
             await cache.SaveAsync("session-token");
 
@@ -81,7 +83,7 @@ public sealed class ConnectivityTests
 
         try
         {
-            var cache = new DpapiTokenCache(path);
+            var cache = new DpapiTokenCache(TestServer, path);
             string[] tokens = Enumerable.Range(0, 24)
                 .Select(index => $"session-{index}-" + new string((char)('a' + index), 256 * 1024))
                 .ToArray();
@@ -90,7 +92,7 @@ public sealed class ConnectivityTests
             Task[] saves = tokens.Select(token => Task.Run(async () =>
             {
                 gate.Wait();
-                await new DpapiTokenCache(path).SaveAsync(token);
+                await new DpapiTokenCache(TestServer, path).SaveAsync(token);
             })).ToArray();
 
             gate.Set();
@@ -113,7 +115,7 @@ public sealed class ConnectivityTests
 
         try
         {
-            var cache = new DpapiTokenCache(path);
+            var cache = new DpapiTokenCache(TestServer, path);
             await cache.SaveAsync("session-token");
 
             byte[] bytes = await File.ReadAllBytesAsync(path);
@@ -121,6 +123,39 @@ public sealed class ConnectivityTests
             await File.WriteAllBytesAsync(path, bytes);
 
             Assert.That(await cache.LoadAsync(), Is.Null);
+            Assert.That(File.Exists(path), Is.False);
+        }
+        finally
+        {
+            if (Directory.Exists(directory)) Directory.Delete(directory, recursive: true);
+        }
+    }
+
+    [TestCase("https://server-b.test/")]
+    [TestCase("http://server-a.test/")]
+    [TestCase("https://server-a.test:8443/")]
+    public async Task Dpapi_token_cache_fails_closed_for_another_origin_and_legacy_entries(string otherServer)
+    {
+        string directory = Path.Combine(Path.GetTempPath(), "AerochatTests", Guid.NewGuid().ToString("N"));
+        string path = Path.Combine(directory, "session.bin");
+
+        try
+        {
+            var serverA = new DpapiTokenCache(new Uri("https://server-a.test/"), path);
+            await serverA.SaveAsync("server-a-token");
+
+            Assert.That(await new DpapiTokenCache(new Uri("https://SERVER-A.test:443/"), path).LoadAsync(),
+                Is.EqualTo("server-a-token"));
+
+            Assert.That(await new DpapiTokenCache(new Uri(otherServer), path).LoadAsync(), Is.Null);
+            Assert.That(File.Exists(path), Is.False);
+
+            await File.WriteAllBytesAsync(path, System.Security.Cryptography.ProtectedData.Protect(
+                Encoding.UTF8.GetBytes("legacy-token"),
+                Encoding.UTF8.GetBytes("Aerochat.Session.v1"),
+                System.Security.Cryptography.DataProtectionScope.CurrentUser));
+
+            Assert.That(await serverA.LoadAsync(), Is.Null);
             Assert.That(File.Exists(path), Is.False);
         }
         finally
