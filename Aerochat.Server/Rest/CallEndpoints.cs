@@ -95,6 +95,8 @@ public static class CallEndpoints
         if (!Guid.TryParse(conversationId, out Guid conversationGuid)
             || request is null
             || HasOversizedPayload(request)
+            || request.CallId == Guid.Empty
+            || (action == CallAction.Ring && request.CallId is not null)
             || !HasRequiredPayload(action, request))
         {
             return ConversationAuth.InvalidRequest();
@@ -133,24 +135,41 @@ public static class CallEndpoints
 
         Guid otherMemberId = members[0] == user.Id ? members[1] : members[0];
         Guid recipientId;
+        Guid callId;
         if (action == CallAction.Ring)
         {
-            if (!registry.TryStart(conversationGuid, user.Id, otherMemberId, out _))
+            if (!registry.TryStart(conversationGuid, user.Id, otherMemberId, out CallSession? session)
+                || session is null)
             {
                 return Results.Json(
                     new ErrorDto("call_invalid_state"),
                     statusCode: StatusCodes.Status409Conflict);
             }
 
+            callId = session.CallId;
             recipientId = otherMemberId;
         }
         else
         {
             CallApplyResult result = registry.TryApply(
-                conversationGuid, user.Id, members[0], members[1], action, out recipientId);
+                conversationGuid,
+                user.Id,
+                members[0],
+                members[1],
+                action,
+                request.CallId,
+                out recipientId,
+                out callId);
             if (result == CallApplyResult.Forbidden)
             {
                 return ConversationAuth.Forbidden();
+            }
+
+            if (result == CallApplyResult.Mismatch)
+            {
+                return Results.Json(
+                    new ErrorDto("call_stale_generation"),
+                    statusCode: StatusCodes.Status409Conflict);
             }
 
             if (result != CallApplyResult.Applied)
@@ -163,10 +182,10 @@ public static class CallEndpoints
 
         gateway.Publish(
             eventType,
-            new CallSignalData(conversationGuid, request.Sdp, request.Candidate, request.Reason),
+            new CallSignalData(conversationGuid, request.Sdp, request.Candidate, request.Reason, callId),
             [recipientId]);
 
-        return Results.Ok(new { conversationId = conversationGuid });
+        return Results.Ok(new { conversationId = conversationGuid, callId });
     }
 
     private static bool HasRequiredPayload(CallAction action, CallSignalRequest request) =>
