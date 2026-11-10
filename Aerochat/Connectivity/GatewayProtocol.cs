@@ -11,7 +11,10 @@ public sealed record GatewayFrame(
 public static class GatewayProtocol
 {
     private static readonly string[] CallTypes =
-    ["call.ring", "call.offer", "call.answer", "call.ice", "call.hangup"];
+    [
+        "call.ring", "call.offer", "call.answer", "call.ice", "call.hangup",
+        "call.screen.started", "call.screen.stopped"
+    ];
 
     public static bool TryParseFrame(string json, out GatewayFrame? frame)
     {

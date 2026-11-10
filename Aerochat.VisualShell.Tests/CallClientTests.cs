@@ -64,6 +64,8 @@ public sealed class CallClientTests
     [TestCase("call.answer")]
     [TestCase("call.ice")]
     [TestCase("call.hangup")]
+    [TestCase("call.screen.started")]
+    [TestCase("call.screen.stopped")]
     public void Gateway_protocol_parses_call_event(string type)
     {
         string json = JsonSerializer.Serialize(new
@@ -90,6 +92,25 @@ public sealed class CallClientTests
         Assert.That(handler.Request!.RequestUri!.AbsolutePath, Is.EqualTo("/conversations/conversation%2F1/call/offer"));
         Assert.That(handler.Request.Headers.Authorization!.Parameter, Is.EqualTo("token"));
         Assert.That(handler.Body, Does.Contain("offer-sdp"));
+    }
+
+    [Test]
+    public async Task Screen_share_signaling_uses_authenticated_start_and_stop_paths()
+    {
+        var handler = new RecordingHandler();
+        using var client = new HttpClient(handler);
+        var signaling = new CallSignalingClient(client, new Uri("https://server.test/"), "token");
+        var screen = (IScreenShareSignalingClient)signaling;
+
+        await screen.ScreenStartAsync("conversation/1");
+        Assert.That(handler.Request!.RequestUri!.AbsolutePath,
+            Is.EqualTo("/conversations/conversation%2F1/call/screen/start"));
+        Assert.That(handler.Request.Headers.Authorization!.Parameter, Is.EqualTo("token"));
+
+        await screen.ScreenStopAsync("conversation/1");
+        Assert.That(handler.Request!.RequestUri!.AbsolutePath,
+            Is.EqualTo("/conversations/conversation%2F1/call/screen/stop"));
+        Assert.That(handler.Request.Headers.Authorization!.Parameter, Is.EqualTo("token"));
     }
 
     [Test]
