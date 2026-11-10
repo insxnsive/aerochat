@@ -189,6 +189,7 @@ public sealed class GatewayHubTests
         var sink = new RecordingSink("ordered", userId);
         using var firstBeforeQueue = new ManualResetEventSlim();
         using var releaseFirst = new ManualResetEventSlim();
+        using var secondStarted = new ManualResetEventSlim();
         using var secondBeforeQueue = new ManualResetEventSlim();
         hub.BeforeQueueInternalForTesting = envelope =>
         {
@@ -204,21 +205,32 @@ public sealed class GatewayHubTests
         };
         hub.Register(sink);
 
-        Task first = Task.Run(() => hub.Publish(
+        Task first = Task.Factory.StartNew(() => hub.Publish(
             GatewayEventType.TypingStarted,
             new TypingStartedData(Guid.NewGuid(), userId),
-            [userId]));
-        Assert.That(firstBeforeQueue.Wait(TimeSpan.FromSeconds(1)), Is.True);
+            [userId]), CancellationToken.None, TaskCreationOptions.LongRunning, TaskScheduler.Default);
+        Assert.That(firstBeforeQueue.Wait(TimeSpan.FromSeconds(5)), Is.True);
 
-        Task second = Task.Run(() => hub.Publish(
-            GatewayEventType.TypingStarted,
-            new TypingStartedData(Guid.NewGuid(), userId),
-            [userId]));
-        Assert.That(secondBeforeQueue.Wait(TimeSpan.FromMilliseconds(250)), Is.False);
+        Task second = Task.Factory.StartNew(() =>
+        {
+            secondStarted.Set();
+            hub.Publish(
+                GatewayEventType.TypingStarted,
+                new TypingStartedData(Guid.NewGuid(), userId),
+                [userId]);
+        }, CancellationToken.None, TaskCreationOptions.LongRunning, TaskScheduler.Default);
+        try
+        {
+            Assert.That(secondStarted.Wait(TimeSpan.FromSeconds(5)), Is.True);
+            Assert.That(secondBeforeQueue.Wait(TimeSpan.FromMilliseconds(100)), Is.False);
+        }
+        finally
+        {
+            releaseFirst.Set();
+        }
 
-        releaseFirst.Set();
-        Assert.That(secondBeforeQueue.Wait(TimeSpan.FromSeconds(1)), Is.True);
-        Task.WaitAll(first, second);
+        Assert.That(secondBeforeQueue.Wait(TimeSpan.FromSeconds(5)), Is.True);
+        Assert.That(Task.WaitAll([first, second], TimeSpan.FromSeconds(5)), Is.True);
 
         Assert.That(sink.ReplayableEventIds, Is.EqualTo(new[] { "hub:1", "hub:2" }));
     }
@@ -229,22 +241,29 @@ public sealed class GatewayHubTests
         Guid userId = Guid.NewGuid();
         var hub = new GatewayHub(new GatewayOptions { InstanceId = "hub" });
         var sink = new HandoffSink("handoff", userId);
-
-        Task<GatewayRegistrationResult> registration = Task.Run(() => hub.Register(sink));
-        Assert.That(sink.ReadyStarted.Wait(TimeSpan.FromSeconds(1)), Is.True);
-
-        using var publishStarted = new ManualResetEventSlim();
-        Task publish = Task.Run(() =>
+        using var publishQueued = new ManualResetEventSlim();
+        hub.BeforeQueueInternalForTesting = envelope =>
         {
-            publishStarted.Set();
-            hub.Publish(
-                GatewayEventType.PresenceUpdated,
-                new PresenceUpdatedData(userId, "online"),
-                [userId]);
-        });
+            if (envelope.EventId == "hub:1")
+            {
+                publishQueued.Set();
+            }
+        };
+
+        Task<GatewayRegistrationResult> registration = Task.Factory.StartNew(
+            () => hub.Register(sink),
+            CancellationToken.None,
+            TaskCreationOptions.LongRunning,
+            TaskScheduler.Default);
+        Assert.That(sink.ReadyStarted.Wait(TimeSpan.FromSeconds(5)), Is.True);
+
+        Task publish = Task.Factory.StartNew(() => hub.Publish(
+            GatewayEventType.PresenceUpdated,
+            new PresenceUpdatedData(userId, "online"),
+            [userId]), CancellationToken.None, TaskCreationOptions.LongRunning, TaskScheduler.Default);
         try
         {
-            Assert.That(publishStarted.Wait(TimeSpan.FromSeconds(1)), Is.True);
+            Assert.That(publishQueued.Wait(TimeSpan.FromSeconds(5)), Is.True);
             Assert.That(publish.Wait(TimeSpan.FromMilliseconds(100)), Is.False);
         }
         finally
@@ -252,7 +271,7 @@ public sealed class GatewayHubTests
             sink.ReleaseReady.Set();
         }
 
-        Assert.That(Task.WaitAll([registration, publish], TimeSpan.FromSeconds(2)), Is.True);
+        Assert.That(Task.WaitAll([registration, publish], TimeSpan.FromSeconds(5)), Is.True);
         Assert.Multiple(() =>
         {
             Assert.That(registration.Result.Registered, Is.True);
@@ -338,19 +357,38 @@ public sealed class GatewayHubTests
         var old = new RecordingSink("same", userId);
         Assert.That(hub.Register(old).Registered, Is.True);
         var replacement = new BlockingHandoffSink("same", userId, failLive: true);
+        using var pendingSnapshotQueued = new CountdownEvent(2);
+        hub.BeforeQueueInternalForTesting = envelope =>
+        {
+            if (envelope.EventId == "hub:1")
+            {
+                pendingSnapshotQueued.Signal();
+            }
+        };
 
-        Task<GatewayRegistrationResult> registration = Task.Run(() => hub.Register(replacement));
-        Assert.That(replacement.ReadyStarted.Wait(TimeSpan.FromSeconds(1)), Is.True);
+        Task<GatewayRegistrationResult> registration = Task.Factory.StartNew(
+            () => hub.Register(replacement),
+            CancellationToken.None,
+            TaskCreationOptions.LongRunning,
+            TaskScheduler.Default);
+        Assert.That(replacement.ReadyStarted.Wait(TimeSpan.FromSeconds(5)), Is.True);
 
-        Task publish = Task.Run(() => hub.Publish(
+        Task publish = Task.Factory.StartNew(() => hub.Publish(
             GatewayEventType.PresenceUpdated,
             new PresenceUpdatedData(userId, "online"),
-            [userId]));
-        Assert.That(publish.Wait(TimeSpan.FromMilliseconds(250)), Is.False);
-        Assert.That(replacement.LiveAttempted.IsSet, Is.False);
+            [userId]), CancellationToken.None, TaskCreationOptions.LongRunning, TaskScheduler.Default);
+        try
+        {
+            Assert.That(pendingSnapshotQueued.Wait(TimeSpan.FromSeconds(5)), Is.True);
+            Assert.That(publish.Wait(TimeSpan.FromMilliseconds(100)), Is.False);
+            Assert.That(replacement.LiveAttempted.IsSet, Is.False);
+        }
+        finally
+        {
+            replacement.ReleaseReady.Set();
+        }
 
-        replacement.ReleaseReady.Set();
-        Assert.That(Task.WaitAll([registration, publish], TimeSpan.FromSeconds(2)), Is.True);
+        Assert.That(Task.WaitAll([registration, publish], TimeSpan.FromSeconds(5)), Is.True);
 
         Assert.Multiple(() =>
         {
@@ -377,19 +415,38 @@ public sealed class GatewayHubTests
         var old = new RecordingSink("same", userId);
         Assert.That(hub.Register(old).Registered, Is.True);
         var replacement = new BlockingHandoffSink("same", userId, failLive: false);
+        using var pendingSnapshotQueued = new CountdownEvent(2);
+        hub.BeforeQueueInternalForTesting = envelope =>
+        {
+            if (envelope.EventId == "hub:1")
+            {
+                pendingSnapshotQueued.Signal();
+            }
+        };
 
-        Task<GatewayRegistrationResult> registration = Task.Run(() => hub.Register(replacement));
-        Assert.That(replacement.ReadyStarted.Wait(TimeSpan.FromSeconds(1)), Is.True);
+        Task<GatewayRegistrationResult> registration = Task.Factory.StartNew(
+            () => hub.Register(replacement),
+            CancellationToken.None,
+            TaskCreationOptions.LongRunning,
+            TaskScheduler.Default);
+        Assert.That(replacement.ReadyStarted.Wait(TimeSpan.FromSeconds(5)), Is.True);
 
-        Task publish = Task.Run(() => hub.Publish(
+        Task publish = Task.Factory.StartNew(() => hub.Publish(
             GatewayEventType.PresenceUpdated,
             new PresenceUpdatedData(userId, "online"),
-            [userId]));
-        Assert.That(publish.Wait(TimeSpan.FromMilliseconds(250)), Is.False);
-        Assert.That(replacement.LiveAttempted.IsSet, Is.False);
+            [userId]), CancellationToken.None, TaskCreationOptions.LongRunning, TaskScheduler.Default);
+        try
+        {
+            Assert.That(pendingSnapshotQueued.Wait(TimeSpan.FromSeconds(5)), Is.True);
+            Assert.That(publish.Wait(TimeSpan.FromMilliseconds(100)), Is.False);
+            Assert.That(replacement.LiveAttempted.IsSet, Is.False);
+        }
+        finally
+        {
+            replacement.ReleaseReady.Set();
+        }
 
-        replacement.ReleaseReady.Set();
-        Assert.That(Task.WaitAll([registration, publish], TimeSpan.FromSeconds(2)), Is.True);
+        Assert.That(Task.WaitAll([registration, publish], TimeSpan.FromSeconds(5)), Is.True);
 
         hub.Publish(
             GatewayEventType.PresenceUpdated,
@@ -506,18 +563,31 @@ public sealed class GatewayHubTests
         Guid userId = Guid.NewGuid();
         var hub = new GatewayHub(new GatewayOptions { InstanceId = "hub" });
         var sink = new BlockingSink("blocking", userId);
+        using var removeStarted = new ManualResetEventSlim();
         hub.Register(sink);
 
-        Task publish = Task.Run(() => hub.Publish(
+        Task publish = Task.Factory.StartNew(() => hub.Publish(
             GatewayEventType.PresenceUpdated,
             new PresenceUpdatedData(userId, "online"),
-            [userId]));
-        Assert.That(sink.LiveEventStarted.Wait(TimeSpan.FromSeconds(1)), Is.True);
+            [userId]), CancellationToken.None, TaskCreationOptions.LongRunning, TaskScheduler.Default);
+        Assert.That(sink.LiveEventStarted.Wait(TimeSpan.FromSeconds(5)), Is.True);
 
-        Task remove = Task.Run(() => hub.Remove(sink.ConnectionId, sink));
-        Assert.That(remove.Wait(TimeSpan.FromMilliseconds(250)), Is.False);
-        sink.ReleaseLiveEvent.Set();
-        Assert.That(Task.WaitAll([publish, remove], TimeSpan.FromSeconds(2)), Is.True);
+        Task remove = Task.Factory.StartNew(() =>
+        {
+            removeStarted.Set();
+            hub.Remove(sink.ConnectionId, sink);
+        }, CancellationToken.None, TaskCreationOptions.LongRunning, TaskScheduler.Default);
+        try
+        {
+            Assert.That(removeStarted.Wait(TimeSpan.FromSeconds(5)), Is.True);
+            Assert.That(remove.Wait(TimeSpan.FromMilliseconds(100)), Is.False);
+        }
+        finally
+        {
+            sink.ReleaseLiveEvent.Set();
+        }
+
+        Assert.That(Task.WaitAll([publish, remove], TimeSpan.FromSeconds(5)), Is.True);
         Assert.That(hub.ActiveConnectionCount, Is.Zero);
     }
 
@@ -559,10 +629,21 @@ public sealed class GatewayHubTests
         Assert.That(hub.Register(old).Registered, Is.True);
         var replacement = new BlockingHandoffSink("same", userId, failLive: false);
 
-        Task<GatewayRegistrationResult> registration = Task.Run(() => hub.Register(replacement));
-        Assert.That(replacement.ReadyStarted.Wait(TimeSpan.FromSeconds(1)), Is.True);
-        replacement.ReleaseReady.Set();
-        Assert.That(registration.Wait(TimeSpan.FromSeconds(2)), Is.True);
+        Task<GatewayRegistrationResult> registration = Task.Factory.StartNew(
+            () => hub.Register(replacement),
+            CancellationToken.None,
+            TaskCreationOptions.LongRunning,
+            TaskScheduler.Default);
+        try
+        {
+            Assert.That(replacement.ReadyStarted.Wait(TimeSpan.FromSeconds(5)), Is.True);
+        }
+        finally
+        {
+            replacement.ReleaseReady.Set();
+        }
+
+        Assert.That(registration.Wait(TimeSpan.FromSeconds(5)), Is.True);
         Assert.That(registration.Result.Registered, Is.True);
 
         Assert.That(transitions, Is.EqualTo(new[] { (userId, true) }));
@@ -581,16 +662,37 @@ public sealed class GatewayHubTests
         var old = new RecordingSink("same", userId);
         Assert.That(hub.Register(old).Registered, Is.True);
         var replacement = new BlockingHandoffSink("same", userId, failLive: true);
+        using var pendingSnapshotQueued = new CountdownEvent(2);
+        hub.BeforeQueueInternalForTesting = envelope =>
+        {
+            if (envelope.EventId == "hub:1")
+            {
+                pendingSnapshotQueued.Signal();
+            }
+        };
 
-        Task<GatewayRegistrationResult> registration = Task.Run(() => hub.Register(replacement));
-        Assert.That(replacement.ReadyStarted.Wait(TimeSpan.FromSeconds(1)), Is.True);
-        Task publish = Task.Run(() => hub.Publish(
+        Task<GatewayRegistrationResult> registration = Task.Factory.StartNew(
+            () => hub.Register(replacement),
+            CancellationToken.None,
+            TaskCreationOptions.LongRunning,
+            TaskScheduler.Default);
+        Assert.That(replacement.ReadyStarted.Wait(TimeSpan.FromSeconds(5)), Is.True);
+
+        Task publish = Task.Factory.StartNew(() => hub.Publish(
             GatewayEventType.PresenceUpdated,
             new PresenceUpdatedData(userId, "online"),
-            [userId]));
-        Assert.That(publish.Wait(TimeSpan.FromMilliseconds(250)), Is.False);
-        replacement.ReleaseReady.Set();
-        Assert.That(Task.WaitAll([registration, publish], TimeSpan.FromSeconds(2)), Is.True);
+            [userId]), CancellationToken.None, TaskCreationOptions.LongRunning, TaskScheduler.Default);
+        try
+        {
+            Assert.That(pendingSnapshotQueued.Wait(TimeSpan.FromSeconds(5)), Is.True);
+            Assert.That(publish.Wait(TimeSpan.FromMilliseconds(100)), Is.False);
+        }
+        finally
+        {
+            replacement.ReleaseReady.Set();
+        }
+
+        Assert.That(Task.WaitAll([registration, publish], TimeSpan.FromSeconds(5)), Is.True);
 
         Assert.That(registration.Result.Registered, Is.False);
         Assert.That(transitions, Is.EqualTo(new[] { (userId, true) }));
