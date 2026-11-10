@@ -21,12 +21,16 @@ public static class GatewayEndpoints
         IExternalUserStore externalUsers,
         GatewayHub gateway,
         GatewayOptions options,
+        TimeProvider clock,
         CancellationToken cancellationToken)
     {
         string? token = GetExactQueryValue(httpContext.Request.QueryString.Value, "token");
-        ExternalUser? user = await ConversationAuth.TryGetCurrentUserAsync(
-            httpContext, sessions, externalUsers, cancellationToken, token);
-        if (user is null)
+        SessionClaims? claims = string.IsNullOrEmpty(token) ? null : sessions.Validate(token);
+        ExternalUser? user = claims is null
+            ? null
+            : await externalUsers.FindAsync(claims.Provider, claims.ProviderUserId, cancellationToken);
+
+        if (claims is null || user is null || clock.GetUtcNow() >= claims.ExpiresAt)
         {
             return ConversationAuth.Unauthorized(httpContext);
         }
@@ -44,9 +48,18 @@ public static class GatewayEndpoints
         string? lastEventId = GetExactQueryValue(httpContext.Request.QueryString.Value, "lastEventId");
         using WebSocket socket = await httpContext.WebSockets.AcceptWebSocketAsync();
         using var connection = new GatewayConnection(Guid.NewGuid().ToString("N"), user.Id, options);
+
+        if (clock.GetUtcNow() >= claims.ExpiresAt)
+        {
+            connection.Abort(GatewayAbortReason.PolicyViolation);
+            await socket.CloseAsync(WebSocketCloseStatus.PolicyViolation, "expired", CancellationToken.None);
+            return Results.Empty;
+        }
+
         GatewayRegistrationResult registration = gateway.Register(connection, lastEventId);
 
-        await ServeSocketAsync(httpContext, socket, connection, gateway, registration, cancellationToken);
+        await ServeSocketAsync(
+            httpContext, socket, connection, gateway, registration, claims.ExpiresAt, clock, cancellationToken);
         return Results.Empty;
     }
 
@@ -56,6 +69,8 @@ public static class GatewayEndpoints
         GatewayConnection connection,
         GatewayHub gateway,
         GatewayRegistrationResult registration,
+        DateTimeOffset expiresAt,
+        TimeProvider clock,
         CancellationToken cancellationToken)
     {
         WebSocketCloseStatus? forcedCloseStatus = registration.Registered
@@ -73,9 +88,30 @@ public static class GatewayEndpoints
             connection.Abort(GatewayAbortReason.PolicyViolation);
         }
 
+        TimeSpan remaining = expiresAt - clock.GetUtcNow();
+        if (remaining < TimeSpan.Zero)
+        {
+            remaining = TimeSpan.Zero;
+        }
+
+        using var expiry = new CancellationTokenSource(remaining, clock);
         using var lifetime = CancellationTokenSource.CreateLinkedTokenSource(
-            cancellationToken, httpContext.RequestAborted);
-        Task writer = WriteLoopAsync(socket, connection, forcedCloseStatus, lifetime.Token);
+            cancellationToken, httpContext.RequestAborted, expiry.Token);
+        using CancellationTokenRegistration expiryRegistration = expiry.Token.Register(() =>
+        {
+            connection.Abort(GatewayAbortReason.PolicyViolation);
+            gateway.Remove(connection.ConnectionId, connection);
+            try
+            {
+                socket.Abort();
+            }
+            catch
+            {
+                // The socket may already be gone; expiry shutdown stays best-effort.
+            }
+        });
+
+        Task writer = WriteLoopAsync(socket, connection, forcedCloseStatus, expiresAt, clock, lifetime.Token);
         if (!registration.Registered)
         {
             await writer.ConfigureAwait(false);
@@ -109,6 +145,8 @@ public static class GatewayEndpoints
         WebSocket socket,
         GatewayConnection connection,
         WebSocketCloseStatus? forcedCloseStatus,
+        DateTimeOffset expiresAt,
+        TimeProvider clock,
         CancellationToken cancellationToken)
     {
         try
@@ -121,12 +159,19 @@ public static class GatewayEndpoints
                     break;
                 }
 
+                if (clock.GetUtcNow() >= expiresAt)
+                {
+                    connection.Abort(GatewayAbortReason.PolicyViolation);
+                    break;
+                }
+
                 byte[] payload = Encoding.UTF8.GetBytes(frame);
                 await socket.SendAsync(payload, WebSocketMessageType.Text, true, cancellationToken)
                     .ConfigureAwait(false);
             }
 
-            if (socket.State is WebSocketState.Open or WebSocketState.CloseReceived)
+            if (!cancellationToken.IsCancellationRequested
+                && socket.State is WebSocketState.Open or WebSocketState.CloseReceived)
             {
                 WebSocketCloseStatus status = forcedCloseStatus ?? MapCloseStatus(connection.TerminalAbortReason);
                 await socket.CloseAsync(status, status.ToString(), CancellationToken.None).ConfigureAwait(false);

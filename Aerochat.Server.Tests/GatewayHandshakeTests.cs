@@ -24,6 +24,46 @@ public sealed class GatewayHandshakeTests
         });
     }
 
+    [TestCase("/ws")]
+    [TestCase("/ws?token={0}&token={0}")]
+    public async Task Authorization_header_cannot_rescue_absent_or_duplicate_query_token(string pathTemplate)
+    {
+        using var factory = new ApiWebApplicationFactory();
+        Guid userId = Guid.NewGuid();
+        DateTimeOffset now = new(2026, 8, 25, 12, 0, 0, TimeSpan.Zero);
+        await factory.SeedAsync(db =>
+        {
+            db.Users.Add(new ExternalUserEntity
+            {
+                Id = userId,
+                Provider = "github",
+                ProviderUserId = "gateway-header-only",
+                DisplayName = "Gateway Header Only",
+                CreatedAt = now,
+                UpdatedAt = now
+            });
+            return Task.CompletedTask;
+        });
+
+        string token = factory.Services.GetRequiredService<SessionService>()
+            .Issue(new Identity("github", "gateway-header-only", "Gateway Header Only"));
+        using HttpClient client = factory.CreateClient(new() { AllowAutoRedirect = false });
+        client.DefaultRequestHeaders.Authorization =
+            new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", token);
+        string path = string.Format(
+            System.Globalization.CultureInfo.InvariantCulture,
+            pathTemplate,
+            Uri.EscapeDataString(token));
+
+        using HttpResponseMessage response = await client.GetAsync(path);
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(response.StatusCode, Is.EqualTo(HttpStatusCode.Unauthorized));
+            Assert.That(response.Headers.WwwAuthenticate.ToString(), Is.EqualTo("Bearer"));
+        });
+    }
+
     [Test]
     public async Task Valid_local_gateway_token_without_upgrade_returns_400()
     {
