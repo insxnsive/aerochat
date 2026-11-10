@@ -6,6 +6,9 @@ public sealed class ScreenSharePublisher : IAsyncDisposable
 {
     private readonly object _gate = new();
     private readonly object _disposeGate = new();
+
+    // Start and stop run one at a time, so neither can return while the other is still running.
+    private readonly SemaphoreSlim _lifecycle = new(1, 1);
     private readonly IScreenCaptureSource _source;
     private readonly IScreenShareFrameSink _sink;
     private readonly int _framesPerSecond;
@@ -31,71 +34,90 @@ public sealed class ScreenSharePublisher : IAsyncDisposable
 
     public async Task StartAsync(CancellationToken cancellationToken = default)
     {
-        CancellationTokenSource lifetime;
-        Channel<ScreenShareFrame> frames;
-        Task worker;
-        lock (_gate)
-        {
-            ObjectDisposedException.ThrowIf(_disposed, this);
-            if (_started)
-                return;
-
-            lifetime = new CancellationTokenSource();
-            frames = Channel.CreateBounded<ScreenShareFrame>(new BoundedChannelOptions(1)
-            {
-                FullMode = BoundedChannelFullMode.DropOldest,
-                SingleReader = true,
-                SingleWriter = false
-            });
-            CancellationToken lifetimeToken = lifetime.Token;
-            ChannelReader<ScreenShareFrame> reader = frames.Reader;
-            worker = Task.Run(() => PumpFramesAsync(reader, lifetimeToken));
-            _lifetime = lifetime;
-            _frames = frames;
-            _worker = worker;
-            _frameGate = new ScreenShareFrameRateGate(_framesPerSecond);
-            _started = true;
-            _source.FrameReceived += OnFrameReceived;
-        }
-
+        await _lifecycle.WaitAsync(cancellationToken).ConfigureAwait(false);
         try
         {
-            using CancellationTokenSource startup =
-                CancellationTokenSource.CreateLinkedTokenSource(
-                    lifetime.Token,
-                    cancellationToken);
-            await _source.StartAsync(startup.Token).ConfigureAwait(false);
-        }
-        catch
-        {
-            bool ownsCleanup;
+            CancellationTokenSource lifetime;
             lock (_gate)
             {
-                ownsCleanup = ReferenceEquals(_lifetime, lifetime);
-                if (ownsCleanup)
-                {
-                    _started = false;
-                    _lifetime = null;
-                    _frames = null;
-                    _worker = null;
-                    _frameGate = null;
-                    _source.FrameReceived -= OnFrameReceived;
-                }
+                ObjectDisposedException.ThrowIf(_disposed, this);
+                if (_started)
+                    return;
+
+                lifetime = new CancellationTokenSource();
+                Channel<ScreenShareFrame> frames = Channel.CreateBounded<ScreenShareFrame>(
+                    new BoundedChannelOptions(1)
+                    {
+                        FullMode = BoundedChannelFullMode.DropOldest,
+                        SingleReader = true,
+                        SingleWriter = false
+                    });
+                CancellationToken lifetimeToken = lifetime.Token;
+                ChannelReader<ScreenShareFrame> reader = frames.Reader;
+                _worker = Task.Run(() => PumpFramesAsync(reader, lifetimeToken));
+                _lifetime = lifetime;
+                _frames = frames;
+                _frameGate = new ScreenShareFrameRateGate(_framesPerSecond);
+                _started = true;
+                _source.FrameReceived += OnFrameReceived;
             }
 
-            if (ownsCleanup)
+            try
             {
-                frames.Writer.TryComplete();
-                lifetime.Cancel();
-                await worker.ConfigureAwait(false);
-                lifetime.Dispose();
+                using CancellationTokenSource startup =
+                    CancellationTokenSource.CreateLinkedTokenSource(
+                        lifetime.Token,
+                        cancellationToken);
+                await _source.StartAsync(startup.Token).ConfigureAwait(false);
             }
+            catch
+            {
+                // The source may have partly started before it failed, so stop it before reporting the failure.
+                try
+                {
+                    await StopCoreAsync(CancellationToken.None).ConfigureAwait(false);
+                }
+                catch (Exception)
+                {
+                    // Keep the original start failure.
+                }
 
-            throw;
+                throw;
+            }
+        }
+        finally
+        {
+            _lifecycle.Release();
         }
     }
 
     public async Task StopAsync(CancellationToken cancellationToken = default)
+    {
+        // Ask a start that is still running to give up, then wait for it to finish before stopping.
+        CancellationTokenSource? pending;
+        lock (_gate)
+            pending = _lifetime;
+        try
+        {
+            pending?.Cancel();
+        }
+        catch (ObjectDisposedException)
+        {
+            // That share was already stopped.
+        }
+
+        await _lifecycle.WaitAsync().ConfigureAwait(false);
+        try
+        {
+            await StopCoreAsync(cancellationToken).ConfigureAwait(false);
+        }
+        finally
+        {
+            _lifecycle.Release();
+        }
+    }
+
+    private async Task StopCoreAsync(CancellationToken cancellationToken)
     {
         CancellationTokenSource? lifetime;
         Channel<ScreenShareFrame>? frames;
