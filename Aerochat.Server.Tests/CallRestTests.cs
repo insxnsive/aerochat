@@ -1214,44 +1214,40 @@ public sealed class CallRestTests
     {
         var clock = new ManualTimeProvider(new DateTimeOffset(2100, 1, 1, 12, 0, 0, TimeSpan.Zero));
         using var factory = new ApiWebApplicationFactory { Clock = clock };
-        Guid firstConversation = Guid.NewGuid();
-        var first = await EstablishConnectedCallAsync(factory, firstConversation, "old-deadline");
+        Guid conversationId = Guid.NewGuid();
+        var call = await EstablishConnectedCallAsync(factory, conversationId, "old-deadline");
         try
         {
             GatewayHub hub = factory.Services.GetRequiredService<GatewayHub>();
-            Assert.That(hub.Remove(first.CallerSink.ConnectionId, first.CallerSink), Is.True);
-            using var hangup = await first.Callee.PostAsJsonAsync(
-                first.Root + "/hangup", new { callId = first.CallId });
+            Guid firstGeneration = call.CallId;
+            Assert.That(hub.Remove(call.CallerSink.ConnectionId, call.CallerSink), Is.True);
+            using var hangup = await call.Callee.PostAsJsonAsync(
+                call.Root + "/hangup", new { callId = firstGeneration });
             Assert.That(hangup.StatusCode, Is.EqualTo(HttpStatusCode.OK));
-            clock.Advance(TimeSpan.FromSeconds(60));
-            first.Cleanup.Sweep();
-            first.Caller.Dispose();
-            first.Callee.Dispose();
-        }
-        catch
-        {
-            first.Caller.Dispose();
-            first.Callee.Dispose();
-            throw;
-        }
-
-        Guid secondConversation = Guid.NewGuid();
-        var second = await EstablishConnectedCallAsync(factory, secondConversation, "old-deadline-next");
-        try
-        {
-            GatewayHub hub = factory.Services.GetRequiredService<GatewayHub>();
-            int before = second.CalleeSink.Events.Count;
-            clock.Advance(TimeSpan.FromSeconds(60));
-            second.Cleanup.Sweep();
-            Assert.That(second.CalleeSink.Events.Count, Is.EqualTo(before));
-            using var ice = await second.Caller.PostAsJsonAsync(
-                second.Root + "/ice", new { candidate = "candidate", callId = second.CallId });
+            clock.Advance(TimeSpan.FromSeconds(5));
+            hub.Register(new RecordingSink("old-deadline-caller-second", call.CallerId));
+            using var ring = await call.Caller.PostAsJsonAsync(call.Root + "/ring", new { });
+            Assert.That(ring.StatusCode, Is.EqualTo(HttpStatusCode.OK));
+            Guid secondGeneration = CallIdFromResponse(await ring.Content.ReadAsStringAsync());
+            using var offer = await call.Caller.PostAsJsonAsync(
+                call.Root + "/offer", new { sdp = "offer", callId = secondGeneration });
+            using var answer = await call.Callee.PostAsJsonAsync(
+                call.Root + "/answer", new { sdp = "answer", callId = secondGeneration });
+            Assert.That(offer.StatusCode, Is.EqualTo(HttpStatusCode.OK));
+            Assert.That(answer.StatusCode, Is.EqualTo(HttpStatusCode.OK));
+            Assert.That(secondGeneration, Is.Not.EqualTo(firstGeneration));
+            int before = call.CalleeSink.Events.Count;
+            clock.Advance(TimeSpan.FromSeconds(30));
+            call.Cleanup.Sweep();
+            Assert.That(call.CalleeSink.Events.Count, Is.EqualTo(before));
+            using var ice = await call.Caller.PostAsJsonAsync(
+                call.Root + "/ice", new { candidate = "candidate", callId = secondGeneration });
             Assert.That(ice.StatusCode, Is.EqualTo(HttpStatusCode.OK));
         }
         finally
         {
-            second.Caller.Dispose();
-            second.Callee.Dispose();
+            call.Caller.Dispose();
+            call.Callee.Dispose();
         }
     }
 
@@ -1406,7 +1402,21 @@ public sealed class CallRestTests
 
         public override DateTimeOffset GetUtcNow() => _now;
 
+        public override ITimer CreateTimer(
+            TimerCallback callback, object? state, TimeSpan dueTime, TimeSpan period) => new InertTimer();
+
         public void Advance(TimeSpan delta) => _now += delta;
+
+        private sealed class InertTimer : ITimer
+        {
+            public bool Change(TimeSpan dueTime, TimeSpan period) => true;
+
+            public void Dispose()
+            {
+            }
+
+            public ValueTask DisposeAsync() => ValueTask.CompletedTask;
+        }
     }
 
     private static async Task<(Guid SenderId, Guid ReceiverId)> SeedTwoMemberConversationAsync(
