@@ -51,6 +51,7 @@ internal static class ServerComposition
             ReadSessionSigningKey(builder.Configuration),
             sp.GetRequiredService<TimeProvider>()));
         builder.Services.AddSingleton<OAuthFlowStore>();
+        builder.Services.AddSingleton<OAuthStartRateLimiter>();
         builder.Services.AddDbContext<ChatDb>(options => options.UseSqlite(chatConnectionString));
         builder.Services.AddScoped<IExternalUserStore, EfExternalUserStore>();
         builder.Services.AddScoped<ConversationMessageService>();
