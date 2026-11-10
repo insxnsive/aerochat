@@ -58,6 +58,13 @@ public sealed class RateLimitingMiddleware(RequestDelegate next)
             || (HttpMethods.IsPost(context.Request.Method)
                 && parts.Length == 4
                 && string.Equals(parts[0], "conversations", StringComparison.OrdinalIgnoreCase)
-                && string.Equals(parts[2], "call", StringComparison.OrdinalIgnoreCase));
+                && string.Equals(parts[2], "call", StringComparison.OrdinalIgnoreCase))
+            || (HttpMethods.IsPost(context.Request.Method)
+                && parts.Length == 5
+                && string.Equals(parts[0], "conversations", StringComparison.OrdinalIgnoreCase)
+                && string.Equals(parts[2], "call", StringComparison.OrdinalIgnoreCase)
+                && string.Equals(parts[3], "screen", StringComparison.OrdinalIgnoreCase)
+                && (string.Equals(parts[4], "start", StringComparison.OrdinalIgnoreCase)
+                    || string.Equals(parts[4], "stop", StringComparison.OrdinalIgnoreCase)));
     }
 }
