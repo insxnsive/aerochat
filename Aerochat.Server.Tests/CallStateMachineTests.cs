@@ -21,7 +21,6 @@ public sealed class CallStateMachineTests
 
     [TestCase(CallAction.Offer, CallState.Idle)]
     [TestCase(CallAction.Answer, CallState.Ringing)]
-    [TestCase(CallAction.Ice, CallState.Offering)]
     [TestCase(CallAction.Offer, CallState.Offering)]
     [TestCase(CallAction.Answer, CallState.Connected)]
     [TestCase(CallAction.Ring, CallState.Ended)]
@@ -30,6 +29,17 @@ public sealed class CallStateMachineTests
         var machine = new CallStateMachine(initial);
 
         Assert.That(machine.TryApply(action), Is.False);
+        Assert.That(machine.State, Is.EqualTo(initial));
+    }
+
+    [TestCase(CallState.Ringing)]
+    [TestCase(CallState.Offering)]
+    [TestCase(CallState.Connected)]
+    public void Ice_is_relayed_without_changing_state(CallState initial)
+    {
+        var machine = new CallStateMachine(initial);
+
+        Assert.That(machine.TryApply(CallAction.Ice), Is.True);
         Assert.That(machine.State, Is.EqualTo(initial));
     }
 

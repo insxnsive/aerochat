@@ -241,6 +241,120 @@ public sealed class CallRestTests
         Assert.That(CallEvents(), Is.EqualTo(4));
     }
 
+    [TestCase("Ringing")]
+    [TestCase("Offering")]
+    public async Task Negotiating_ice_is_relayed_without_changing_state_or_extending_setup_deadline(
+        string scenario)
+    {
+        TimeSpan deadline = TimeSpan.FromSeconds(30);
+        TimeSpan oneTick = TimeSpan.FromTicks(1);
+        var clock = new ManualTimeProvider(new DateTimeOffset(2100, 1, 1, 12, 0, 0, TimeSpan.Zero));
+        using var factory = new ApiWebApplicationFactory { Clock = clock };
+        string prefix = $"call-trickle-{scenario.ToLowerInvariant()}";
+        GatewayHub gateway = factory.Services.GetRequiredService<GatewayHub>();
+
+        // Success path: early ICE must not advance state or make the next handshake illegal.
+        Guid successId = Guid.NewGuid();
+        (Guid successCallerId, Guid successCalleeId) = await SeedTwoMemberConversationAsync(
+            factory, successId, $"{prefix}-success-caller", $"{prefix}-success-callee");
+        var successCallerSink = new RecordingSink($"{prefix}-success-caller-sink", successCallerId);
+        var successCalleeSink = new RecordingSink($"{prefix}-success-callee-sink", successCalleeId);
+        gateway.Register(successCallerSink);
+        gateway.Register(successCalleeSink);
+        using HttpClient successCaller = AuthorizedClient(factory, $"{prefix}-success-caller");
+        using HttpClient successCallee = AuthorizedClient(factory, $"{prefix}-success-callee");
+
+        // Deadline path: a second, independent conversation.
+        Guid deadlineId = Guid.NewGuid();
+        (Guid deadlineCallerId, Guid deadlineCalleeId) = await SeedTwoMemberConversationAsync(
+            factory, deadlineId, $"{prefix}-deadline-caller", $"{prefix}-deadline-callee");
+        var deadlineCallerSink = new RecordingSink($"{prefix}-deadline-caller-sink", deadlineCallerId);
+        var deadlineCalleeSink = new RecordingSink($"{prefix}-deadline-callee-sink", deadlineCalleeId);
+        gateway.Register(deadlineCallerSink);
+        gateway.Register(deadlineCalleeSink);
+        using HttpClient deadlineCaller = AuthorizedClient(factory, $"{prefix}-deadline-caller");
+        using HttpClient deadlineCallee = AuthorizedClient(factory, $"{prefix}-deadline-callee");
+
+        async Task<HttpStatusCode> PostAsync(
+            HttpClient client, Guid conversationId, string action, object body)
+        {
+            using HttpResponseMessage response = await client.PostAsJsonAsync(
+                $"/conversations/{conversationId}/call/{action}", body);
+            return response.StatusCode;
+        }
+
+        int IceEvents(RecordingSink sink) =>
+            sink.Events.Count(envelope => envelope.Type == GatewayEventType.CallIce);
+
+        Assert.That(
+            await PostAsync(successCaller, successId, "ring", new { reason = "start" }),
+            Is.EqualTo(HttpStatusCode.OK));
+        if (scenario == "Offering")
+        {
+            Assert.That(
+                await PostAsync(successCaller, successId, "offer", new { sdp = "offer-sdp" }),
+                Is.EqualTo(HttpStatusCode.OK));
+        }
+
+        int successCallerIce = IceEvents(successCallerSink);
+        int successCalleeIce = IceEvents(successCalleeSink);
+        Assert.That(
+            await PostAsync(successCallee, successId, "ice", new { candidate = "early-candidate" }),
+            Is.EqualTo(HttpStatusCode.OK));
+        Assert.That(IceEvents(successCallerSink), Is.EqualTo(successCallerIce + 1));
+        Assert.That(IceEvents(successCalleeSink), Is.EqualTo(successCalleeIce));
+
+        GatewayEnvelope relayedIce = successCallerSink.Events.Last(
+            envelope => envelope.Type == GatewayEventType.CallIce);
+        JsonElement relayedData = JsonDocument
+            .Parse(GatewayJson.Serialize(relayedIce)).RootElement.GetProperty("d");
+        Assert.That(relayedData.GetProperty("conversationId").GetGuid(), Is.EqualTo(successId));
+        Assert.That(relayedData.GetProperty("candidate").GetString(), Is.EqualTo("early-candidate"));
+
+        if (scenario == "Ringing")
+        {
+            Assert.That(
+                await PostAsync(successCaller, successId, "offer", new { sdp = "offer-after-ice" }),
+                Is.EqualTo(HttpStatusCode.OK));
+        }
+
+        Assert.That(
+            await PostAsync(successCallee, successId, "answer", new { sdp = "answer-sdp" }),
+            Is.EqualTo(HttpStatusCode.OK));
+
+        Assert.That(
+            await PostAsync(deadlineCaller, deadlineId, "ring", new { reason = "start" }),
+            Is.EqualTo(HttpStatusCode.OK));
+        if (scenario == "Offering")
+        {
+            clock.Advance(TimeSpan.FromSeconds(10));
+            Assert.That(
+                await PostAsync(deadlineCaller, deadlineId, "offer", new { sdp = "offer-sdp" }),
+                Is.EqualTo(HttpStatusCode.OK));
+        }
+
+        clock.Advance(deadline - oneTick);
+
+        int callerIceBeforeDeadline = IceEvents(deadlineCallerSink);
+        Assert.That(
+            await PostAsync(deadlineCallee, deadlineId, "ice", new { candidate = "one-tick-early" }),
+            Is.EqualTo(HttpStatusCode.OK));
+        Assert.That(IceEvents(deadlineCallerSink), Is.EqualTo(callerIceBeforeDeadline + 1));
+        Assert.That(IceEvents(deadlineCalleeSink), Is.Zero);
+
+        clock.Advance(oneTick);
+
+        int callerIceAtDeadline = IceEvents(deadlineCallerSink);
+        Assert.That(
+            await PostAsync(deadlineCallee, deadlineId, "ice", new { candidate = "at-deadline" }),
+            Is.EqualTo(HttpStatusCode.Conflict));
+        Assert.That(IceEvents(deadlineCallerSink), Is.EqualTo(callerIceAtDeadline));
+
+        Assert.That(
+            await PostAsync(deadlineCaller, deadlineId, "ring", new { reason = "replacement" }),
+            Is.EqualTo(HttpStatusCode.OK));
+    }
+
     private sealed class ManualTimeProvider(DateTimeOffset start) : TimeProvider
     {
         private DateTimeOffset _now = start;
