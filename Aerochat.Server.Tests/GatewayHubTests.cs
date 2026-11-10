@@ -893,6 +893,147 @@ public sealed class GatewayHubTests
             Throws.TypeOf<ArgumentOutOfRangeException>());
     }
 
+    [Test]
+    public void Parallel_global_cap_rejects_beyond_total_with_dedicated_threads()
+    {
+        var hub = new GatewayHub(new GatewayOptions
+        {
+            InstanceId = "hub",
+            MaxConnectionsPerUser = 16,
+            MaxConnectionsTotal = 4
+        });
+        using var barrier = new Barrier(16);
+        var leases = new System.Collections.Concurrent.ConcurrentBag<GatewayHub.ConnectionLease>();
+        var tasks = new List<Task>();
+
+        for (int index = 0; index < 16; index++)
+        {
+            Guid user = Guid.NewGuid();
+            int captured = index;
+            tasks.Add(Task.Factory.StartNew(() =>
+            {
+                if (!barrier.SignalAndWait(TimeSpan.FromSeconds(10)))
+                {
+                    throw new TimeoutException("Not every reservation worker reached the barrier.");
+                }
+
+                if (hub.TryReserveConnection(user, $"global-{captured}", out GatewayHub.ConnectionLease? lease))
+                {
+                    leases.Add(lease!);
+                }
+            }, CancellationToken.None, TaskCreationOptions.LongRunning, TaskScheduler.Default));
+        }
+
+        try
+        {
+            Assert.That(Task.WaitAll([.. tasks], TimeSpan.FromSeconds(20)), Is.True, "reservation workers did not finish");
+            Assert.That(leases.Count, Is.EqualTo(4));
+            Assert.That(hub.ReservedConnectionCount, Is.EqualTo(4));
+        }
+        finally
+        {
+            foreach (GatewayHub.ConnectionLease lease in leases)
+            {
+                lease.Dispose();
+            }
+        }
+
+        Assert.That(hub.ReservedConnectionCount, Is.Zero);
+    }
+
+    [Test]
+    public void Admission_authority_checks_run_before_a_second_holder_exists()
+    {
+        Guid userId = Guid.NewGuid();
+        Guid otherUserId = Guid.NewGuid();
+        var hub = new GatewayHub(new GatewayOptions
+        {
+            InstanceId = "hub",
+            MaxConnectionsPerUser = 1,
+            MaxConnectionsTotal = 1
+        });
+        var old = new RecordingSink("same", userId);
+        Assert.That(hub.TryReserveConnection(userId, "same", out GatewayHub.ConnectionLease? lease), Is.True);
+        Assert.That(hub.Register(old).Registered, Is.True);
+
+        Assert.That(
+            hub.TryReserveConnection(otherUserId, "same", out _, expectedReplacement: old),
+            Is.False);
+        Assert.That(
+            hub.TryReserveConnection(userId, "same", out _, expectedReplacement: new RecordingSink("same", userId)),
+            Is.False);
+        Assert.That(hub.TryReserveConnection(userId, "same", out _), Is.False);
+        Assert.That(hub.ReservedConnectionCount, Is.EqualTo(1));
+
+        Assert.That(
+            hub.TryReserveConnection(userId, "same", out GatewayHub.ConnectionLease? second, expectedReplacement: old),
+            Is.True);
+        Assert.That(hub.ReservedConnectionCount, Is.EqualTo(1));
+
+        second!.Dispose();
+        lease!.Dispose();
+        Assert.That(hub.ReservedConnectionCount, Is.Zero);
+    }
+
+    [TestCase("ready-enqueue-failure")]
+    [TestCase("cancelled-replacement")]
+    public void Failed_same_id_handoff_keeps_the_old_holder_and_blocks_fresh_ids(string failure)
+    {
+        Guid userId = Guid.NewGuid();
+        var hub = new GatewayHub(new GatewayOptions
+        {
+            InstanceId = "hub",
+            MaxConnectionsPerUser = 1,
+            MaxConnectionsTotal = 1
+        });
+        var old = new RecordingSink("same", userId);
+        Assert.That(hub.TryReserveConnection(userId, "same", out GatewayHub.ConnectionLease? oldLease), Is.True);
+        Assert.That(hub.Register(old).Registered, Is.True);
+        Assert.That(
+            hub.TryReserveConnection(userId, "same", out GatewayHub.ConnectionLease? newLease, expectedReplacement: old),
+            Is.True);
+        GatewayHub.ConnectionLease? replacementLease = newLease;
+        try
+        {
+            GatewayRegistrationResult result;
+            if (failure == "ready-enqueue-failure")
+            {
+                result = hub.Register(new BoundedSink("same", userId, acceptedEnqueues: 0));
+            }
+            else
+            {
+                using var cancelled = new CancellationTokenSource();
+                cancelled.Cancel();
+                result = hub.Register(new RecordingSink("same", userId, cancelled.Token));
+            }
+
+            Assert.That(result.Registered, Is.False);
+            replacementLease!.Dispose();
+            replacementLease = null;
+
+            Assert.That(hub.ReservedConnectionCount, Is.EqualTo(1), "Failed handoff must keep the old slot");
+            Assert.That(hub.TryReserveConnection(userId, "fresh", out _), Is.False);
+
+            hub.Publish(
+                GatewayEventType.PresenceUpdated,
+                new PresenceUpdatedData(userId, "online"),
+                [userId]);
+            Assert.That(old.ReplayableEventIds, Is.Not.Empty);
+
+            Assert.That(hub.Remove(old.ConnectionId, old), Is.True);
+            oldLease!.Dispose();
+            oldLease = null;
+            Assert.That(hub.ReservedConnectionCount, Is.Zero);
+            Assert.That(hub.TryReserveConnection(userId, "fresh", out GatewayHub.ConnectionLease? fresh), Is.True);
+            fresh!.Dispose();
+        }
+        finally
+        {
+            replacementLease?.Dispose();
+            oldLease?.Dispose();
+        }
+    }
+
     private sealed class RecordingSink(string connectionId, Guid userId, CancellationToken disconnected = default) : IGatewaySink
     {
         public string ConnectionId { get; } = connectionId;
