@@ -125,6 +125,131 @@ public sealed class CallRestTests
         Assert.That(sink.Events.Any(envelope => envelope.Type.StartsWith("call.", StringComparison.Ordinal)), Is.False);
     }
 
+    [TestCase("Ringing")]
+    [TestCase("Offering")]
+    [TestCase("Connected")]
+    public async Task Call_setup_deadlines_expire_pending_sessions_but_preserve_connected_calls(
+        string scenario)
+    {
+        TimeSpan deadline = TimeSpan.FromSeconds(30);
+        TimeSpan oneTick = TimeSpan.FromTicks(1);
+        var clock = new ManualTimeProvider(new DateTimeOffset(2100, 1, 1, 12, 0, 0, TimeSpan.Zero));
+        using var factory = new ApiWebApplicationFactory { Clock = clock };
+        Guid conversationId = Guid.NewGuid();
+        string prefix = $"call-expiry-{scenario.ToLowerInvariant()}";
+        (Guid callerId, Guid calleeId) = await SeedTwoMemberConversationAsync(
+            factory, conversationId, $"{prefix}-caller", $"{prefix}-callee");
+        var callerSink = new RecordingSink($"{prefix}-caller-sink", callerId);
+        var calleeSink = new RecordingSink($"{prefix}-callee-sink", calleeId);
+        GatewayHub gateway = factory.Services.GetRequiredService<GatewayHub>();
+        gateway.Register(callerSink);
+        gateway.Register(calleeSink);
+        using HttpClient caller = AuthorizedClient(factory, $"{prefix}-caller");
+        using HttpClient callee = AuthorizedClient(factory, $"{prefix}-callee");
+
+        async Task<HttpStatusCode> PostAsync(HttpClient client, string action, object body)
+        {
+            using HttpResponseMessage response = await client.PostAsJsonAsync(
+                $"/conversations/{conversationId}/call/{action}", body);
+            return response.StatusCode;
+        }
+
+        int CallEvents() =>
+            callerSink.Events.Count(envelope => envelope.Type.StartsWith("call.", StringComparison.Ordinal))
+            + calleeSink.Events.Count(envelope => envelope.Type.StartsWith("call.", StringComparison.Ordinal));
+
+        Assert.That(await PostAsync(caller, "ring", new { reason = "start" }), Is.EqualTo(HttpStatusCode.OK));
+        Assert.That(CallEvents(), Is.EqualTo(1));
+
+        if (scenario == "Ringing")
+        {
+            clock.Advance(deadline - oneTick);
+            Assert.That(
+                await PostAsync(caller, "ring", new { reason = "duplicate" }),
+                Is.EqualTo(HttpStatusCode.Conflict));
+            Assert.That(CallEvents(), Is.EqualTo(1));
+
+            clock.Advance(oneTick);
+            Assert.That(
+                await PostAsync(caller, "offer", new { sdp = "late-offer" }),
+                Is.EqualTo(HttpStatusCode.Conflict));
+            Assert.That(CallEvents(), Is.EqualTo(1));
+
+            Assert.That(
+                await PostAsync(caller, "ring", new { reason = "replacement" }),
+                Is.EqualTo(HttpStatusCode.OK));
+            Assert.That(CallEvents(), Is.EqualTo(2));
+
+            Assert.That(
+                await PostAsync(caller, "ring", new { reason = "duplicate" }),
+                Is.EqualTo(HttpStatusCode.Conflict));
+            Assert.That(CallEvents(), Is.EqualTo(2));
+            return;
+        }
+
+        if (scenario == "Offering")
+        {
+            clock.Advance(TimeSpan.FromSeconds(10));
+            Assert.That(
+                await PostAsync(caller, "offer", new { sdp = "offer-sdp" }),
+                Is.EqualTo(HttpStatusCode.OK));
+            Assert.That(CallEvents(), Is.EqualTo(2));
+
+            clock.Advance(deadline - oneTick);
+            Assert.That(
+                await PostAsync(caller, "ring", new { reason = "duplicate" }),
+                Is.EqualTo(HttpStatusCode.Conflict));
+            Assert.That(CallEvents(), Is.EqualTo(2));
+
+            clock.Advance(oneTick);
+            Assert.That(
+                await PostAsync(callee, "answer", new { sdp = "late-answer" }),
+                Is.EqualTo(HttpStatusCode.Conflict));
+            Assert.That(CallEvents(), Is.EqualTo(2));
+
+            Assert.That(
+                await PostAsync(caller, "ring", new { reason = "replacement" }),
+                Is.EqualTo(HttpStatusCode.OK));
+            Assert.That(CallEvents(), Is.EqualTo(3));
+
+            Assert.That(
+                await PostAsync(caller, "ring", new { reason = "duplicate" }),
+                Is.EqualTo(HttpStatusCode.Conflict));
+            Assert.That(CallEvents(), Is.EqualTo(3));
+            return;
+        }
+
+        clock.Advance(TimeSpan.FromSeconds(10));
+        Assert.That(
+            await PostAsync(caller, "offer", new { sdp = "offer-sdp" }),
+            Is.EqualTo(HttpStatusCode.OK));
+        clock.Advance(TimeSpan.FromSeconds(5));
+        Assert.That(
+            await PostAsync(callee, "answer", new { sdp = "answer-sdp" }),
+            Is.EqualTo(HttpStatusCode.OK));
+        Assert.That(CallEvents(), Is.EqualTo(3));
+
+        clock.Advance(TimeSpan.FromSeconds(120));
+        Assert.That(
+            await PostAsync(caller, "ring", new { reason = "duplicate" }),
+            Is.EqualTo(HttpStatusCode.Conflict));
+        Assert.That(CallEvents(), Is.EqualTo(3));
+
+        Assert.That(
+            await PostAsync(caller, "ice", new { candidate = "candidate" }),
+            Is.EqualTo(HttpStatusCode.OK));
+        Assert.That(CallEvents(), Is.EqualTo(4));
+    }
+
+    private sealed class ManualTimeProvider(DateTimeOffset start) : TimeProvider
+    {
+        private DateTimeOffset _now = start;
+
+        public override DateTimeOffset GetUtcNow() => _now;
+
+        public void Advance(TimeSpan delta) => _now += delta;
+    }
+
     private static async Task<(Guid SenderId, Guid ReceiverId)> SeedTwoMemberConversationAsync(
         ApiWebApplicationFactory factory,
         Guid conversationId,
