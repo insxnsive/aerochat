@@ -1,3 +1,5 @@
+using System.Threading.Channels;
+
 namespace Aerochat.Connectivity.Rtc;
 
 public sealed class ScreenSharePublisher : IAsyncDisposable
@@ -9,7 +11,8 @@ public sealed class ScreenSharePublisher : IAsyncDisposable
     private readonly int _framesPerSecond;
     private CancellationTokenSource? _lifetime;
     private ScreenShareFrameRateGate? _frameGate;
-    private Task? _inFlight;
+    private Channel<ScreenShareFrame>? _frames;
+    private Task? _worker;
     private Task? _disposeTask;
     private bool _started;
     private bool _disposed;
@@ -29,6 +32,8 @@ public sealed class ScreenSharePublisher : IAsyncDisposable
     public async Task StartAsync(CancellationToken cancellationToken = default)
     {
         CancellationTokenSource lifetime;
+        Channel<ScreenShareFrame> frames;
+        Task worker;
         lock (_gate)
         {
             ObjectDisposedException.ThrowIf(_disposed, this);
@@ -36,7 +41,18 @@ public sealed class ScreenSharePublisher : IAsyncDisposable
                 return;
 
             lifetime = new CancellationTokenSource();
+            frames = Channel.CreateBounded<ScreenShareFrame>(new BoundedChannelOptions(1)
+            {
+                FullMode = BoundedChannelFullMode.DropOldest,
+                SingleReader = true,
+                SingleWriter = false
+            });
+            CancellationToken lifetimeToken = lifetime.Token;
+            ChannelReader<ScreenShareFrame> reader = frames.Reader;
+            worker = Task.Run(() => PumpFramesAsync(reader, lifetimeToken));
             _lifetime = lifetime;
+            _frames = frames;
+            _worker = worker;
             _frameGate = new ScreenShareFrameRateGate(_framesPerSecond);
             _started = true;
             _source.FrameReceived += OnFrameReceived;
@@ -52,17 +68,29 @@ public sealed class ScreenSharePublisher : IAsyncDisposable
         }
         catch
         {
+            bool ownsCleanup;
             lock (_gate)
             {
-                if (ReferenceEquals(_lifetime, lifetime))
+                ownsCleanup = ReferenceEquals(_lifetime, lifetime);
+                if (ownsCleanup)
                 {
                     _started = false;
                     _lifetime = null;
+                    _frames = null;
+                    _worker = null;
                     _frameGate = null;
                     _source.FrameReceived -= OnFrameReceived;
                 }
             }
-            lifetime.Dispose();
+
+            if (ownsCleanup)
+            {
+                frames.Writer.TryComplete();
+                lifetime.Cancel();
+                await worker.ConfigureAwait(false);
+                lifetime.Dispose();
+            }
+
             throw;
         }
     }
@@ -70,7 +98,8 @@ public sealed class ScreenSharePublisher : IAsyncDisposable
     public async Task StopAsync(CancellationToken cancellationToken = default)
     {
         CancellationTokenSource? lifetime;
-        Task? inFlight;
+        Channel<ScreenShareFrame>? frames;
+        Task? worker;
         lock (_gate)
         {
             if (!_started)
@@ -79,29 +108,25 @@ public sealed class ScreenSharePublisher : IAsyncDisposable
             _started = false;
             _source.FrameReceived -= OnFrameReceived;
             lifetime = _lifetime;
+            frames = _frames;
+            worker = _worker;
             _lifetime = null;
+            _frames = null;
+            _worker = null;
             _frameGate = null;
-            inFlight = _inFlight;
-            _inFlight = null;
         }
 
+        frames?.Writer.TryComplete();
         lifetime?.Cancel();
         try
         {
             await _source.StopAsync(cancellationToken).ConfigureAwait(false);
-            if (inFlight is not null)
-            {
-                try
-                {
-                    await inFlight.ConfigureAwait(false);
-                }
-                catch (OperationCanceledException) when (lifetime?.IsCancellationRequested == true)
-                {
-                }
-            }
         }
         finally
         {
+            // Not bound to the token passed in: on return, no send is running or will start.
+            if (worker is not null)
+                await worker.ConfigureAwait(false);
             lifetime?.Dispose();
         }
     }
@@ -110,38 +135,43 @@ public sealed class ScreenSharePublisher : IAsyncDisposable
     {
         lock (_gate)
         {
-            if (!_started
-                || _lifetime is null
-                || _frameGate is null
-                || !_frameGate.ShouldPublish(frame.CapturedAt)
-                || _inFlight is { IsCompleted: false })
-                return;
-
-            Task sendTask;
-            try
+            if (_started
+                && _frames is not null
+                && _frameGate is not null
+                && _frameGate.ShouldPublish(frame.CapturedAt))
             {
-                sendTask = _sink.SendAsync(frame, _lifetime.Token);
+                _frames.Writer.TryWrite(frame);
             }
-            catch
-            {
-                return;
-            }
-            _inFlight = ObserveSendAsync(sendTask);
         }
     }
 
-    private static async Task ObserveSendAsync(Task task)
+    private async Task PumpFramesAsync(
+        ChannelReader<ScreenShareFrame> frames,
+        CancellationToken lifetime)
     {
         try
         {
-            await task.ConfigureAwait(false);
+            await foreach (ScreenShareFrame frame in frames.ReadAllAsync(lifetime).ConfigureAwait(false))
+            {
+                if (lifetime.IsCancellationRequested)
+                    return;
+
+                try
+                {
+                    await _sink.SendAsync(frame, lifetime).ConfigureAwait(false);
+                }
+                catch (OperationCanceledException) when (lifetime.IsCancellationRequested)
+                {
+                    return;
+                }
+                catch (Exception)
+                {
+                    // A failed frame is dropped. The next frame may continue the share.
+                }
+            }
         }
-        catch (OperationCanceledException)
+        catch (OperationCanceledException) when (lifetime.IsCancellationRequested)
         {
-        }
-        catch (Exception)
-        {
-            // A failed frame is dropped. The next frame may continue the share.
         }
     }
 
