@@ -518,6 +518,153 @@ public sealed class CallClientTests
     }
 
     [Test]
+    public async Task A_new_ring_for_another_call_clears_the_old_offer_so_accept_needs_the_new_one()
+    {
+        const string first = "11111111-1111-1111-1111-111111111111";
+        const string second = "22222222-2222-2222-2222-222222222222";
+        PresentationState state = DemoData.Create();
+        string conversationId = state.Conversations[0].Id.ToString();
+        var signaling = new RecordingCallSignalingClient();
+        var engine = new RecordingRtcPeerEngine();
+        var transport = new RecordingCallTransport();
+        await using var coordinator = new CallCoordinator(
+            state, conversationId, signaling, engine, transport);
+
+        transport.Raise(new CallSignalEventArgs("call.ring", conversationId, callId: first));
+        transport.Raise(new CallSignalEventArgs("call.offer", conversationId, sdp: "first-offer", callId: first));
+        transport.Raise(new CallSignalEventArgs("call.ring", conversationId, callId: second));
+
+        Assert.ThrowsAsync<InvalidOperationException>(() => coordinator.AcceptAsync());
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(engine.AcceptedOffers, Is.Empty, "the first call's offer was answered under the second call");
+            Assert.That(signaling.Actions.Where(action => action.StartsWith("answer:", StringComparison.Ordinal)), Is.Empty);
+        });
+    }
+
+    [Test]
+    public async Task An_id_less_offer_does_not_replace_a_call_that_has_an_id()
+    {
+        const string current = "11111111-1111-1111-1111-111111111111";
+        PresentationState state = DemoData.Create();
+        string conversationId = state.Conversations[0].Id.ToString();
+        var signaling = new RecordingCallSignalingClient();
+        var engine = new RecordingRtcPeerEngine();
+        var transport = new RecordingCallTransport();
+        await using var coordinator = new CallCoordinator(
+            state, conversationId, signaling, engine, transport);
+
+        transport.Raise(new CallSignalEventArgs("call.ring", conversationId, callId: current));
+        transport.Raise(new CallSignalEventArgs("call.offer", conversationId, sdp: "offer-sdp", callId: current));
+        transport.Raise(new CallSignalEventArgs("call.offer", conversationId, sdp: "id-less-offer"));
+        await coordinator.AcceptAsync();
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(engine.AcceptedOffers, Is.EqualTo(new[] { "offer-sdp" }));
+            Assert.That(signaling.CallIds, Is.EqualTo(new[] { current }));
+        });
+    }
+
+    [Test]
+    public async Task A_candidate_raised_after_the_call_ended_is_not_sent()
+    {
+        const string current = "11111111-1111-1111-1111-111111111111";
+        PresentationState state = DemoData.Create();
+        string conversationId = state.Conversations[0].Id.ToString();
+        var signaling = new RecordingCallSignalingClient(issuedCallId: current);
+        var engine = new RecordingRtcPeerEngine();
+        var transport = new RecordingCallTransport();
+        await using var coordinator = new CallCoordinator(
+            state, conversationId, signaling, engine, transport);
+        await coordinator.StartAsync();
+        await coordinator.HangupAsync();
+
+        engine.RaiseIce(new RtcIceCandidate("late-candidate"));
+
+        Assert.That(
+            signaling.Actions.Where(action => action.StartsWith("ice:", StringComparison.Ordinal)),
+            Is.Empty,
+            "a late candidate must not be sent without its call id");
+    }
+
+    [Test]
+    public async Task A_stale_candidate_is_dropped_without_ending_the_current_call()
+    {
+        const string current = "11111111-1111-1111-1111-111111111111";
+        PresentationState state = DemoData.Create();
+        string conversationId = state.Conversations[0].Id.ToString();
+        var signaling = new RecordingCallSignalingClient(issuedCallId: current, staleIce: true);
+        var engine = new RecordingRtcPeerEngine();
+        var transport = new RecordingCallTransport();
+        await using var coordinator = new CallCoordinator(
+            state, conversationId, signaling, engine, transport);
+        await coordinator.StartAsync();
+
+        engine.RaiseIce(new RtcIceCandidate("candidate-for-an-older-call"));
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(signaling.Actions, Does.Contain("ice:candidate-for-an-older-call"));
+            Assert.That(engine.HangupCount, Is.Zero);
+            Assert.That(state.GetOrCreateCallSession(conversationId).State, Is.EqualTo(CallSessionState.Offering));
+        });
+    }
+
+    [Test]
+    public async Task A_replayed_ring_of_an_ended_call_is_not_adopted_as_a_new_call()
+    {
+        const string current = "11111111-1111-1111-1111-111111111111";
+        PresentationState state = DemoData.Create();
+        string conversationId = state.Conversations[0].Id.ToString();
+        var signaling = new RecordingCallSignalingClient();
+        var engine = new RecordingRtcPeerEngine();
+        var transport = new RecordingCallTransport();
+        await using var coordinator = new CallCoordinator(
+            state, conversationId, signaling, engine, transport);
+        transport.Raise(new CallSignalEventArgs("call.ring", conversationId, callId: current));
+        transport.Raise(new CallSignalEventArgs("call.offer", conversationId, sdp: "offer-sdp", callId: current));
+        await coordinator.AcceptAsync();
+        transport.Raise(new CallSignalEventArgs("call.hangup", conversationId, reason: "peer_disconnected", callId: current));
+
+        transport.Raise(new CallSignalEventArgs("call.ring", conversationId, callId: current));
+        transport.Raise(new CallSignalEventArgs("call.offer", conversationId, sdp: "replayed-offer", callId: current));
+
+        CallSessionPresentation session = state.GetOrCreateCallSession(conversationId);
+        Assert.Multiple(() =>
+        {
+            Assert.That(session.State, Is.EqualTo(CallSessionState.Ended));
+            Assert.That(session.Sdp, Is.EqualTo("offer-sdp"));
+        });
+    }
+
+    [Test]
+    public async Task The_same_offer_again_while_answered_does_not_reset_the_call()
+    {
+        const string current = "11111111-1111-1111-1111-111111111111";
+        PresentationState state = DemoData.Create();
+        string conversationId = state.Conversations[0].Id.ToString();
+        var signaling = new RecordingCallSignalingClient();
+        var engine = new RecordingRtcPeerEngine();
+        var transport = new RecordingCallTransport();
+        await using var coordinator = new CallCoordinator(
+            state, conversationId, signaling, engine, transport);
+        transport.Raise(new CallSignalEventArgs("call.ring", conversationId, callId: current));
+        transport.Raise(new CallSignalEventArgs("call.offer", conversationId, sdp: "offer-sdp", callId: current));
+        await coordinator.AcceptAsync();
+
+        transport.Raise(new CallSignalEventArgs("call.offer", conversationId, sdp: "offer-again", callId: current));
+
+        CallSessionPresentation session = state.GetOrCreateCallSession(conversationId);
+        Assert.Multiple(() =>
+        {
+            Assert.That(session.State, Is.EqualTo(CallSessionState.Connecting));
+            Assert.That(session.Sdp, Is.EqualTo("offer-sdp"));
+        });
+    }
+
+    [Test]
     public async Task Call_coordinator_releases_media_when_hangup_signaling_fails()
     {
         PresentationState state = DemoData.Create();
@@ -1214,6 +1361,7 @@ public sealed class CallClientTests
         private readonly bool _failAnswer;
         private readonly string? _issuedCallId;
         private readonly bool _staleAnswer;
+        private readonly bool _staleIce;
 
         public RecordingCallSignalingClient(
             bool blockIce = false,
@@ -1223,10 +1371,12 @@ public sealed class CallClientTests
             bool failOffer = false,
             bool failAnswer = false,
             string? issuedCallId = null,
-            bool staleAnswer = false)
+            bool staleAnswer = false,
+            bool staleIce = false)
         {
             _issuedCallId = issuedCallId;
             _staleAnswer = staleAnswer;
+            _staleIce = staleIce;
             _blockIce = blockIce;
             _blockHangup = blockHangup;
             _failHangup = failHangup;
@@ -1278,6 +1428,8 @@ public sealed class CallClientTests
             Actions.Add($"ice:{candidate}");
             CallIds.Add(callId);
             IceStarted.TrySetResult();
+            if (_staleIce)
+                throw new CallStaleGenerationException();
             if (_failIce)
                 throw new HttpRequestException("ICE signaling unavailable");
             if (_blockIce)
