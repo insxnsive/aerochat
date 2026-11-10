@@ -45,6 +45,9 @@ public sealed class CallCoordinator : ICallCoordinator
     private bool _remoteDescriptionApplied;
     private bool _hangupCompleted;
     private CallRole _role;
+    private string? _callId;
+    private const int EndedCallMemory = 2;
+    private readonly Queue<string> _endedCallIds = new();
 
     public CallCoordinator(
         PresentationState state,
@@ -84,19 +87,22 @@ public sealed class CallCoordinator : ICallCoordinator
             _hangupCompleted = false;
             _remoteDescriptionApplied = false;
             _pendingCandidates.Clear();
+            ClearCallId();
             _muted = false;
             _role = CallRole.Outgoing;
             ApplyPresentation(() => _state.BeginOutgoingCall(_conversationId));
-            await _signaling.RingAsync(_conversationId, cancellationToken).ConfigureAwait(false);
+            _callId = await _signaling.RingAsync(_conversationId, cancellationToken).ConfigureAwait(false);
             ApplyPresentation(() => Session.SetLocalState(CallSessionState.Ringing));
             string offer = await _engine.StartCall(cancellationToken).ConfigureAwait(false);
             DrainPendingCandidates();
-            await _signaling.OfferAsync(_conversationId, offer, cancellationToken).ConfigureAwait(false);
+            await _signaling.OfferAsync(_conversationId, offer, cancellationToken, callId: _callId).ConfigureAwait(false);
             ApplyPresentation(() => Session.SetLocalState(CallSessionState.Offering));
         }
-        catch
+        catch (Exception exception)
         {
-            await FailCallUnderLockAsync("Call setup failed").ConfigureAwait(false);
+            await FailCallUnderLockAsync(
+                "Call setup failed",
+                notifyRemote: exception is not CallStaleGenerationException).ConfigureAwait(false);
             throw;
         }
         finally
@@ -105,10 +111,46 @@ public sealed class CallCoordinator : ICallCoordinator
         }
     }
 
-    private async Task FailCallUnderLockAsync(string reason)
+    // Forgets the current call id and remembers it as ended, so a replayed ring or offer of the
+    // same call is not adopted as a new call. Callers hold the operations lock.
+    private string? ClearCallId()
+    {
+        string? callId = _callId;
+        _callId = null;
+        if (callId is not null)
+        {
+            _endedCallIds.Enqueue(callId);
+            while (_endedCallIds.Count > EndedCallMemory)
+                _endedCallIds.Dequeue();
+        }
+
+        return callId;
+    }
+
+    private void ApplyRingOrOfferToSession(CallSignalEventArgs signal)
+    {
+        // A signal with a call id goes through the checked path, which also clears the previous
+        // call's offer when the id changes; an id-less signal keeps the legacy behavior.
+        if (signal.CallId is null)
+        {
+            _state.ApplyCallSignal(signal.EventType, _conversationId, signal.Sdp, signal.Candidate, signal.Reason);
+            return;
+        }
+
+        _state.ApplyRemoteCallSignal(
+            signal.EventType,
+            _conversationId,
+            signal.CallId,
+            signal.Sdp,
+            signal.Candidate,
+            signal.Reason);
+    }
+
+    private async Task FailCallUnderLockAsync(string reason, bool notifyRemote = true)
     {
         _hangupCompleted = true;
         _muted = false;
+        string? callId = ClearCallId();
         try
         {
             await _engine.Hangup(reason).ConfigureAwait(false);
@@ -123,9 +165,12 @@ public sealed class CallCoordinator : ICallCoordinator
         _role = CallRole.None;
         ApplyPresentation(() => Session.Fail(reason));
 
+        if (!notifyRemote)
+            return;
+
         try
         {
-            await _signaling.HangupAsync(_conversationId, reason).ConfigureAwait(false);
+            await _signaling.HangupAsync(_conversationId, reason, callId: callId).ConfigureAwait(false);
         }
         catch (Exception)
         {
@@ -150,11 +195,13 @@ public sealed class CallCoordinator : ICallCoordinator
             string answer = await _engine.AcceptOffer(offer, cancellationToken).ConfigureAwait(false);
             _remoteDescriptionApplied = true;
             DrainPendingCandidates();
-            await _signaling.AnswerAsync(_conversationId, answer, cancellationToken).ConfigureAwait(false);
+            await _signaling.AnswerAsync(_conversationId, answer, cancellationToken, callId: _callId).ConfigureAwait(false);
         }
-        catch
+        catch (Exception exception)
         {
-            await FailCallUnderLockAsync("Call acceptance failed").ConfigureAwait(false);
+            await FailCallUnderLockAsync(
+                "Call acceptance failed",
+                notifyRemote: exception is not CallStaleGenerationException).ConfigureAwait(false);
             throw;
         }
         finally
@@ -186,6 +233,7 @@ public sealed class CallCoordinator : ICallCoordinator
                 return;
 
             _hangupCompleted = true;
+            string? callId = ClearCallId();
             Exception? mediaFailure = null;
             try
             {
@@ -205,7 +253,11 @@ public sealed class CallCoordinator : ICallCoordinator
 
             try
             {
-                await _signaling.HangupAsync(_conversationId, reason, cancellationToken).ConfigureAwait(false);
+                await _signaling.HangupAsync(_conversationId, reason, cancellationToken, callId).ConfigureAwait(false);
+            }
+            catch (CallStaleGenerationException)
+            {
+                // The server had already ended that call.
             }
             finally
             {
@@ -251,22 +303,41 @@ public sealed class CallCoordinator : ICallCoordinator
             if (Volatile.Read(ref _disposed) != 0)
                 return;
 
+            // Once this call has an id, only signals for that call count; another call's signals are dropped.
+            bool startsCall = signal.EventType is "call.ring" or "call.offer";
+            if (!startsCall && _callId is not null && signal.CallId != _callId)
+                return;
+
             switch (signal.EventType)
             {
                 case "call.ring":
                 case "call.offer":
                     if (_role == CallRole.Outgoing)
                         break;
+                    // Never follow a call that already ended.
+                    if (signal.CallId is not null && _endedCallIds.Contains(signal.CallId))
+                        break;
+                    // An id-less signal must not replace a call that has an id.
+                    if (signal.CallId is null && _callId is not null)
+                        break;
+                    // The same call offering again while it is answered must not reset it.
+                    if (signal.CallId is not null && signal.CallId == _callId && _remoteDescriptionApplied)
+                        break;
+                    if (signal.CallId != _callId)
+                    {
+                        // A different call: ignore it while this one is answered, otherwise follow it.
+                        if (_callId is not null && _remoteDescriptionApplied)
+                            break;
+                        _callId = signal.CallId;
+                        _remoteDescriptionApplied = false;
+                        _pendingCandidates.Clear();
+                    }
+
                     if (signal.EventType == "call.ring")
                         _pendingCandidates.Clear();
                     _role = CallRole.Incoming;
                     _hangupCompleted = false;
-                    ApplyPresentation(() => _state.ApplyCallSignal(
-                        signal.EventType,
-                        _conversationId,
-                        signal.Sdp,
-                        signal.Candidate,
-                        signal.Reason));
+                    ApplyPresentation(() => ApplyRingOrOfferToSession(signal));
                     break;
 
                 case "call.answer" when signal.Sdp is not null && _role == CallRole.Outgoing:
@@ -297,6 +368,7 @@ public sealed class CallCoordinator : ICallCoordinator
 
                 case "call.hangup":
                     _hangupCompleted = true;
+                    ClearCallId();
                     _remoteDescriptionApplied = false;
                     _pendingCandidates.Clear();
                     await _engine.Hangup(signal.Reason ?? "remote hangup").ConfigureAwait(false);
@@ -320,7 +392,15 @@ public sealed class CallCoordinator : ICallCoordinator
     }
 
     private void OnIceCandidateReady(object? sender, RtcIceCandidate candidate)
-        => StartBackgroundTask(() => SendIceAsync(candidate));
+    {
+        // A candidate raised after the call ended is dropped, and one that is sent keeps the id of the
+        // call it was raised for, even if another call has started by the time the send runs.
+        if (Volatile.Read(ref _hangupCompleted))
+            return;
+
+        string? callId = Volatile.Read(ref _callId);
+        StartBackgroundTask(() => SendIceAsync(candidate, callId));
+    }
 
     private void OnRtcStateChanged(object? sender, RtcPeerState state)
     {
@@ -380,11 +460,15 @@ public sealed class CallCoordinator : ICallCoordinator
             TaskScheduler.Default);
     }
 
-    private async Task SendIceAsync(RtcIceCandidate candidate)
+    private async Task SendIceAsync(RtcIceCandidate candidate, string? callId)
     {
         try
         {
-            await _signaling.IceAsync(_conversationId, candidate.Candidate).ConfigureAwait(false);
+            await _signaling.IceAsync(_conversationId, candidate.Candidate, callId: callId).ConfigureAwait(false);
+        }
+        catch (CallStaleGenerationException)
+        {
+            // The server already moved on to another call; this candidate is simply dropped.
         }
         catch when (Volatile.Read(ref _disposed) != 0)
         {
@@ -404,6 +488,7 @@ public sealed class CallCoordinator : ICallCoordinator
                 return;
 
             _hangupCompleted = true;
+            string? callId = ClearCallId();
             try
             {
                 await _engine.Hangup(reason).ConfigureAwait(false);
@@ -420,7 +505,7 @@ public sealed class CallCoordinator : ICallCoordinator
             {
                 try
                 {
-                    await _signaling.HangupAsync(_conversationId, reason).ConfigureAwait(false);
+                    await _signaling.HangupAsync(_conversationId, reason, callId: callId).ConfigureAwait(false);
                 }
                 catch (Exception)
                 {
@@ -496,6 +581,7 @@ public sealed class CallCoordinator : ICallCoordinator
             backgroundTasks = _backgroundTasks.ToArray();
 
         bool shouldNotifyRemote = false;
+        string? disposeCallId = null;
         try
         {
             await _operations.WaitAsync().ConfigureAwait(false);
@@ -507,6 +593,7 @@ public sealed class CallCoordinator : ICallCoordinator
                 if (shouldNotifyRemote)
                 {
                     _hangupCompleted = true;
+                    disposeCallId = ClearCallId();
                     _role = CallRole.None;
                     ApplyPresentation(() => Session.SetLocalState(CallSessionState.Ended));
                 }
@@ -535,7 +622,7 @@ public sealed class CallCoordinator : ICallCoordinator
                 {
                     try
                     {
-                        await _signaling.HangupAsync(_conversationId, "coordinator disposed").ConfigureAwait(false);
+                        await _signaling.HangupAsync(_conversationId, "coordinator disposed", callId: disposeCallId).ConfigureAwait(false);
                     }
                     catch (Exception)
                     {

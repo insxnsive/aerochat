@@ -42,10 +42,12 @@ public sealed class LoopbackServerFixture : IAsyncDisposable, IDisposable
         int? queueCapacity = null,
         string? allowedOrigins = null,
         int? maxConnectionsPerUser = null,
-        int? maxConnectionsTotal = null)
+        int? maxConnectionsTotal = null,
+        Action<Microsoft.Extensions.Logging.ILoggingBuilder>? configureLogging = null)
     {
         var options = new WebApplicationOptions { EnvironmentName = "Testing" };
         var builder = WebApplication.CreateBuilder(options);
+        configureLogging?.Invoke(builder.Logging);
         builder.Configuration["urls"] = "http://127.0.0.1:0";
         builder.Configuration["Auth:SessionSigningKey"] = Convert.ToBase64String(TestSigningKey);
         if (instanceId is not null)
