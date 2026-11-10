@@ -173,7 +173,7 @@ public sealed class CallStateMachineTests
                 out Guid acceptedRecipient, out Guid appliedGeneration),
             Is.EqualTo(CallApplyResult.Applied));
         Assert.That(acceptedRecipient, Is.EqualTo(calleeId));
-        Assert.That(appliedGeneration, Is.EqualTo(session.CallId));
+        Assert.That(appliedGeneration, Is.EqualTo(session!.CallId));
     }
 
     [Test]
