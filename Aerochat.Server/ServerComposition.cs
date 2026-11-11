@@ -7,6 +7,7 @@ using Aerochat.Server.Gateway;
 using Aerochat.Server.Gifs;
 using Aerochat.Server.Hardening;
 using Aerochat.Server.Rest;
+using Aerochat.Server.Turn;
 using Microsoft.Data.Sqlite;
 using Microsoft.EntityFrameworkCore;
 
@@ -38,6 +39,8 @@ internal static class ServerComposition
         string chatConnectionString = ResolveChatConnectionString(builder.Configuration);
 
         builder.Services.AddSingleton<TimeProvider>(TimeProvider.System);
+        builder.Services.AddSingleton(TurnSettings.FromConfiguration(builder.Configuration));
+        builder.Services.AddSingleton<TurnCredentialService>();
         RateLimitOptions rateLimitOptions = new()
         {
             Limit = builder.Configuration.GetValue("RateLimit:Limit", 30),
@@ -109,6 +112,7 @@ internal static class ServerComposition
         app.MapCallEndpoints();
         app.MapGifEndpoints();
         app.MapGatewayEndpoints();
+        app.MapTurnEndpoints();
     }
 
     private static Dictionary<string, OAuthProviderDefinition> CreateProviderDefinitions(IConfiguration configuration)
