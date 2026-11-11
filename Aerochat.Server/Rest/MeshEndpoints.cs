@@ -37,28 +37,30 @@ public static class MeshEndpoints
         if(!members.Contains(user.Id))return ConversationAuth.Forbidden();
         if(conversation.Kind!="group")return Error("mesh_group_required");
         context.Response.Headers.CacheControl="no-store";
-        if(operation=="read")return Results.Ok(new{version=1,maxParticipants=4,room=rooms.Read(conversationId)});
+        // self is the authenticated caller's local user id, so the client can find itself in the roster and edges.
+        if(operation=="read")return Results.Ok(new{version=1,maxParticipants=4,self=user.Id,room=rooms.Read(conversationId)});
         if(request is null||request.Version!=1)return Error("mesh_upgrade_required");
         if(request.RoomId==Guid.Empty)return ConversationAuth.InvalidRequest();
         if(operation=="signal" && (request.To is null || request.To==Guid.Empty || request.EdgeId is null ||
             request.EdgeId==Guid.Empty || request.RoomId is null || request.Action is not ("offer" or "answer" or "ice") ||
             (request.Action=="ice" ? string.IsNullOrWhiteSpace(request.Candidate) : string.IsNullOrWhiteSpace(request.Sdp)) ||
             new[]{request.Sdp,request.Candidate}.Any(s=>s is not null&&Encoding.UTF8.GetByteCount(s)>64*1024)))return ConversationAuth.InvalidRequest();
-        // Same lock order as gateway presence callbacks. No roster transition can
-        // overtake the audience selection and publish of another mesh request.
-        return gateway!.WithPresenceLock<IResult>(()=>
+        JsonElement payload=default;
+        if(operation=="signal")
+        {
+            if(!members.Contains(request.To!.Value))return ConversationAuth.Forbidden();
+            payload=JsonSerializer.SerializeToElement(new{conversationId,roomId=request.RoomId,edgeId=request.EdgeId,
+                from=user.Id,to=request.To,action=request.Action,sdp=request.Sdp,candidate=request.Candidate},new JsonSerializerOptions(JsonSerializerDefaults.Web));
+            if(Encoding.UTF8.GetByteCount(payload.GetRawText())>maxFrameBytes-256)return ConversationAuth.InvalidRequest();
+        }
+        return gateway!.WithDeliveryLock<IResult>(()=>
         {
             if(operation=="signal")
             {
-                if(!members.Contains(request.To!.Value))return ConversationAuth.Forbidden();
-                var payload=JsonSerializer.SerializeToElement(new{conversationId,roomId=request.RoomId,edgeId=request.EdgeId,
-                    from=user.Id,to=request.To,action=request.Action,sdp=request.Sdp,candidate=request.Candidate},new JsonSerializerOptions(JsonSerializerDefaults.Web));
-                // Escaped JSON can be much larger than the UTF-8 SDP. Reserve envelope/cursor headroom.
-                if(Encoding.UTF8.GetByteCount(payload.GetRawText())>maxFrameBytes-256)return ConversationAuth.InvalidRequest();
-                string? error=rooms.Signal(conversationId,user.Id,request.To.Value,request.RoomId!.Value,
+                string? error=rooms.Signal(conversationId,user.Id,request.To!.Value,request.RoomId!.Value,
                     request.EdgeId!.Value,request.Action!);
                 if(error is not null)return Error(error);
-                gateway.Publish("mesh.signal",payload,[request.To.Value]);
+                gateway.Publish("mesh.signal",payload,[request.To!.Value]);
                 return Results.Ok();
             }
             if(operation=="leave"&&request.RoomId is null)return ConversationAuth.InvalidRequest();

@@ -58,6 +58,34 @@ public sealed class MeshRoomTests
         Assert.That(r.Signal(c,User(1),User(4),id,edge.Id,"offer"),Is.EqualTo("mesh_not_participant"));
     }
     [Test]
+    public async Task Capability_reply_names_the_caller_as_self()
+    {
+        using var f=new ApiWebApplicationFactory();var c=Guid.NewGuid();
+        await f.SeedAsync(db=>
+        {
+            db.Conversations.Add(new(){Id=c,Kind="group",CreatedAt=DateTimeOffset.UnixEpoch});
+            for(int i=1;i<=2;i++)
+            {
+                db.Users.Add(new(){Id=User(i),Provider="github",ProviderUserId="self"+i,DisplayName="fixture",CreatedAt=DateTimeOffset.UnixEpoch,UpdatedAt=DateTimeOffset.UnixEpoch});
+                db.Participants.Add(new(){ConversationId=c,UserId=User(i),JoinedAt=DateTimeOffset.UnixEpoch});
+            }
+            return Task.CompletedTask;
+        });
+        foreach(int n in new[]{1,2})
+        {
+            using var client=f.CreateClient();
+            client.DefaultRequestHeaders.Authorization=new("Bearer",f.Services.GetRequiredService<SessionService>().Issue(new Identity("github","self"+n,"fixture")));
+            using var reply=await client.GetAsync($"/conversations/{c}/mesh");
+            Assert.That(reply.StatusCode,Is.EqualTo(HttpStatusCode.OK));
+            using var json=JsonDocument.Parse(await reply.Content.ReadAsStringAsync());var root=json.RootElement;
+            Assert.That(root.TryGetProperty("self",out var self),Is.True,"capability reply has no self");
+            Assert.That(self.GetString(),Is.EqualTo(User(n).ToString("D")));
+            Assert.That(root.GetProperty("version").GetInt32(),Is.EqualTo(1));
+            Assert.That(root.GetProperty("maxParticipants").GetInt32(),Is.EqualTo(4));
+            Assert.That(root.GetProperty("room").GetProperty("roomId").ValueKind,Is.EqualTo(JsonValueKind.Null));
+        }
+    }
+    [Test]
     public async Task HTTP_auth_capability_membership_and_addressed_delivery()
     {
         using var f=new ApiWebApplicationFactory();var c=Guid.NewGuid();
