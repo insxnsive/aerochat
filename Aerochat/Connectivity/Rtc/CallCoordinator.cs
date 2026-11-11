@@ -466,6 +466,13 @@ public sealed class CallCoordinator : ICallCoordinator
 
     private void OnIceCandidateReady(object? sender, RtcIceCandidate candidate)
     {
+        if (QueuePeerEvent(sender, () => DeliverIceCandidate(candidate)))
+            return;
+        DeliverIceCandidate(candidate);
+    }
+
+    private void DeliverIceCandidate(RtcIceCandidate candidate)
+    {
         // A candidate raised after the call ended is dropped, and one that is sent keeps the id of the
         // call it was raised for, even if another call has started by the time the send runs.
         if (Volatile.Read(ref _hangupCompleted))
@@ -477,6 +484,13 @@ public sealed class CallCoordinator : ICallCoordinator
     }
 
     private void OnRtcStateChanged(object? sender, RtcPeerState state)
+    {
+        if (QueuePeerEvent(sender, () => DeliverRtcState(state)))
+            return;
+        DeliverRtcState(state);
+    }
+
+    private void DeliverRtcState(RtcPeerState state)
     {
         if (Volatile.Read(ref _disposed) != 0)
             return;
@@ -509,6 +523,41 @@ public sealed class CallCoordinator : ICallCoordinator
             $"RTC peer {state.ToString().ToLowerInvariant()}",
             notifyRemote: true,
             onlyIfGeneration: generation));
+    }
+
+    // Always queue peer callbacks: SIPSorcery may call us while InitializeAsync owns the engine
+    // gate. Never wait synchronously for operations or run an engine check under _backgroundGate.
+    private bool QueuePeerEvent(object? sender, Action deliver)
+    {
+        if (_engine is not RtcPeerEngine engine || !engine.IsPeerEvent(sender))
+            return false;
+        StartBackgroundTask(() => Task.Run(async () =>
+        {
+            await _operations.WaitAsync().ConfigureAwait(false);
+            try
+            {
+                if (Volatile.Read(ref _disposed) == 0 && engine.IsCurrentPeerEvent(sender))
+                    deliver();
+            }
+            finally
+            {
+                _operations.Release();
+            }
+        }));
+        return true;
+    }
+
+    internal async Task DrainBackgroundTasksAsync()
+    {
+        while (true)
+        {
+            Task[] tasks;
+            lock (_backgroundGate)
+                tasks = _backgroundTasks.ToArray();
+            if (tasks.Length == 0)
+                return;
+            await Task.WhenAll(tasks).ConfigureAwait(false);
+        }
     }
 
     private void StartBackgroundTask(Func<Task> taskFactory)
