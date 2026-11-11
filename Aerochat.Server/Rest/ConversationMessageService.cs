@@ -17,8 +17,10 @@ public sealed class ConversationMessageService(
     GatewayHub gateway,
     MessageMutationGate mutationGate)
 {
+    // Kinds a participant may post through the user endpoint. "system" is deliberately absent: system
+    // messages are written by server code only, never on behalf of a client request.
     private static readonly HashSet<string> MessageKinds =
-    ["message", "sticker", "gif", "system"];
+    ["message", "sticker", "gif"];
 
     private static readonly HashSet<string> StickerPayloadProperties =
     ["sticker", "url", "contentType"];
