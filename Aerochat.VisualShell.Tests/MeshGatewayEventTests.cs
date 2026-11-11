@@ -90,6 +90,63 @@ public sealed class MeshGatewayEventTests
         }
     }
 
+    [Test]
+    public async Task A_frame_that_throws_while_processing_is_dropped_and_the_loop_survives()
+    {
+        // A lone surrogate escape parses, but JsonElement.GetString then throws InvalidOperationException.
+        string poisoned=Frame("mesh.signal","gateway:1",SignalData()).Replace("fixture-sdp","\\ud800");
+        var socket=new FrameSocket(poisoned,Frame("mesh.roster","gateway:2",RosterData()));
+        var delivered=new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        await using var client=new GatewayClient(()=>socket,jitter:null,delay:(_,_)=>Task.CompletedTask);
+        IMeshEventSource source=client;
+        source.MeshRosterReceived+=(_,_)=>delivered.TrySetResult();
+        try
+        {
+            await client.ConnectAsync(new Uri("wss://gateway.example"),"token").WaitAsync(TimeSpan.FromSeconds(5));
+            await delivered.Task.WaitAsync(TimeSpan.FromSeconds(5));
+            Assert.That(client.LastEventId,Is.EqualTo("gateway:2"));
+        }
+        finally
+        {
+            socket.Abort();
+        }
+    }
+
+    [Test]
+    public async Task A_rejected_roster_asks_for_a_resync()
+    {
+        var invalid=RosterData();invalid["room"]!["edges"]=new JsonArray();
+        var socket=new FrameSocket(Frame("mesh.roster","gateway:1",invalid));
+        var resync=new TaskCompletionSource<MeshResyncReason>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var rosters=0;
+        await using var client=new GatewayClient(()=>socket,jitter:null,delay:(_,_)=>Task.CompletedTask);
+        IMeshEventSource source=client;
+        source.MeshRosterReceived+=(_,_)=>rosters++;
+        source.MeshResyncRequired+=(_,e)=>resync.TrySetResult(e.Reason);
+        try
+        {
+            await client.ConnectAsync(new Uri("wss://gateway.example"),"token").WaitAsync(TimeSpan.FromSeconds(5));
+            Assert.That(await resync.Task.WaitAsync(TimeSpan.FromSeconds(5)),Is.EqualTo(MeshResyncReason.RosterRejected));
+            Assert.That(rosters,Is.Zero);
+        }
+        finally
+        {
+            socket.Abort();
+        }
+    }
+
+    [Test]
+    public async Task A_reconnect_asks_for_a_resync()
+    {
+        var sockets=new Queue<IGatewaySocket>(new IGatewaySocket[]{new ClosedSocket(),new FrameSocket()});
+        var resync=new TaskCompletionSource<MeshResyncReason>(TaskCreationOptions.RunContinuationsAsynchronously);
+        await using var client=new GatewayClient(()=>sockets.Count>0?sockets.Dequeue():new FrameSocket(),jitter:null,delay:(_,_)=>Task.CompletedTask);
+        IMeshEventSource source=client;
+        source.MeshResyncRequired+=(_,e)=>resync.TrySetResult(e.Reason);
+        await client.ConnectAsync(new Uri("wss://gateway.example"),"token").WaitAsync(TimeSpan.FromSeconds(5));
+        Assert.That(await resync.Task.WaitAsync(TimeSpan.FromSeconds(5)),Is.EqualTo(MeshResyncReason.Reconnected));
+    }
+
     private sealed class FrameSocket(params string[] frames):IGatewaySocket
     {
         private readonly TaskCompletionSource _closed=new(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -110,5 +167,16 @@ public sealed class MeshGatewayEventTests
         }
         public void Abort()=>_closed.TrySetResult();
         public void Dispose()=>_closed.TrySetResult();
+    }
+
+    // The server closes the connection at once, so the client must reconnect.
+    private sealed class ClosedSocket:IGatewaySocket
+    {
+        public WebSocketState State=>WebSocketState.Open;
+        public Task ConnectAsync(Uri uri,string bearerToken,CancellationToken cancellationToken)=>Task.CompletedTask;
+        public Task<WebSocketReceiveResult> ReceiveAsync(ArraySegment<byte> buffer,CancellationToken cancellationToken)=>
+            Task.FromResult(new WebSocketReceiveResult(0,WebSocketMessageType.Close,true));
+        public void Abort(){}
+        public void Dispose(){}
     }
 }

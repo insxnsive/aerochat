@@ -13,7 +13,7 @@ public sealed class MeshRoomClientTests
 {
     private static readonly Guid A=Guid.Parse("00000000-0000-0000-0000-000000000001"),B=Guid.Parse("00000000-0000-0000-0000-000000000002"),Room=Guid.NewGuid(),Edge=Guid.NewGuid(),Conversation=Guid.NewGuid();
     private static string Snapshot=>JsonSerializer.Serialize(new{roomId=Room,participants=new[]{A,B},edges=new[]{new{id=Edge,offerer=A,answerer=B}}});
-    private static string Capability=>"{\"version\":1,\"maxParticipants\":4,\"room\":"+Snapshot+"}";
+    private static string Capability=>"{\"version\":1,\"maxParticipants\":4,\"self\":\""+A+"\",\"room\":"+Snapshot+"}";
     private sealed class Handler:HttpMessageHandler
     {
         internal int Requests;internal Func<HttpRequestMessage,CancellationToken,Task<HttpResponseMessage>> Reply=(r,t)=>Task.FromResult(Ok(Capability));
@@ -34,10 +34,10 @@ public sealed class MeshRoomClientTests
             else Assert.That(body.RootElement.GetProperty("roomId").GetGuid(),Is.EqualTo(Room));return Ok(Snapshot);
         };
         var read=await client.ReadAsync(Conversation);var join=await client.JoinAsync(Conversation,null);var leave=await client.LeaveAsync(Conversation,Room);
-        Assert.That(read.RoomId,Is.EqualTo(Room));Assert.That(join.Edges.Single().Offerer,Is.EqualTo(A));Assert.That(leave.Participants,Has.Count.EqualTo(2));Assert.That(tokens,Is.EqualTo(3));Assert.That(http.DefaultRequestHeaders.Authorization,Is.Null);
-        Assert.Throws<NotSupportedException>(()=>((IList<Guid>)read.Participants).Add(Guid.NewGuid()));
+        Assert.That(read.Self,Is.EqualTo(A));Assert.That(read.Room.RoomId,Is.EqualTo(Room));Assert.That(join.Edges.Single().Offerer,Is.EqualTo(A));Assert.That(leave.Participants,Has.Count.EqualTo(2));Assert.That(tokens,Is.EqualTo(3));Assert.That(http.DefaultRequestHeaders.Authorization,Is.Null);
+        Assert.Throws<NotSupportedException>(()=>((IList<Guid>)read.Room.Participants).Add(Guid.NewGuid()));
     }
-    [TestCase("version")][TestCase("version-type")][TestCase("capacity")][TestCase("duplicate-user")][TestCase("reversed-edge")][TestCase("unknown-user")][TestCase("zero-room")][TestCase("missing-edge")][TestCase("extra-edge")][TestCase("null-room")][TestCase("braced-id")]
+    [TestCase("version")][TestCase("version-type")][TestCase("capacity")][TestCase("duplicate-user")][TestCase("reversed-edge")][TestCase("unknown-user")][TestCase("zero-room")][TestCase("missing-edge")][TestCase("extra-edge")][TestCase("null-room")][TestCase("braced-id")][TestCase("missing-self")][TestCase("empty-self")][TestCase("braced-self")]
     public void Invalid_capabilities_and_roster_graphs_are_rejected(string mode)
     {
         var json=JsonNode.Parse(Capability)!.AsObject();var room=json["room"]!;
@@ -52,14 +52,17 @@ public sealed class MeshRoomClientTests
             case "extra-edge":room["edges"]!.AsArray().Add(room["edges"]![0]!.DeepClone());break;
             case "null-room":room["roomId"]=null;break;
             case "braced-id":room["participants"]![0]=A.ToString("B");break;
+            case "missing-self":json.Remove("self");break;
+            case "empty-self":json["self"]=Guid.Empty.ToString();break;
+            case "braced-self":json["self"]=A.ToString("B");break;
         }
         var h=new Handler{Reply=(r,t)=>Task.FromResult(Ok(json.ToJsonString()))};using var http=new HttpClient(h);var client=Client(http);Assert.ThrowsAsync<InvalidDataException>(async()=>await client.ReadAsync(Conversation));
     }
     [Test]
     public async Task Empty_room_and_N_guid_forms_are_accepted_but_duplicate_properties_are_not()
     {
-        var h=new Handler{Reply=(r,t)=>Task.FromResult(Ok("{\"version\":1,\"maxParticipants\":4,\"room\":{\"roomId\":null,\"participants\":[],\"edges\":[]}}"))};using var http=new HttpClient(h);var client=Client(http);Assert.That((await client.ReadAsync(Conversation)).RoomId,Is.Null);
-        h.Reply=(r,t)=>Task.FromResult(Ok(Capability.Replace(A.ToString(),A.ToString("N"))));Assert.That((await client.ReadAsync(Conversation)).Participants[0],Is.EqualTo(A));
+        var h=new Handler{Reply=(r,t)=>Task.FromResult(Ok("{\"version\":1,\"maxParticipants\":4,\"self\":\""+A+"\",\"room\":{\"roomId\":null,\"participants\":[],\"edges\":[]}}"))};using var http=new HttpClient(h);var client=Client(http);Assert.That((await client.ReadAsync(Conversation)).Room.RoomId,Is.Null);
+        h.Reply=(r,t)=>Task.FromResult(Ok(Capability.Replace(A.ToString(),A.ToString("N"))));var nForm=await client.ReadAsync(Conversation);Assert.That(nForm.Room.Participants[0],Is.EqualTo(A));Assert.That(nForm.Self,Is.EqualTo(A));
         h.Reply=(r,t)=>Task.FromResult(Ok(Capability.Replace("\"version\":1","\"version\":1,\"version\":1")));Assert.ThrowsAsync<InvalidDataException>(async()=>await client.ReadAsync(Conversation));
     }
     private sealed class Bomb:HttpContent
@@ -185,5 +188,32 @@ public sealed class MeshRoomClientTests
     {
         var h=new Handler{Reply=(r,t)=>Task.FromResult(Ok("{\"roomId\":null,\"participants\":[],\"edges\":[]}"))};using var http=new HttpClient(h);
         Assert.That((await Client(http).LeaveAsync(Conversation,Room)).RoomId,Is.Null);
+    }
+    private sealed class StallingBody:HttpContent
+    {
+        protected override bool TryComputeLength(out long length){length=0;return false;}
+        protected override Task<Stream> CreateContentReadStreamAsync()=>Task.FromResult<Stream>(new StallingStream());
+        protected override Task SerializeToStreamAsync(Stream stream,TransportContext? context)=>throw new InvalidOperationException("Streaming path required.");
+    }
+    private sealed class StallingStream:MemoryStream
+    {
+        public override async ValueTask<int> ReadAsync(Memory<byte> buffer,CancellationToken token=default){await Task.Delay(Timeout.Infinite,token);return 0;}
+    }
+    private static HttpResponseMessage SlowLimit()
+    {var response=new HttpResponseMessage(HttpStatusCode.TooManyRequests){Content=new StallingBody()};response.Headers.RetryAfter=new RetryConditionHeaderValue(TimeSpan.FromSeconds(30));return response;}
+    [Test]
+    public void A_slow_error_body_still_reports_status_and_retry()
+    {
+        var h=new Handler{Reply=(r,t)=>Task.FromResult(SlowLimit())};using var http=new HttpClient(h);
+        var error=Assert.ThrowsAsync<MeshRequestException>(async()=>await Client(http,TimeSpan.FromMilliseconds(200)).ReadAsync(Conversation))!;
+        Assert.That(error.StatusCode,Is.EqualTo(HttpStatusCode.TooManyRequests));Assert.That(error.RetryAfter,Is.EqualTo(TimeSpan.FromSeconds(30)));
+    }
+    [Test]
+    public async Task Caller_cancellation_during_an_error_body_stays_cancellation()
+    {
+        var h=new Handler{Reply=(r,t)=>Task.FromResult(SlowLimit())};using var http=new HttpClient(h);using var stop=new CancellationTokenSource();
+        Task request=Client(http).ReadAsync(Conversation,stop.Token);
+        await Task.Delay(100);stop.Cancel();
+        Assert.CatchAsync<OperationCanceledException>(async()=>await request.WaitAsync(TimeSpan.FromSeconds(3)));
     }
 }

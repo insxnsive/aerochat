@@ -60,6 +60,7 @@ public sealed class GatewayClient : IChatTransport, IMeshEventSource
     private readonly object _meshGate = new();
     private EventHandler<MeshSignalEvent>? _meshSignal;
     private EventHandler<MeshRosterEvent>? _meshRoster;
+    private EventHandler<MeshResyncEventArgs>? _meshResync;
 
     event EventHandler<MeshSignalEvent>? IMeshEventSource.MeshSignalReceived
     {
@@ -71,6 +72,12 @@ public sealed class GatewayClient : IChatTransport, IMeshEventSource
     {
         add { lock (_meshGate) _meshRoster += value; }
         remove { lock (_meshGate) _meshRoster -= value; }
+    }
+
+    event EventHandler<MeshResyncEventArgs>? IMeshEventSource.MeshResyncRequired
+    {
+        add { lock (_meshGate) _meshResync += value; }
+        remove { lock (_meshGate) _meshResync -= value; }
     }
 
     public string? LastEventId => Volatile.Read(ref _lastEventId);
@@ -381,6 +388,8 @@ public sealed class GatewayClient : IChatTransport, IMeshEventSource
                             return;
                         }
 
+                        // Live mesh signals are not replayed, so mesh state may have been missed while offline.
+                        InvokeSubscribers(Volatile.Read(ref _meshResync), new MeshResyncEventArgs(MeshResyncReason.Reconnected));
                         break;
                     }
                     catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
@@ -483,6 +492,11 @@ public sealed class GatewayClient : IChatTransport, IMeshEventSource
                         Encoding.UTF8.GetString(frame.GetBuffer(), 0, checked((int)frame.Length)),
                         socket);
                 }
+                catch (Exception)
+                {
+                    // A frame that cannot be processed is dropped, like a malformed one, and LastEventId
+                    // does not advance for it. It must not end the receive loop: realtime would be lost for good.
+                }
                 finally
                 {
                     _deliveryContext = previousDeliveryContext;
@@ -529,6 +543,8 @@ public sealed class GatewayClient : IChatTransport, IMeshEventSource
             case "mesh.roster":
                 if (MeshGatewayProtocol.TryParseRoster(frame.Data, out MeshRosterEvent? meshRoster))
                     InvokeSubscribers(Volatile.Read(ref _meshRoster), meshRoster!);
+                else
+                    InvokeSubscribers(Volatile.Read(ref _meshResync), new MeshResyncEventArgs(MeshResyncReason.RosterRejected));
                 break;
         }
 
