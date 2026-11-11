@@ -436,14 +436,22 @@ public sealed class CallCoordinator : ICallCoordinator
                     ClearCallId();
                     _remoteDescriptionApplied = false;
                     _pendingCandidates.Clear();
-                    await _engine.Hangup(signal.Reason ?? "remote hangup").ConfigureAwait(false);
-                    _role = CallRole.None;
-                    ApplyPresentation(() => _state.ApplyCallSignal(
-                        signal.EventType,
-                        _conversationId,
-                        signal.Sdp,
-                        signal.Candidate,
-                        signal.Reason));
+                    try
+                    {
+                        await _engine.Hangup(signal.Reason ?? "remote hangup").ConfigureAwait(false);
+                    }
+                    finally
+                    {
+                        // The call is over for the user even when releasing the media fails.
+                        _role = CallRole.None;
+                        ApplyPresentation(() => _state.ApplyCallSignal(
+                            signal.EventType,
+                            _conversationId,
+                            signal.Sdp,
+                            signal.Candidate,
+                            signal.Reason));
+                    }
+
                     break;
             }
         }

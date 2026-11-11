@@ -79,9 +79,10 @@ public sealed class RtcPeerEngine : IRtcPeerEngine, IScreenShareFrameSource, ISc
             if (_initialized)
                 return Task.CompletedTask;
 
-            _peer = new RTCPeerConnection(null);
+            RTCPeerConnection peer = new RTCPeerConnection(null);
+            _peer = peer;
             _peer.onicecandidate += OnIceCandidate;
-            _peer.onconnectionstatechange += OnConnectionStateChanged;
+            peer.onconnectionstatechange += state => OnPeerConnectionStateChanged(peer, state);
             _audio = _audioEndpointFactory();
 
             if (_audio is not null)
@@ -406,7 +407,27 @@ public sealed class RtcPeerEngine : IRtcPeerEngine, IScreenShareFrameSource, ISc
             IceCandidateReady?.Invoke(this, new RtcIceCandidate(candidate.candidate, candidate.sdpMid, candidate.sdpMLineIndex));
     }
 
-    private void OnConnectionStateChanged(RTCPeerConnectionState state) =>
+    internal RTCPeerConnection? CurrentPeer
+    {
+        get
+        {
+            lock (_gate)
+            {
+                return _peer;
+            }
+        }
+    }
+
+    // A late event from a peer that is no longer the engine's current peer (for example one that a
+    // hangup closed) must not change the state of the next call. The hangup itself raises Closed.
+    internal void OnPeerConnectionStateChanged(RTCPeerConnection source, RTCPeerConnectionState state)
+    {
+        lock (_gate)
+        {
+            if (!ReferenceEquals(source, _peer))
+                return;
+        }
+
         SetState(state switch
         {
             RTCPeerConnectionState.connected => RtcPeerState.Connected,
@@ -415,6 +436,7 @@ public sealed class RtcPeerEngine : IRtcPeerEngine, IScreenShareFrameSource, ISc
             RTCPeerConnectionState.closed => RtcPeerState.Closed,
             _ => RtcPeerState.Connecting
         });
+    }
 
     private static void ThrowIfDescriptionFailed(SetDescriptionResultEnum result)
     {

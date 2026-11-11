@@ -1122,6 +1122,72 @@ public sealed class CallClientTests
     }
 
     [Test]
+    public async Task A_state_event_of_a_peer_that_is_no_longer_current_is_ignored()
+    {
+        await using var engine = new RtcPeerEngine(useAudioDevices: false);
+        await engine.InitializeAsync();
+        await engine.Hangup();
+        await engine.InitializeAsync();
+        var states = new List<RtcPeerState>();
+        engine.StateChanged += (_, state) => states.Add(state);
+        var stale = new SIPSorcery.Net.RTCPeerConnection(null);
+
+        try
+        {
+            engine.OnPeerConnectionStateChanged(stale, SIPSorcery.Net.RTCPeerConnectionState.closed);
+        }
+        finally
+        {
+            stale.Close("test");
+        }
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(states, Is.Empty);
+            Assert.That(engine.State, Is.EqualTo(RtcPeerState.New));
+        });
+    }
+
+    [Test]
+    public async Task A_state_event_of_the_current_peer_is_applied()
+    {
+        await using var engine = new RtcPeerEngine(useAudioDevices: false);
+        await engine.InitializeAsync();
+        var states = new List<RtcPeerState>();
+        engine.StateChanged += (_, state) => states.Add(state);
+
+        engine.OnPeerConnectionStateChanged(engine.CurrentPeer!, SIPSorcery.Net.RTCPeerConnectionState.connected);
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(states, Is.EqualTo(new[] { RtcPeerState.Connected }));
+            Assert.That(engine.State, Is.EqualTo(RtcPeerState.Connected));
+        });
+    }
+
+    [Test]
+    public async Task A_remote_hangup_ends_the_call_even_when_media_cleanup_fails()
+    {
+        PresentationState state = DemoData.Create();
+        string conversationId = state.Conversations[0].Id.ToString();
+        var signaling = new RecordingCallSignalingClient();
+        var engine = new RecordingRtcPeerEngine(failHangup: true);
+        var transport = new RecordingCallTransport();
+        await using var coordinator = new CallCoordinator(
+            state, conversationId, signaling, engine, transport);
+        await coordinator.StartAsync();
+
+        transport.Raise(new CallSignalEventArgs("call.hangup", conversationId, reason: "peer_disconnected"));
+
+        CallSessionPresentation session = state.GetOrCreateCallSession(conversationId);
+        Assert.Multiple(() =>
+        {
+            Assert.That(engine.HangupCount, Is.EqualTo(1));
+            Assert.That(session.State, Is.EqualTo(CallSessionState.Ended));
+        });
+    }
+
+    [Test]
     public async Task Call_coordinator_releases_media_when_hangup_signaling_fails()
     {
         PresentationState state = DemoData.Create();
