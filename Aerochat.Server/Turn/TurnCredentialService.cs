@@ -78,8 +78,14 @@ public sealed class TurnSettings
     }
 }
 
-public sealed record TurnIceServer(string[] Urls, string Username, string Credential);
-public sealed record TurnCredentialsResponse(TurnIceServer[] IceServers, int Ttl);
+public sealed record TurnIceServer(string[] Urls, string Username, string Credential)
+{
+    public override string ToString() => "TurnIceServer { [redacted] }";
+}
+public sealed record TurnCredentialsResponse(TurnIceServer[] IceServers, int Ttl)
+{
+    public override string ToString() => "TurnCredentialsResponse { [redacted] }";
+}
 
 public sealed class TurnCredentialService
 {
