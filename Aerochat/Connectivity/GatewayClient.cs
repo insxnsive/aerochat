@@ -3,10 +3,11 @@ using System.Net.WebSockets;
 using System.Text;
 using System.Text.Json;
 using Aerochat.Connectivity.Auth;
+using Aerochat.Connectivity.Rtc;
 
 namespace Aerochat.Connectivity;
 
-public sealed class GatewayClient : IChatTransport
+public sealed class GatewayClient : IChatTransport, IMeshEventSource
 {
     private const int ReceiveBufferSize = 16 * 1024;
     internal const int MaxMessageBytes = 256 * 1024;
@@ -54,6 +55,30 @@ public sealed class GatewayClient : IChatTransport
     public event EventHandler<MessageCreatedEventArgs>? MessageCreated;
     public event EventHandler<PresenceUpdatedEventArgs>? PresenceUpdated;
     public event EventHandler<CallSignalEventArgs>? CallSignalReceived;
+
+    // Mesh events stay internal: only the group-call coordinator subscribes, through IMeshEventSource.
+    private readonly object _meshGate = new();
+    private EventHandler<MeshSignalEvent>? _meshSignal;
+    private EventHandler<MeshRosterEvent>? _meshRoster;
+    private EventHandler<MeshResyncEventArgs>? _meshResync;
+
+    event EventHandler<MeshSignalEvent>? IMeshEventSource.MeshSignalReceived
+    {
+        add { lock (_meshGate) _meshSignal += value; }
+        remove { lock (_meshGate) _meshSignal -= value; }
+    }
+
+    event EventHandler<MeshRosterEvent>? IMeshEventSource.MeshRosterReceived
+    {
+        add { lock (_meshGate) _meshRoster += value; }
+        remove { lock (_meshGate) _meshRoster -= value; }
+    }
+
+    event EventHandler<MeshResyncEventArgs>? IMeshEventSource.MeshResyncRequired
+    {
+        add { lock (_meshGate) _meshResync += value; }
+        remove { lock (_meshGate) _meshResync -= value; }
+    }
 
     public string? LastEventId => Volatile.Read(ref _lastEventId);
 
@@ -363,6 +388,8 @@ public sealed class GatewayClient : IChatTransport
                             return;
                         }
 
+                        // Live mesh signals are not replayed, so mesh state may have been missed while offline.
+                        InvokeSubscribers(Volatile.Read(ref _meshResync), new MeshResyncEventArgs(MeshResyncReason.Reconnected));
                         break;
                     }
                     catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
@@ -465,6 +492,11 @@ public sealed class GatewayClient : IChatTransport
                         Encoding.UTF8.GetString(frame.GetBuffer(), 0, checked((int)frame.Length)),
                         socket);
                 }
+                catch (Exception)
+                {
+                    // A frame that cannot be processed is dropped, like a malformed one, and LastEventId
+                    // does not advance for it. It must not end the receive loop: realtime would be lost for good.
+                }
                 finally
                 {
                     _deliveryContext = previousDeliveryContext;
@@ -503,6 +535,16 @@ public sealed class GatewayClient : IChatTransport
             case "call.screen.stopped":
                 if (GatewayProtocol.TryParseCallSignal(frame, out CallSignalEventArgs? call))
                     InvokeSubscribers(CallSignalReceived, call!);
+                break;
+            case "mesh.signal":
+                if (MeshGatewayProtocol.TryParseSignal(frame.Data, out MeshSignalEvent? meshSignal))
+                    InvokeSubscribers(Volatile.Read(ref _meshSignal), meshSignal!);
+                break;
+            case "mesh.roster":
+                if (MeshGatewayProtocol.TryParseRoster(frame.Data, out MeshRosterEvent? meshRoster))
+                    InvokeSubscribers(Volatile.Read(ref _meshRoster), meshRoster!);
+                else
+                    InvokeSubscribers(Volatile.Read(ref _meshResync), new MeshResyncEventArgs(MeshResyncReason.RosterRejected));
                 break;
         }
 
