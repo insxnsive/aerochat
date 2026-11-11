@@ -287,14 +287,14 @@ public sealed class OAuthFlowTests
         var first = service.Start("google", "http://127.0.0.1:4321/oauth/callback");
         var firstCompletion = await service.CompleteAsync("google", "provider-code", first.State);
 
-        var exchanged = service.ExchangeHandoff(firstCompletion.HandoffCode);
+        var exchanged = service.ExchangeHandoff(firstCompletion.HandoffCode, "http://127.0.0.1:4321/oauth/callback");
         Assert.Multiple(() =>
         {
             Assert.That(exchanged.AccessToken, Is.Not.Null.And.Not.Empty);
             Assert.That(exchanged.ExpiresIn, Is.EqualTo(3600));
         });
         Assert.That(
-            () => service.ExchangeHandoff(firstCompletion.HandoffCode),
+            () => service.ExchangeHandoff(firstCompletion.HandoffCode, "http://127.0.0.1:4321/oauth/callback"),
             Throws.TypeOf<OAuthFlowException>().And.Property("StatusCode").EqualTo(400));
 
         var second = service.Start("google", "http://127.0.0.1:4321/oauth/callback");
@@ -302,8 +302,43 @@ public sealed class OAuthFlowTests
         clock.Advance(TimeSpan.FromSeconds(60));
 
         Assert.That(
-            () => service.ExchangeHandoff(secondCompletion.HandoffCode),
+            () => service.ExchangeHandoff(secondCompletion.HandoffCode, "http://127.0.0.1:4321/oauth/callback"),
             Throws.TypeOf<OAuthFlowException>().And.Property("StatusCode").EqualTo(400));
+    }
+
+    [Test]
+    public async Task Handoff_exchange_requires_exact_attempt_return_uri_and_consumes_on_mismatch()
+    {
+        var (service, _, _, _) = CreateService();
+        const string attemptA = "http://127.0.0.1:4321/oauth/callback/attempt-a";
+        const string attemptB = "http://127.0.0.1:4321/oauth/callback/attempt-b";
+
+        var first = service.Start("google", attemptA);
+        var firstCompletion = await service.CompleteAsync("google", "provider-code", first.State);
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(
+                () => service.ExchangeHandoff(firstCompletion.HandoffCode, string.Empty),
+                Throws.TypeOf<OAuthFlowException>()
+                    .With.Property("StatusCode").EqualTo(400)
+                    .And.Property("ErrorCode").EqualTo("invalid_handoff"));
+            Assert.That(
+                () => service.ExchangeHandoff(firstCompletion.HandoffCode, attemptB),
+                Throws.TypeOf<OAuthFlowException>()
+                    .With.Property("StatusCode").EqualTo(400)
+                    .And.Property("ErrorCode").EqualTo("invalid_handoff"));
+            Assert.That(
+                () => service.ExchangeHandoff(firstCompletion.HandoffCode, attemptA),
+                Throws.TypeOf<OAuthFlowException>()
+                    .With.Property("StatusCode").EqualTo(400)
+                    .And.Property("ErrorCode").EqualTo("invalid_handoff"));
+        });
+
+        var second = service.Start("google", attemptA);
+        var secondCompletion = await service.CompleteAsync("google", "provider-code", second.State);
+        var exchanged = service.ExchangeHandoff(secondCompletion.HandoffCode, attemptA);
+        Assert.That(exchanged.AccessToken, Is.Not.Null.And.Not.Empty);
     }
 
     [Test]

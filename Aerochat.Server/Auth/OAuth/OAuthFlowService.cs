@@ -119,7 +119,8 @@ public sealed class OAuthFlowService
         {
             handoffCode = _flowStore.CreateHandoff(
                 accessToken,
-                checked((int)_sessions.DefaultTtl.TotalSeconds));
+                checked((int)_sessions.DefaultTtl.TotalSeconds),
+                authorizationState.ReturnUri);
         }
         catch (OAuthFlowCapacityException exception)
         {
@@ -130,11 +131,33 @@ public sealed class OAuthFlowService
         return new OAuthCompletionResult(redirectUri, handoffCode);
     }
 
-    public OAuthSessionExchangeResult ExchangeHandoff(string code)
+    public OAuthSessionExchangeResult ExchangeHandoff(string code, string? returnUri = null)
     {
         if (string.IsNullOrWhiteSpace(code)
             || !_flowStore.TryConsumeHandoff(code, out OAuthHandoff? handoff)
             || handoff is null)
+        {
+            throw InvalidRequest("invalid_handoff");
+        }
+
+        if (string.IsNullOrWhiteSpace(returnUri))
+        {
+            throw InvalidRequest("invalid_handoff");
+        }
+
+        Uri validatedReturnUri;
+        try
+        {
+            validatedReturnUri = ValidateLoopbackReturnUri(returnUri);
+        }
+        catch (OAuthFlowException)
+        {
+            throw InvalidRequest("invalid_handoff");
+        }
+
+        if (!StringComparer.Ordinal.Equals(
+                validatedReturnUri.AbsoluteUri,
+                handoff.ReturnUri.AbsoluteUri))
         {
             throw InvalidRequest("invalid_handoff");
         }
