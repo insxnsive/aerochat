@@ -1001,6 +1001,65 @@ public sealed class CallClientTests
     }
 
     [Test]
+    public async Task A_late_ice_failure_of_an_id_less_call_does_not_end_the_next_call()
+    {
+        await AssertOlderCandidateFailureLeavesTheNewCallAlive(new RecordingCallSignalingClient(
+            blockIce: true, failIce: true));
+    }
+
+    [Test]
+    public async Task A_late_rtc_failure_of_an_older_call_does_not_end_the_next_call()
+    {
+        var engine = new RecordingRtcPeerEngine();
+        await AssertLateFailureLeavesTheNextCallAlive(
+            engine,
+            (_, _) => engine.RaiseState(RtcPeerState.Failed));
+    }
+
+    [Test]
+    public async Task A_late_signal_failure_of_an_older_call_does_not_end_the_next_call()
+    {
+        await AssertLateFailureLeavesTheNextCallAlive(
+            new RecordingRtcPeerEngine(failApplyAnswer: true),
+            (transport, conversationId) => transport.Raise(
+                new CallSignalEventArgs("call.answer", conversationId, sdp: "answer-for-the-first-call")));
+    }
+
+    private static async Task AssertLateFailureLeavesTheNextCallAlive(
+        RecordingRtcPeerEngine engine,
+        Action<RecordingCallTransport, string> raiseLateFailure)
+    {
+        PresentationState state = DemoData.Create();
+        string conversationId = state.Conversations[0].Id.ToString();
+        var signaling = new RecordingCallSignalingClient(blockHangup: true);
+        var transport = new RecordingCallTransport();
+        await using var coordinator = new CallCoordinator(
+            state, conversationId, signaling, engine, transport);
+        CallSessionPresentation session = state.GetOrCreateCallSession(conversationId);
+        var states = new List<CallSessionState>();
+        session.PropertyChanged += (_, args) =>
+        {
+            if (args.PropertyName == nameof(CallSessionPresentation.State))
+                states.Add(session.State);
+        };
+        await coordinator.StartAsync();
+        Task hangingUp = coordinator.HangupAsync();
+        await signaling.HangupStarted.Task.WaitAsync(TimeSpan.FromSeconds(2));
+        Task starting = coordinator.StartAsync();
+        raiseLateFailure(transport, conversationId);
+
+        signaling.ReleaseHangup.TrySetResult();
+        await hangingUp.WaitAsync(TimeSpan.FromSeconds(2));
+        await starting.WaitAsync(TimeSpan.FromSeconds(2));
+        // Bounded wait for the queued failure: a wrong implementation ends the next call within
+        // milliseconds, a correct one never changes the state, so this waits the full second.
+        SpinWait.SpinUntil(() => states.Contains(CallSessionState.Failed), TimeSpan.FromSeconds(1));
+        await coordinator.DisposeAsync();
+
+        Assert.That(states, Does.Not.Contain(CallSessionState.Failed), "a late failure of the first call ended the next call");
+    }
+
+    [Test]
     public async Task Call_coordinator_releases_media_when_hangup_signaling_fails()
     {
         PresentationState state = DemoData.Create();
