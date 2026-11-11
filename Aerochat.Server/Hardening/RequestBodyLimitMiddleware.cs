@@ -27,22 +27,31 @@ public sealed class RequestBodyLimitMiddleware(RequestDelegate next)
         Stream original = context.Request.Body;
         try
         {
-            byte[] bytes = new byte[limit + 1];
-            int total = 0;
-            while (total < bytes.Length)
+            // A slow request holds only a small pooled read buffer. The replay buffer
+            // grows with decoded bytes actually received, never with the configured cap.
+            using var bounded = new MemoryStream();
+            byte[] chunk = System.Buffers.ArrayPool<byte>.Shared.Rent(8 * 1024);
+            try
             {
-                int count = await original.ReadAsync(bytes.AsMemory(total), context.RequestAborted);
-                if (count == 0) break;
-                total += count;
+                int total = 0;
+                while (total <= limit)
+                {
+                    int count = await original.ReadAsync(chunk.AsMemory(0,
+                        Math.Min(8 * 1024, limit + 1 - total)), context.RequestAborted);
+                    if (count == 0) break;
+                    total += count;
+                    if (total > limit)
+                    {
+                        await RejectAsync(context);
+                        return;
+                    }
+                    bounded.Write(chunk, 0, count);
+                }
+                bounded.Position = 0;
+                context.Request.Body = bounded;
+                await next(context);
             }
-            if (total > limit)
-            {
-                await RejectAsync(context);
-                return;
-            }
-            using var bounded = new MemoryStream(bytes, 0, total, writable: false);
-            context.Request.Body = bounded;
-            await next(context);
+            finally { System.Buffers.ArrayPool<byte>.Shared.Return(chunk, clearArray: true); }
         }
         catch (BadHttpRequestException exception) when (exception.StatusCode == StatusCodes.Status413PayloadTooLarge
             && !context.Response.HasStarted)

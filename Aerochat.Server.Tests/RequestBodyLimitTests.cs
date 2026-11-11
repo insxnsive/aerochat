@@ -58,6 +58,34 @@ public sealed class RequestBodyLimitTests
         Assert.That(response.StatusCode, Is.EqualTo(HttpStatusCode.Unauthorized));
     }
 
+    [Test]
+    public void Tiny_and_stalled_bodies_do_not_allocate_the_cap()
+    {
+        foreach(bool stalled in new[]{false,true})
+        {
+            var context=new Microsoft.AspNetCore.Http.DefaultHttpContext();
+            context.Request.Method="POST";context.Request.Path="/conversations/example";
+            context.Request.ContentLength=10;
+            var source=new DripStream(stalled);context.Request.Body=source;
+            var middleware=new Aerochat.Server.Hardening.RequestBodyLimitMiddleware(_=>Task.CompletedTask);
+            long before=GC.GetAllocatedBytesForCurrentThread();
+            Task operation=middleware.InvokeAsync(context);
+            long allocated=GC.GetAllocatedBytesForCurrentThread()-before;
+            source.Release.TrySetResult();operation.GetAwaiter().GetResult();
+            Assert.That(allocated,Is.LessThan(64*1024),$"stalled={stalled}");
+            Assert.That(context.Request.Body,Is.SameAs(source));
+        }
+    }
+    private sealed class DripStream(bool stalled):MemoryStream(new byte[10])
+    {
+        internal readonly TaskCompletionSource Release=new(TaskCreationOptions.RunContinuationsAsynchronously);
+        public override async ValueTask<int> ReadAsync(Memory<byte> buffer,CancellationToken ct=default)
+        {
+            if(stalled)await Release.Task.WaitAsync(ct);
+            return await base.ReadAsync(buffer,ct);
+        }
+    }
+
     private sealed class BodyContent : HttpContent
     {
         private readonly byte[] _bytes;
