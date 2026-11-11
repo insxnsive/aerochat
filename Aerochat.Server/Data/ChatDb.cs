@@ -31,6 +31,7 @@ public sealed class ChatDb : DbContext
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
+        Aerochat.Server.Moderation.ModerationAudit.Configure(modelBuilder);
         var users = modelBuilder.Entity<ExternalUserEntity>();
         users.ToTable("users");
         users.HasKey(user => user.Id).HasName("PK_users");
