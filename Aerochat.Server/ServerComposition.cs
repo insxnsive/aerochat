@@ -22,8 +22,9 @@ internal static class ServerComposition
     internal static void ConfigureBuilder(WebApplicationBuilder builder)
     {
         builder.WebHost.ConfigureKestrel(options => options.Limits.MaxRequestBodySize = RequestBodyLimitMiddleware.GlobalLimit);
-        // Hosting request-start/finish records include raw query strings. /ws authenticates
-        // via a query token, so this category must not reach any logging provider.
+        // The hosting log records each request's raw query string when it starts and
+        // finishes. This category is suppressed so a token sent in a /ws query, which the
+        // server rejects, never reaches a log. /ws takes its token from the Authorization header.
         builder.Services.PostConfigure<LoggerFilterOptions>(options =>
         {
             const string category = "Microsoft.AspNetCore.Hosting.Diagnostics";
