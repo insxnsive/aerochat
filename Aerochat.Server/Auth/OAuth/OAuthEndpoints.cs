@@ -73,7 +73,9 @@ public static class OAuthEndpoints
             {
                 try
                 {
-                    OAuthSessionExchangeResult result = flow.ExchangeHandoff(request?.Code ?? string.Empty);
+                    OAuthSessionExchangeResult result = flow.ExchangeHandoff(
+                        request?.Code ?? string.Empty,
+                        request?.ReturnUri);
                     return Results.Json(new
                     {
                         accessToken = result.AccessToken,
@@ -93,4 +95,4 @@ public static class OAuthEndpoints
         Results.Json(new { error = exception.ErrorCode }, statusCode: exception.StatusCode);
 }
 
-public sealed record OAuthSessionExchangeRequest(string? Code);
+public sealed record OAuthSessionExchangeRequest(string? Code, string? ReturnUri = null);

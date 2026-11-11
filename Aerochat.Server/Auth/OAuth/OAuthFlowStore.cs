@@ -12,6 +12,7 @@ public sealed record OAuthAuthorizationState(
 public sealed record OAuthHandoff(
     string AccessToken,
     int ExpiresIn,
+    Uri ReturnUri,
     DateTimeOffset ExpiresAt);
 
 public sealed class OAuthFlowStore
@@ -71,7 +72,7 @@ public sealed class OAuthFlowStore
                 var authorizationState = new OAuthAuthorizationState(
                     provider,
                     codeVerifier,
-                    returnUri,
+                    returnUri ?? new Uri("http://127.0.0.1/"),
                     now.Add(AuthorizationStateTtl));
                 if (_states.TryAdd(state, authorizationState))
                 {
@@ -101,13 +102,15 @@ public sealed class OAuthFlowStore
         return true;
     }
 
-    public string CreateHandoff(string accessToken, int expiresIn)
+    public string CreateHandoff(string accessToken, int expiresIn, Uri returnUri)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(accessToken);
         if (expiresIn <= 0)
         {
             throw new ArgumentOutOfRangeException(nameof(expiresIn));
         }
+
+        ArgumentNullException.ThrowIfNull(returnUri);
 
         DateTimeOffset now = _clock.GetUtcNow();
         lock (_handoffGate)
@@ -124,6 +127,7 @@ public sealed class OAuthFlowStore
                 var handoff = new OAuthHandoff(
                     accessToken,
                     expiresIn,
+                    returnUri,
                     now.Add(HandoffTtl));
                 if (_handoffs.TryAdd(code, handoff))
                 {

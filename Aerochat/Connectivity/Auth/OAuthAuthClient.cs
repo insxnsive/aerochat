@@ -97,7 +97,7 @@ public sealed class OAuthAuthClient : IAuthClient
             if (string.IsNullOrWhiteSpace(handoffCode))
                 throw new AuthException("The sign-in handoff was invalid.");
 
-            AuthSession session = await ExchangeAsync(handoffCode, linked.Token);
+            AuthSession session = await ExchangeAsync(handoffCode, listener.CallbackUri.AbsoluteUri, linked.Token);
             if (rememberSession)
                 await _tokenCache.SaveAsync(session.AccessToken, linked.Token);
             else
@@ -142,14 +142,17 @@ public sealed class OAuthAuthClient : IAuthClient
         }
     }
 
-    private async Task<AuthSession> ExchangeAsync(string handoffCode, CancellationToken cancellationToken)
+    private async Task<AuthSession> ExchangeAsync(
+        string handoffCode,
+        string returnUri,
+        CancellationToken cancellationToken)
     {
         HttpResponseMessage response;
         try
         {
             response = await _httpClient.PostAsJsonAsync(
                 new Uri(_serverUri, "auth/session/exchange"),
-                new HandoffRequest(handoffCode),
+                new HandoffRequest(handoffCode, returnUri),
                 cancellationToken);
         }
         catch (HttpRequestException exception)
@@ -198,7 +201,9 @@ public sealed class OAuthAuthClient : IAuthClient
         return normalized;
     }
 
-    private sealed record HandoffRequest([property: JsonPropertyName("code")] string Code);
+    private sealed record HandoffRequest(
+        [property: JsonPropertyName("code")] string Code,
+        [property: JsonPropertyName("returnUri")] string ReturnUri);
 
     private sealed record TokenResponse(
         [property: JsonPropertyName("accessToken")] string? AccessToken,

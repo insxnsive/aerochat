@@ -2,6 +2,7 @@ using System.Collections.Concurrent;
 using System.IO;
 using System.Net;
 using System.Net.Sockets;
+using System.Security.Cryptography;
 using System.Text;
 
 namespace Aerochat.Connectivity.Auth;
@@ -10,12 +11,13 @@ public sealed class LoopbackCallbackListener : ILoopbackCallbackListener
 {
     private const int MaxHeaderBytes = 16 * 1024;
     private static readonly TimeSpan HeaderReadTimeout = TimeSpan.FromSeconds(1);
-    private const string CallbackPath = "/oauth/callback";
+    private const string CallbackPathPrefix = "/oauth/callback/";
     private static readonly byte[] ResponseBody = Encoding.UTF8.GetBytes(
         "<html><body>You may return to Aerochat.</body></html>");
 
     private readonly TcpListener _listener = new(IPAddress.Loopback, port: 0);
     private readonly CancellationTokenSource _stop = new();
+    private readonly string _callbackPath = CallbackPathPrefix + CreateCallbackToken();
     private bool _started;
     private int _disposed;
 
@@ -28,9 +30,15 @@ public sealed class LoopbackCallbackListener : ILoopbackCallbackListener
 
         _listener.Start();
         int port = ((IPEndPoint)_listener.LocalEndpoint).Port;
-        CallbackUri = new Uri($"http://127.0.0.1:{port}{CallbackPath}");
+        CallbackUri = new Uri($"http://127.0.0.1:{port}{_callbackPath}");
         _started = true;
     }
+
+    private static string CreateCallbackToken() =>
+        Convert.ToBase64String(RandomNumberGenerator.GetBytes(32))
+            .TrimEnd('=')
+            .Replace('+', '-')
+            .Replace('/', '_');
 
     public async Task<string> WaitForCodeAsync(CancellationToken cancellationToken = default)
     {
@@ -80,7 +88,7 @@ public sealed class LoopbackCallbackListener : ILoopbackCallbackListener
         }
     }
 
-    private static async Task ProcessClientAsync(
+    private async Task ProcessClientAsync(
         TcpClient client,
         TaskCompletionSource<string> completion,
         CancellationToken cancellationToken)
@@ -92,7 +100,7 @@ public sealed class LoopbackCallbackListener : ILoopbackCallbackListener
                 using CancellationTokenSource headerTimeout = CancellationTokenSource.CreateLinkedTokenSource(
                     cancellationToken);
                 headerTimeout.CancelAfter(HeaderReadTimeout);
-                RequestResult request = await ReadRequestAsync(client.GetStream(), headerTimeout.Token);
+                RequestResult request = await ReadRequestAsync(client.GetStream(), _callbackPath, headerTimeout.Token);
                 await WriteResponseAsync(client.GetStream(), request.IsValid, cancellationToken);
                 if (request.Code is not null)
                     completion.TrySetResult(request.Code);
@@ -122,7 +130,10 @@ public sealed class LoopbackCallbackListener : ILoopbackCallbackListener
         return ValueTask.CompletedTask;
     }
 
-    private static async Task<RequestResult> ReadRequestAsync(Stream stream, CancellationToken cancellationToken)
+    private static async Task<RequestResult> ReadRequestAsync(
+        Stream stream,
+        string expectedPath,
+        CancellationToken cancellationToken)
     {
         byte[] buffer = new byte[1024];
         using var request = new MemoryStream();
@@ -139,14 +150,14 @@ public sealed class LoopbackCallbackListener : ILoopbackCallbackListener
             request.Write(buffer, 0, read);
             if (ContainsHeaderTerminator(request.GetBuffer(), checked((int)request.Length)))
             {
-                return ParseRequest(request.GetBuffer(), checked((int)request.Length));
+                return ParseRequest(request.GetBuffer(), checked((int)request.Length), expectedPath);
             }
         }
 
         return RequestResult.Invalid;
     }
 
-    private static RequestResult ParseRequest(byte[] buffer, int length)
+    private static RequestResult ParseRequest(byte[] buffer, int length, string expectedPath)
     {
         string headers = Encoding.ASCII.GetString(buffer, 0, length);
         int lineEnd = headers.IndexOf("\r\n", StringComparison.Ordinal);
@@ -160,7 +171,7 @@ public sealed class LoopbackCallbackListener : ILoopbackCallbackListener
         if (requestLine.Length != 3
             || !StringComparer.Ordinal.Equals(requestLine[0], "GET")
             || !StringComparer.Ordinal.Equals(requestLine[2], "HTTP/1.1")
-            || !StringComparer.Ordinal.Equals(rawPath, CallbackPath)
+            || !StringComparer.Ordinal.Equals(rawPath, expectedPath)
             || requestTarget.Contains('#', StringComparison.Ordinal)
             || !Uri.TryCreate("http://localhost" + requestTarget, UriKind.Absolute, out Uri? requestUri))
         {
