@@ -62,6 +62,7 @@ internal static class ServerComposition
             AllowedOrigins = ParseAllowedOrigins(builder.Configuration["Gateway:AllowedOrigins"])
         };
         builder.Services.AddSingleton(gatewayOptions);
+        builder.Services.AddSingleton<MeshSignalRateLimiter>();
         builder.Services.AddSingleton<MeshRooms>();
         builder.Services.AddHostedService<MeshRosterNotifier>();
         builder.Services.AddSingleton<CallRegistry>();

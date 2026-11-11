@@ -12,7 +12,7 @@ public sealed class MeshRooms
     {
         internal Guid Id=Guid.NewGuid();
         internal HashSet<Guid> Users=[];
-        internal Dictionary<Guid,(MeshEdge Edge,int Phase)> Edges=[];
+        internal Dictionary<Guid,(MeshEdge Edge,int Phase,int IceCount)> Edges=[];
     }
     private readonly object _gate=new();
     private readonly Dictionary<Guid,Room> _rooms=[];
@@ -52,7 +52,7 @@ public sealed class MeshRooms
             foreach(var other in r.Users)
             {
                 bool first=string.CompareOrdinal(actor.ToString("N"),other.ToString("N"))<0;
-                var edge=new MeshEdge(Guid.NewGuid(),first?actor:other,first?other:actor);r.Edges.Add(edge.Id,(edge,0));
+                var edge=new MeshEdge(Guid.NewGuid(),first?actor:other,first?other:actor);r.Edges.Add(edge.Id,(edge,0,0));
             }
             r.Users.Add(actor);return new(null,Snapshot(r));
         }
@@ -81,9 +81,11 @@ public sealed class MeshRooms
             if(actor==to||!r.Users.Contains(actor)||!r.Users.Contains(to))return "mesh_not_participant";
             if(!r.Edges.TryGetValue(edgeId,out var entry)||
                 !((entry.Edge.Offerer==actor&&entry.Edge.Answerer==to)||(entry.Edge.Answerer==actor&&entry.Edge.Offerer==to)))return "mesh_stale_edge";
-            if(action=="offer"&&entry.Phase==0&&actor==entry.Edge.Offerer)r.Edges[edgeId]=(entry.Edge,1);
-            else if(action=="answer"&&entry.Phase==1&&actor==entry.Edge.Answerer)r.Edges[edgeId]=(entry.Edge,2);
+            if(action=="offer"&&entry.Phase==0&&actor==entry.Edge.Offerer)r.Edges[edgeId]=(entry.Edge,1,entry.IceCount);
+            else if(action=="answer"&&entry.Phase==1&&actor==entry.Edge.Answerer)r.Edges[edgeId]=(entry.Edge,2,entry.IceCount);
             else if(action!="ice"||entry.Phase==0)return "mesh_invalid_state";
+            else if(entry.IceCount>=128)return "mesh_ice_limit";
+            else r.Edges[edgeId]=(entry.Edge,entry.Phase,entry.IceCount+1);
             return null;
         }
     }

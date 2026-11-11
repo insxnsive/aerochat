@@ -9,7 +9,8 @@ public sealed class RateLimitingMiddleware(RequestDelegate next)
         HttpContext context,
         FixedWindowRateLimiter limiter,
         SessionService sessions,
-        IExternalUserStore externalUsers)
+        IExternalUserStore externalUsers,
+        MeshSignalRateLimiter meshSignals)
     {
         if (!IsProtectedRequest(context))
         {
@@ -25,7 +26,13 @@ public sealed class RateLimitingMiddleware(RequestDelegate next)
             return;
         }
 
-        RateLimitDecision decision = limiter.TryAcquire(user.Id.ToString("N"));
+        string[] parts = context.Request.Path.Value?.Split('/', StringSplitOptions.RemoveEmptyEntries) ?? [];
+        bool signal = HttpMethods.IsPost(context.Request.Method) && parts.Length == 4
+            && string.Equals(parts[0], "conversations", StringComparison.OrdinalIgnoreCase)
+            && string.Equals(parts[2], "mesh", StringComparison.OrdinalIgnoreCase)
+            && string.Equals(parts[3], "signal", StringComparison.OrdinalIgnoreCase);
+        RateLimitDecision decision = (signal ? meshSignals.TryAcquire(user.Id.ToString("N"))
+            : limiter.TryAcquire(user.Id.ToString("N")));
         if (!decision.Allowed)
         {
             int retryAfter = Math.Max(1, (int)Math.Ceiling(decision.RetryAfter.TotalSeconds));
@@ -43,7 +50,16 @@ public sealed class RateLimitingMiddleware(RequestDelegate next)
     private static bool IsProtectedRequest(HttpContext context)
     {
         string[] parts = context.Request.Path.Value?.Split('/', StringSplitOptions.RemoveEmptyEntries) ?? [];
-        return (HttpMethods.IsGet(context.Request.Method)
+        return ((HttpMethods.IsGet(context.Request.Method) && parts.Length == 3
+                    && string.Equals(parts[0], "conversations", StringComparison.OrdinalIgnoreCase)
+                    && string.Equals(parts[2], "mesh", StringComparison.OrdinalIgnoreCase))
+                || (HttpMethods.IsPost(context.Request.Method) && parts.Length == 4
+                    && string.Equals(parts[0], "conversations", StringComparison.OrdinalIgnoreCase)
+                    && string.Equals(parts[2], "mesh", StringComparison.OrdinalIgnoreCase)
+                    && (string.Equals(parts[3], "join", StringComparison.OrdinalIgnoreCase)
+                        || string.Equals(parts[3], "leave", StringComparison.OrdinalIgnoreCase)
+                        || string.Equals(parts[3], "signal", StringComparison.OrdinalIgnoreCase))))
+            || (HttpMethods.IsGet(context.Request.Method)
                 && parts.Length == 2
                 && string.Equals(parts[0], "gifs", StringComparison.OrdinalIgnoreCase)
                 && string.Equals(parts[1], "search", StringComparison.OrdinalIgnoreCase))
