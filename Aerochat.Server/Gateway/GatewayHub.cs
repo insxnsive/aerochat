@@ -84,10 +84,16 @@ public sealed class GatewayHub
 
     internal T WithPresenceLock<T>(Func<T> action)
     {
+        lock (_deliveryGate)
         lock (_gate)
         {
             return action();
         }
+    }
+
+    internal T WithDeliveryLock<T>(Func<T> action)
+    {
+        lock (_deliveryGate) return action();
     }
 
     internal sealed class AdmissionSlot(Guid userId, string connectionId)
