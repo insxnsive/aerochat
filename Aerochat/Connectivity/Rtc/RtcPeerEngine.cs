@@ -81,7 +81,7 @@ public sealed class RtcPeerEngine : IRtcPeerEngine, IScreenShareFrameSource, ISc
 
             RTCPeerConnection peer = new RTCPeerConnection(null);
             _peer = peer;
-            _peer.onicecandidate += OnIceCandidate;
+            peer.onicecandidate += candidate => OnPeerIceCandidate(peer, candidate);
             peer.onconnectionstatechange += state => OnPeerConnectionStateChanged(peer, state);
             _audio = _audioEndpointFactory();
 
@@ -401,8 +401,16 @@ public sealed class RtcPeerEngine : IRtcPeerEngine, IScreenShareFrameSource, ISc
         }
     }
 
-    private void OnIceCandidate(RTCIceCandidate candidate)
+    // A candidate from a peer that is no longer the engine's current peer (for example one that a
+    // hangup closed) must not reach the next call.
+    internal void OnPeerIceCandidate(RTCPeerConnection source, RTCIceCandidate candidate)
     {
+        lock (_gate)
+        {
+            if (!ReferenceEquals(source, _peer))
+                return;
+        }
+
         if (!string.IsNullOrWhiteSpace(candidate.candidate))
             IceCandidateReady?.Invoke(this, new RtcIceCandidate(candidate.candidate, candidate.sdpMid, candidate.sdpMLineIndex));
     }
