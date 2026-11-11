@@ -21,6 +21,7 @@ internal static class ServerComposition
 {
     internal static void ConfigureBuilder(WebApplicationBuilder builder)
     {
+        builder.WebHost.ConfigureKestrel(options => options.Limits.MaxRequestBodySize = RequestBodyLimitMiddleware.GlobalLimit);
         // Hosting request-start/finish records include raw query strings. /ws authenticates
         // via a query token, so this category must not reach any logging provider.
         builder.Services.PostConfigure<LoggerFilterOptions>(options =>
@@ -105,6 +106,7 @@ internal static class ServerComposition
 
     internal static void MapEndpoints(WebApplication app)
     {
+        app.UseMiddleware<RequestBodyLimitMiddleware>();
         app.UseMiddleware<RateLimitingMiddleware>();
         app.MapGet("/health", () => Results.Json(new { status = "ok" }));
         app.MapOAuthEndpoints();
