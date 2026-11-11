@@ -21,6 +21,7 @@ internal static class ServerComposition
 {
     internal static void ConfigureBuilder(WebApplicationBuilder builder)
     {
+        builder.WebHost.ConfigureKestrel(options => options.Limits.MaxRequestBodySize = RequestBodyLimitMiddleware.GlobalLimit);
         // Hosting request-start/finish records include raw query strings. /ws authenticates
         // via a query token, so this category must not reach any logging provider.
         builder.Services.PostConfigure<LoggerFilterOptions>(options =>
@@ -41,6 +42,9 @@ internal static class ServerComposition
         builder.Services.AddSingleton<TimeProvider>(TimeProvider.System);
         builder.Services.AddSingleton(TurnSettings.FromConfiguration(builder.Configuration));
         builder.Services.AddSingleton<TurnCredentialService>();
+        builder.Services.AddSingleton(Aerochat.Server.Moderation.ModerationSettings.FromConfiguration(builder.Configuration));
+        builder.Services.AddSingleton<Aerochat.Server.Moderation.ModerationQuota>();
+        builder.Services.AddScoped<Aerochat.Server.Moderation.ModerationAudit>();
         RateLimitOptions rateLimitOptions = new()
         {
             Limit = builder.Configuration.GetValue("RateLimit:Limit", 30),
@@ -105,6 +109,7 @@ internal static class ServerComposition
 
     internal static void MapEndpoints(WebApplication app)
     {
+        app.UseMiddleware<RequestBodyLimitMiddleware>();
         app.UseMiddleware<RateLimitingMiddleware>();
         app.MapGet("/health", () => Results.Json(new { status = "ok" }));
         app.MapOAuthEndpoints();
