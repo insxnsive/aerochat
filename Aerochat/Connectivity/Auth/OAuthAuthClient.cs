@@ -148,13 +148,15 @@ public sealed class OAuthAuthClient : IAuthClient
         string returnUri,
         CancellationToken cancellationToken)
     {
+        using HttpRequestMessage request = new(HttpMethod.Post, new Uri(_serverUri, "auth/session/exchange"))
+        {
+            Content = JsonContent.Create(new HandoffRequest(handoffCode, returnUri))
+        };
         HttpResponseMessage response;
         try
         {
-            response = await _httpClient.PostAsJsonAsync(
-                new Uri(_serverUri, "auth/session/exchange"),
-                new HandoffRequest(handoffCode, returnUri),
-                cancellationToken);
+            response = await _httpClient.SendAsync(request, HttpCompletionOption.ResponseHeadersRead,
+                cancellationToken).ConfigureAwait(false);
         }
         catch (HttpRequestException exception)
         {
@@ -169,9 +171,9 @@ public sealed class OAuthAuthClient : IAuthClient
             TokenResponse? tokenResponse;
             try
             {
-                tokenResponse = await response.Content.ReadFromJsonAsync<TokenResponse>(cancellationToken: cancellationToken);
+                tokenResponse = await BoundedJsonResponse.ReadAsync<TokenResponse>(response, 32 * 1024, cancellationToken).ConfigureAwait(false);
             }
-            catch (JsonException exception)
+            catch (Exception exception) when (exception is JsonException or InvalidDataException or TimeoutException)
             {
                 throw new AuthException("The sign-in service returned an invalid session.", exception);
             }
