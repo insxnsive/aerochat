@@ -35,14 +35,7 @@ public sealed class ConversationMessageService(
         "HighFive.png"
     };
 
-    public async Task<IResult> SendAsync(HttpContext httpContext,string conversationId,SendMessageRequest? request,CancellationToken cancellationToken)
-    {
-        await mutationGate.Semaphore.WaitAsync(cancellationToken);
-        try { return await SendCoreAsync(httpContext,conversationId,request,cancellationToken); }
-        finally { mutationGate.Semaphore.Release(); }
-    }
-
-    private async Task<IResult> SendCoreAsync(
+    public async Task<IResult> SendAsync(
         HttpContext httpContext,
         string conversationId,
         SendMessageRequest? request,
@@ -108,40 +101,45 @@ public sealed class ConversationMessageService(
             return ConversationAuth.Forbidden();
         }
 
-        MessageEntity message = new()
+        // Only the save and the publication are serialized with deletions, and only per conversation.
+        MessageEntity message;
+        using (await mutationGate.EnterAsync(conversationGuid, cancellationToken))
         {
-            Id = Guid.NewGuid(),
-            ConversationId = conversationGuid,
-            AuthorId = user.Id,
-            Body = request.Body,
-            Kind = request.Kind,
-            RefPayloadJson = request.RefPayloadJson,
-            CreatedAt = clock.GetUtcNow().ToUniversalTime()
-        };
-        db.Messages.Add(message);
-        await db.SaveChangesAsync(cancellationToken);
+            message = new()
+            {
+                Id = Guid.NewGuid(),
+                ConversationId = conversationGuid,
+                AuthorId = user.Id,
+                Body = request.Body,
+                Kind = request.Kind,
+                RefPayloadJson = request.RefPayloadJson,
+                CreatedAt = clock.GetUtcNow().ToUniversalTime()
+            };
+            db.Messages.Add(message);
+            await db.SaveChangesAsync(cancellationToken);
 
-        List<Guid> audience = await db.Participants
-            .AsNoTracking()
-            .Where(participant => participant.ConversationId == conversationGuid)
-            .Select(participant => participant.UserId)
-            .Distinct()
-            .ToListAsync(cancellationToken);
-        gateway.Publish(
-            GatewayEventType.MessageCreated,
-            new MessageCreatedData(
-                message.ConversationId,
-                new GatewayMessageData(
-                    message.Id,
+            List<Guid> audience = await db.Participants
+                .AsNoTracking()
+                .Where(participant => participant.ConversationId == conversationGuid)
+                .Select(participant => participant.UserId)
+                .Distinct()
+                .ToListAsync(cancellationToken);
+            gateway.Publish(
+                GatewayEventType.MessageCreated,
+                new MessageCreatedData(
                     message.ConversationId,
-                    message.AuthorId,
-                    message.Body,
-                    message.Kind,
-                    refPayload,
-                    message.CreatedAt,
-                    message.EditedAt,
-                    message.DeletedAt)),
-            audience);
+                    new GatewayMessageData(
+                        message.Id,
+                        message.ConversationId,
+                        message.AuthorId,
+                        message.Body,
+                        message.Kind,
+                        refPayload,
+                        message.CreatedAt,
+                        message.EditedAt,
+                        message.DeletedAt)),
+                audience);
+        }
 
         return Results.Created(
             $"/conversations/{conversationGuid}/messages/{message.Id}",

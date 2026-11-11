@@ -404,30 +404,30 @@ public sealed class GatewayHub
         }
     }
 
-    internal void CommitMessageDeletion(Guid conversation,Guid message,GatewayMessageData tombstone,Guid[] audience,Action commit)
+    // Called after the database commit, with no database work and no delegate. Lock order is
+    // _deliveryGate then _gate, never the reverse. Every writer of the replay ring (Publish) holds
+    // _deliveryGate, so the ring cannot change during the scan and sealing below; _gate is taken only
+    // for the node swap and is released before the deletion event is published.
+    internal void ApplyMessageDeletion(Guid conversation,Guid message,GatewayMessageData tombstone,Guid[] audience)
     {
+        var data=new MessageCreatedData(conversation,tombstone);
         lock(_deliveryGate)
         {
+            var replacements=new List<(LinkedListNode<GatewayEventRecord> Node,GatewayEventRecord Record)>();
+            for(var node=_replay.First;node is not null;node=node.Next)
+            {
+                var record=node.Value;
+                if(record.Type!="message.created"||record.Data is not System.Text.Json.JsonElement value
+                    ||!value.TryGetProperty("conversationId",out var cid)||!cid.TryGetGuid(out var c)||c!=conversation
+                    ||!value.TryGetProperty("message",out var m)||!m.TryGetProperty("id",out var mid)||!mid.TryGetGuid(out var id)||id!=message)continue;
+                var envelope=GatewayJson.Seal(GatewayEnvelope.Replayable(record.Type,record.EventId,data),_maxFrameBytes);
+                replacements.Add((node,new GatewayEventRecord(record.Sequence,record.EventId,record.Type,envelope,record.Audience.Intersect(audience))));
+            }
             lock(_gate)
             {
-                var replacements=new List<(LinkedListNode<GatewayEventRecord> Node,GatewayEventRecord Record)>();
-                var data=new MessageCreatedData(conversation,tombstone);
-                for(var node=_replay.First;node is not null;node=node.Next)
-                {
-                    var record=node.Value;
-                    if(record.Type!="message.created"||record.Data is not System.Text.Json.JsonElement value
-                        ||!value.TryGetProperty("conversationId",out var cid)||!cid.TryGetGuid(out var c)||c!=conversation
-                        ||!value.TryGetProperty("message",out var m)||!m.TryGetProperty("id",out var mid)||!mid.TryGetGuid(out var id)||id!=message)continue;
-                    var envelope=GatewayJson.Seal(GatewayEnvelope.Replayable(record.Type,record.EventId,data),_maxFrameBytes);
-                    replacements.Add((node,new GatewayEventRecord(record.Sequence,record.EventId,record.Type,envelope,record.Audience.Intersect(audience))));
-                }
-                // Prepare all serialization before the transaction commits.
-                var deleted=System.Text.Json.JsonSerializer.SerializeToElement(data,GatewayJson.SerializerOptions);
-                GatewayJson.Seal(GatewayEnvelope.Replayable("message.deleted",$"{_instanceId}:{checked(_sequence+1)}",deleted),_maxFrameBytes);
-                commit();
                 foreach(var item in replacements)item.Node.Value=item.Record;
             }
-            Publish("message.deleted",System.Text.Json.JsonSerializer.SerializeToElement(new MessageCreatedData(conversation,tombstone),GatewayJson.SerializerOptions),audience);
+            Publish("message.deleted",System.Text.Json.JsonSerializer.SerializeToElement(data,GatewayJson.SerializerOptions),audience);
         }
     }
 
