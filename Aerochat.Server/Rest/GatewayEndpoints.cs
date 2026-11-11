@@ -24,7 +24,14 @@ public static class GatewayEndpoints
         TimeProvider clock,
         CancellationToken cancellationToken)
     {
-        string? token = GetExactQueryValue(httpContext.Request.QueryString.Value, "token");
+        // The session token travels only in the Authorization header. A token in the query string
+        // is refused before it is validated, because URLs end up in logs and proxies.
+        if (httpContext.Request.Query.ContainsKey("token"))
+        {
+            return ConversationAuth.InvalidRequest();
+        }
+
+        string? token = GetBearerToken(httpContext);
         SessionClaims? claims = string.IsNullOrEmpty(token) ? null : sessions.Validate(token);
         ExternalUser? user = claims is null
             ? null
@@ -252,6 +259,17 @@ public static class GatewayEndpoints
         GatewayAbortReason.Unexpected => WebSocketCloseStatus.InternalServerError,
         _ => WebSocketCloseStatus.NormalClosure
     };
+
+    private static string? GetBearerToken(HttpContext httpContext)
+    {
+        string authorization = httpContext.Request.Headers.Authorization.ToString();
+        if (!authorization.StartsWith("Bearer ", StringComparison.OrdinalIgnoreCase))
+        {
+            return null;
+        }
+
+        return authorization["Bearer ".Length..].Trim();
+    }
 
     private static string? GetExactQueryValue(string? queryString, string expectedKey)
     {

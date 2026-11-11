@@ -191,10 +191,9 @@ public sealed class GatewayClient : IChatTransport
         }
     }
 
-    public static Uri BuildGatewayUri(Uri server, string token, string? lastEventId)
+    public static Uri BuildGatewayUri(Uri server, string? lastEventId)
     {
         ArgumentNullException.ThrowIfNull(server);
-        ArgumentException.ThrowIfNullOrWhiteSpace(token);
         bool isTls = string.Equals(server.Scheme, Uri.UriSchemeHttps, StringComparison.OrdinalIgnoreCase)
             || string.Equals(server.Scheme, "wss", StringComparison.OrdinalIgnoreCase);
         bool isCleartext = string.Equals(server.Scheme, Uri.UriSchemeHttp, StringComparison.OrdinalIgnoreCase)
@@ -216,10 +215,11 @@ public sealed class GatewayClient : IChatTransport
             Path = server.AbsolutePath.TrimEnd('/') + "/ws"
         };
 
-        string query = $"token={Uri.EscapeDataString(token)}";
-        if (!string.IsNullOrEmpty(lastEventId))
-            query += $"&lastEventId={Uri.EscapeDataString(lastEventId)}";
-        builder.Query = query;
+        // The session token never goes into the URI (URLs end up in logs and proxies). It travels in
+        // the Authorization header of the upgrade request. Any query on the server URI is dropped.
+        builder.Query = string.IsNullOrEmpty(lastEventId)
+            ? string.Empty
+            : $"lastEventId={Uri.EscapeDataString(lastEventId)}";
         return builder.Uri;
     }
 
@@ -250,7 +250,8 @@ public sealed class GatewayClient : IChatTransport
             }
 
             await socket.ConnectAsync(
-                BuildGatewayUri(server, token, null),
+                BuildGatewayUri(server, null),
+                token,
                 operationCancellation.Token).ConfigureAwait(false);
 
             lock (_gate)
@@ -342,8 +343,8 @@ public sealed class GatewayClient : IChatTransport
                             return;
                         }
 
-                        Uri reconnectUri = BuildGatewayUri(server, token, LastEventId);
-                        await next.ConnectAsync(reconnectUri, cancellationToken).ConfigureAwait(false);
+                        Uri reconnectUri = BuildGatewayUri(server, LastEventId);
+                        await next.ConnectAsync(reconnectUri, token, cancellationToken).ConfigureAwait(false);
                         bool accepted;
                         lock (_gate)
                         {

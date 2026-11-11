@@ -203,12 +203,30 @@ public sealed class GatewayTransportTests
     {
         Uri uri = GatewayClient.BuildGatewayUri(
             new Uri("https://server.example/"),
-            "token with/slash",
             "instance:7/next");
 
         Assert.That(
             uri.AbsoluteUri,
-            Is.EqualTo("wss://server.example/ws?token=token%20with%2Fslash&lastEventId=instance%3A7%2Fnext"));
+            Is.EqualTo("wss://server.example/ws?lastEventId=instance%3A7%2Fnext"));
+    }
+
+    [TestCase("https://server.example/", null)]
+    [TestCase("https://server.example/?token=leak", null)]
+    [TestCase("https://server.example/?token=leak&x=1", "gateway:1")]
+    public void Gateway_uri_never_carries_a_token_query(string serverUrl, string? lastEventId)
+    {
+        Uri uri = GatewayClient.BuildGatewayUri(new Uri(serverUrl), lastEventId);
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(uri.Query, Does.Not.Contain("token"));
+            Assert.That(uri.Query, Does.Not.Contain("leak"));
+            Assert.That(
+                uri.AbsoluteUri,
+                Is.EqualTo(lastEventId is null
+                    ? "wss://server.example/ws"
+                    : "wss://server.example/ws?lastEventId=gateway%3A1"));
+        });
     }
 
     [TestCase("http://server.example/")]
@@ -226,7 +244,7 @@ public sealed class GatewayTransportTests
         Assert.Multiple(() =>
         {
             Assert.That(
-                () => GatewayClient.BuildGatewayUri(server, "token", null),
+                () => GatewayClient.BuildGatewayUri(server, null),
                 Throws.TypeOf<ArgumentException>());
             Assert.That(
                 async () => await client.ConnectAsync(server, "token"),
@@ -234,17 +252,86 @@ public sealed class GatewayTransportTests
         });
     }
 
-    [TestCase("https://server.example/", "wss://server.example/ws?token=token")]
-    [TestCase("wss://server.example/", "wss://server.example/ws?token=token")]
-    [TestCase("http://127.0.0.1:5080/", "ws://127.0.0.1:5080/ws?token=token")]
-    [TestCase("ws://127.0.0.1:5080/", "ws://127.0.0.1:5080/ws?token=token")]
-    [TestCase("http://[::1]:5080/", "ws://[::1]:5080/ws?token=token")]
-    [TestCase("ws://[::1]:5080/", "ws://[::1]:5080/ws?token=token")]
+    [TestCase("https://server.example/", "wss://server.example/ws")]
+    [TestCase("wss://server.example/", "wss://server.example/ws")]
+    [TestCase("http://127.0.0.1:5080/", "ws://127.0.0.1:5080/ws")]
+    [TestCase("ws://127.0.0.1:5080/", "ws://127.0.0.1:5080/ws")]
+    [TestCase("http://[::1]:5080/", "ws://[::1]:5080/ws")]
+    [TestCase("ws://[::1]:5080/", "ws://[::1]:5080/ws")]
     public void Gateway_uri_allows_tls_and_exact_numeric_loopback_http_or_ws(string serverUrl, string expected)
     {
-        Uri uri = GatewayClient.BuildGatewayUri(new Uri(serverUrl), "token", null);
+        Uri uri = GatewayClient.BuildGatewayUri(new Uri(serverUrl), null);
 
         Assert.That(uri.AbsoluteUri, Is.EqualTo(expected));
+    }
+
+    [Test]
+    public async Task Gateway_client_passes_the_token_to_the_socket_and_never_puts_it_in_the_uri()
+    {
+        const string frame =
+            "{\"t\":\"message.created\",\"eventId\":\"gateway:1\",\"d\":{\"conversationId\":\"2001\",\"message\":{\"id\":\"message-1\",\"authorId\":\"1001\",\"body\":\"hello\",\"createdAt\":\"2026-08-25T12:00:00+00:00\"}}}";
+        var initial = new RecordingGatewaySocket(textFrame: frame, endsConnection: true);
+        var reconnected = new RecordingGatewaySocket();
+        int factoryCalls = 0;
+        await using var client = new GatewayClient(
+            () => Interlocked.Increment(ref factoryCalls) == 1 ? initial : reconnected,
+            jitter: null,
+            delay: (_, _) => Task.CompletedTask);
+
+        await client.ConnectAsync(new Uri("wss://gateway.example"), "secret-token");
+        await reconnected.Connected.Task.WaitAsync(TimeSpan.FromSeconds(5));
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(initial.BearerToken, Is.EqualTo("secret-token"));
+            Assert.That(initial.ConnectedUri!.AbsoluteUri, Is.EqualTo("wss://gateway.example/ws"));
+            Assert.That(reconnected.BearerToken, Is.EqualTo("secret-token"));
+            Assert.That(
+                reconnected.ConnectedUri!.AbsoluteUri,
+                Is.EqualTo("wss://gateway.example/ws?lastEventId=gateway%3A1"));
+        });
+    }
+
+    [Test]
+    public async Task Client_web_socket_adapter_sends_the_token_as_a_bearer_header_on_the_upgrade_request()
+    {
+        using var listener = new System.Net.Sockets.TcpListener(System.Net.IPAddress.Loopback, 0);
+        listener.Start();
+        int port = ((System.Net.IPEndPoint)listener.LocalEndpoint).Port;
+        using var cancellation = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+        Task<string> serverSide = Task.Run(async () =>
+        {
+            using System.Net.Sockets.TcpClient accepted = await listener.AcceptTcpClientAsync(cancellation.Token);
+            using System.Net.Sockets.NetworkStream stream = accepted.GetStream();
+            var received = new StringBuilder();
+            var buffer = new byte[4096];
+            while (!received.ToString().Contains("\r\n\r\n", StringComparison.Ordinal))
+            {
+                int read = await stream.ReadAsync(buffer, cancellation.Token);
+                if (read == 0)
+                    break;
+                received.Append(Encoding.ASCII.GetString(buffer, 0, read));
+            }
+
+            // A definite refusal, so the client fails at once instead of waiting for a handshake.
+            byte[] refusal = Encoding.ASCII.GetBytes(
+                "HTTP/1.1 400 Bad Request\r\nContent-Length: 0\r\nConnection: close\r\n\r\n");
+            await stream.WriteAsync(refusal, cancellation.Token);
+            return received.ToString();
+        }, cancellation.Token);
+        using var adapter = new ClientWebSocketAdapter(new ClientWebSocket());
+        Uri uri = GatewayClient.BuildGatewayUri(new Uri($"http://127.0.0.1:{port}/"), null);
+
+        Assert.ThrowsAsync<WebSocketException>(
+            async () => await adapter.ConnectAsync(uri, "secret-token", cancellation.Token));
+        string request = await serverSide;
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(request, Does.StartWith("GET /ws HTTP/1.1"));
+            Assert.That(request, Does.Contain("Authorization: Bearer secret-token"));
+            Assert.That(request, Does.Not.Contain("token="));
+        });
     }
 
     [Test]
@@ -666,7 +753,7 @@ public sealed class GatewayTransportTests
             new(TaskCreationOptions.RunContinuationsAsynchronously);
         public WebSocketState State => WebSocketState.Open;
 
-        public Task ConnectAsync(Uri uri, CancellationToken cancellationToken) => Task.CompletedTask;
+        public Task ConnectAsync(Uri uri, string bearerToken, CancellationToken cancellationToken) => Task.CompletedTask;
 
         public async Task<WebSocketReceiveResult> ReceiveAsync(
             ArraySegment<byte> buffer,
@@ -727,7 +814,7 @@ public sealed class GatewayTransportTests
         public int DisposeCount { get; private set; }
         public WebSocketState State => WebSocketState.Open;
 
-        public async Task ConnectAsync(Uri uri, CancellationToken cancellationToken)
+        public async Task ConnectAsync(Uri uri, string bearerToken, CancellationToken cancellationToken)
         {
             ConnectStarted.TrySetResult();
             if (_blockConnectUntilAbort)
@@ -826,7 +913,7 @@ public sealed class GatewayTransportTests
 
         public WebSocketState State => WebSocketState.Open;
 
-        public Task ConnectAsync(Uri uri, CancellationToken cancellationToken) =>
+        public Task ConnectAsync(Uri uri, string bearerToken, CancellationToken cancellationToken) =>
             Task.FromException(_failure);
 
         public Task<WebSocketReceiveResult> ReceiveAsync(
@@ -855,7 +942,7 @@ public sealed class GatewayTransportTests
         public int DisposeCount { get; private set; }
         public WebSocketState State => WebSocketState.Open;
 
-        public Task ConnectAsync(Uri uri, CancellationToken cancellationToken) =>
+        public Task ConnectAsync(Uri uri, string bearerToken, CancellationToken cancellationToken) =>
             Task.FromException(_failure);
 
         public Task<WebSocketReceiveResult> ReceiveAsync(
@@ -929,7 +1016,7 @@ public sealed class GatewayTransportTests
         public int DisposeCount { get; private set; }
         public WebSocketState State => WebSocketState.Open;
 
-        public Task ConnectAsync(Uri uri, CancellationToken cancellationToken) => Task.CompletedTask;
+        public Task ConnectAsync(Uri uri, string bearerToken, CancellationToken cancellationToken) => Task.CompletedTask;
 
         public Task<WebSocketReceiveResult> ReceiveAsync(
             ArraySegment<byte> buffer,
@@ -943,6 +1030,57 @@ public sealed class GatewayTransportTests
         public void Dispose() => DisposeCount++;
     }
 
+    private sealed class RecordingGatewaySocket : IGatewaySocket
+    {
+        private readonly string? _textFrame;
+        private readonly bool _endsConnection;
+        private readonly TaskCompletionSource _abortSignal =
+            new(TaskCreationOptions.RunContinuationsAsynchronously);
+        private int _receiveCount;
+
+        public RecordingGatewaySocket(string? textFrame = null, bool endsConnection = false)
+        {
+            _textFrame = textFrame;
+            _endsConnection = endsConnection;
+        }
+
+        public TaskCompletionSource Connected { get; } =
+            new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        public Uri? ConnectedUri { get; private set; }
+        public string? BearerToken { get; private set; }
+        public WebSocketState State => WebSocketState.Open;
+
+        public Task ConnectAsync(Uri uri, string bearerToken, CancellationToken cancellationToken)
+        {
+            ConnectedUri = uri;
+            BearerToken = bearerToken;
+            Connected.TrySetResult();
+            return Task.CompletedTask;
+        }
+
+        public async Task<WebSocketReceiveResult> ReceiveAsync(
+            ArraySegment<byte> buffer,
+            CancellationToken cancellationToken)
+        {
+            int receiveIndex = Interlocked.Increment(ref _receiveCount) - 1;
+            if (_textFrame is not null && receiveIndex == 0)
+            {
+                byte[] payload = Encoding.UTF8.GetBytes(_textFrame);
+                payload.AsSpan().CopyTo(buffer.AsSpan());
+                return new WebSocketReceiveResult(payload.Length, WebSocketMessageType.Text, true);
+            }
+
+            if (!_endsConnection)
+                await _abortSignal.Task.ConfigureAwait(false);
+
+            return new WebSocketReceiveResult(0, WebSocketMessageType.Close, true);
+        }
+
+        public void Abort() => _abortSignal.TrySetResult();
+        public void Dispose() => _abortSignal.TrySetResult();
+    }
+
     private sealed class FakeGatewaySocket : IGatewaySocket
     {
         public TaskCompletionSource ConnectStarted { get; } =
@@ -953,7 +1091,7 @@ public sealed class GatewayTransportTests
         public int ReceiveCount { get; private set; }
         public WebSocketState State => WebSocketState.Open;
 
-        public async Task ConnectAsync(Uri uri, CancellationToken cancellationToken)
+        public async Task ConnectAsync(Uri uri, string bearerToken, CancellationToken cancellationToken)
         {
             ConnectStarted.TrySetResult();
             await Task.Delay(Timeout.InfiniteTimeSpan, cancellationToken);
