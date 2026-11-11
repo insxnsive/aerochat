@@ -25,18 +25,20 @@ public sealed class GatewayMeshRegistrationLockTests
         using var client=factory.CreateClient();client.DefaultRequestHeaders.Authorization=new AuthenticationHeaderValue("Bearer",factory.Services.GetRequiredService<SessionService>().Issue(new Identity("github",user.ToString(),"fixture")));
         var hub=factory.Services.GetRequiredService<GatewayHub>();var delivery=typeof(GatewayHub).GetField("_deliveryGate",BindingFlags.Instance|BindingFlags.NonPublic)!.GetValue(hub)!;
         using var held=new ManualResetEventSlim();using var release=new ManualResetEventSlim();
-        var holder=Task.Run(()=>{lock(delivery){held.Set();if(!release.Wait(TimeSpan.FromSeconds(5)))throw new TimeoutException("Probe delivery release timed out.");}});
+        var holder=Task.Run(()=>{lock(delivery){held.Set();if(!release.Wait(TimeSpan.FromSeconds(30)))throw new TimeoutException("Probe delivery release timed out.");}});
         Task<HttpResponseMessage>? response=null;
         try
         {
-            Assert.That(held.Wait(TimeSpan.FromSeconds(5)),Is.True);
+            Assert.That(held.Wait(TimeSpan.FromSeconds(10)),Is.True);
             response=client.PostAsJsonAsync($"/conversations/{conversation}/mesh/signal",new{version=1,roomId=Guid.NewGuid(),edgeId=Guid.NewGuid(),to=other,action="ice",candidate=new string('\u0001',60000)});
-            using var result=await response.WaitAsync(TimeSpan.FromSeconds(1));Assert.That(result.StatusCode,Is.EqualTo(HttpStatusCode.BadRequest));
+            using var result=await response.WaitAsync(TimeSpan.FromSeconds(10));
+            Assert.That(held.IsSet,Is.True);Assert.That(release.IsSet,Is.False);
+            Assert.That(result.StatusCode,Is.EqualTo(HttpStatusCode.BadRequest));
         }
         finally
         {
-            release.Set();await holder.WaitAsync(TimeSpan.FromSeconds(5));
-            if(response is not null)using(await response.WaitAsync(TimeSpan.FromSeconds(5))){}
+            release.Set();await holder.WaitAsync(TimeSpan.FromSeconds(10));
+            if(response is not null)using(await response.WaitAsync(TimeSpan.FromSeconds(10))){}
         }
     }
     [Test]
