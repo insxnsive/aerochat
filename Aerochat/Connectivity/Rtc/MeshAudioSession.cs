@@ -32,9 +32,41 @@ internal sealed class MeshAudioSession : IAsyncDisposable
     private bool _closed;
     private int _muted;
     private Task? _dispose;
+    private readonly TimeSpan _deviceTimeout;
     internal MeshAudioSession():this(()=>new WindowsMeshCapture(),()=>new WindowsMeshPlayback()){}
-    internal MeshAudioSession(Func<IMeshCapture> capture,Func<IMeshPlayback> playback)
-    { _captureFactory=capture;_playbackFactory=playback; }
+    internal MeshAudioSession(Func<IMeshCapture> capture,Func<IMeshPlayback> playback,bool initialMuted=true,TimeSpan? deviceTimeout=null)
+    {
+        _captureFactory=capture;_playbackFactory=playback;_muted=initialMuted?1:0;
+        _deviceTimeout=deviceTimeout??TimeSpan.FromSeconds(2);
+        if(_deviceTimeout<=TimeSpan.Zero||_deviceTimeout>TimeSpan.FromSeconds(5))throw new ArgumentOutOfRangeException(nameof(deviceTimeout));
+    }
+    internal void SetMuted(bool muted)=>Interlocked.Exchange(ref _muted,muted?1:0);
+    private async Task DeviceAsync(Func<Task> operation,Func<Task>? lateCleanup=null)
+    {
+        Task pending=Task.Run(operation);
+        try {await pending.WaitAsync(_deviceTimeout).ConfigureAwait(false);}
+        catch(TimeoutException)
+        {
+            SetMuted(true);lock(_gate)_closed=true;
+            _=ObserveLateAsync(pending,lateCleanup,_deviceTimeout);
+            throw new TimeoutException("Mesh audio device operation timed out.");
+        }
+    }
+    private static async Task ObserveLateAsync(Task pending,Func<Task>? cleanup,TimeSpan timeout)
+    {
+        try {await pending.ConfigureAwait(false);}catch { }
+        if(cleanup is null)return;
+        Task close=Task.Run(cleanup);
+        try {await close.WaitAsync(timeout).ConfigureAwait(false);}
+        catch { _=close.ContinueWith(t=>{_ = t.Exception;},CancellationToken.None,TaskContinuationOptions.OnlyOnFaulted,TaskScheduler.Default); }
+    }
+    private async Task CloseCaptureIfIdleAsync()
+    {
+        lock(_gate)if(_peers.Values.Any(e=>e.Running&&!e.Stopped))return;
+        var capture=_capture;if(capture is null)return;
+        _capture=null;_captureStarted=false;capture.Sample-=OnSample;
+        await DeviceAsync(capture.CloseAsync).ConfigureAwait(false);
+    }
     internal async Task<RtcPeerEngine> AddPeerAsync(CancellationToken token=default,TurnCredentialProvider? turn=null)
     {
         token.ThrowIfCancellationRequested();RtcPeerEngine peer;
@@ -69,8 +101,14 @@ internal sealed class MeshAudioSession : IAsyncDisposable
             if(endpoint.Stopped)throw new ObjectDisposedException(nameof(Endpoint));
             if(endpoint.Running)return;
             if(_capture is null){_capture=_captureFactory();_capture.Sample+=OnSample;}
-            if(!_captureStarted){await _capture.StartAsync().ConfigureAwait(false);_captureStarted=true;}
-            await endpoint.Playback.StartAsync().ConfigureAwait(false);endpoint.Running=true;
+            var capture=_capture;
+            if(!_captureStarted){await DeviceAsync(capture.StartAsync,capture.CloseAsync).ConfigureAwait(false);_captureStarted=true;}
+            await DeviceAsync(endpoint.Playback.StartAsync,endpoint.Playback.CloseAsync).ConfigureAwait(false);endpoint.Running=true;
+        }
+        catch
+        {
+            try {await CloseCaptureIfIdleAsync().ConfigureAwait(false);}catch { }
+            throw;
         }
         finally { _serial.Release(); }
     }
@@ -80,7 +118,8 @@ internal sealed class MeshAudioSession : IAsyncDisposable
         try
         {
             if(endpoint.Stopped)return;endpoint.Stopped=true;endpoint.Running=false;
-            await endpoint.Playback.CloseAsync().ConfigureAwait(false);
+            try {await DeviceAsync(endpoint.Playback.CloseAsync).ConfigureAwait(false);}
+            finally {await CloseCaptureIfIdleAsync().ConfigureAwait(false);}
         }
         finally { _serial.Release(); }
     }
@@ -113,7 +152,7 @@ internal sealed class MeshAudioSession : IAsyncDisposable
             if(_capture is not null)
             {
                 _capture.Sample-=OnSample;
-                try { await _capture.CloseAsync().ConfigureAwait(false); }catch(Exception error){failure??=error;}
+                try { await DeviceAsync(_capture.CloseAsync).ConfigureAwait(false); }catch(Exception error){failure??=error;}
                 _capture=null;
             }
         }
@@ -131,11 +170,11 @@ internal sealed class MeshAudioSession : IAsyncDisposable
             if(!string.Equals(format.FormatName,Format.FormatName,StringComparison.OrdinalIgnoreCase)||format.ClockRate!=Format.ClockRate||format.ChannelCount!=Format.ChannelCount)
                 throw new InvalidOperationException("Mesh audio requires PCMU.");
         }
-        public void Receive(RtcAudioPacket packet){if(Running&&!Stopped)playback.Receive(packet);}
+        public void Receive(RtcAudioPacket packet){if(Running&&!Stopped)try{playback.Receive(packet);}catch{ }}
         public Task StartAsync()=>owner.StartAsync(this);
         public Task StopAsync()=>owner.StopAsync(this);
-        public void Mute()=>Interlocked.Exchange(ref owner._muted,1);
-        public void Unmute()=>Interlocked.Exchange(ref owner._muted,0);
+        public void Mute()=>owner.SetMuted(true);
+        public void Unmute()=>owner.SetMuted(false);
     }
 }
 
