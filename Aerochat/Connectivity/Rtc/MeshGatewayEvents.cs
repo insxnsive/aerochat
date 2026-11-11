@@ -32,6 +32,17 @@ internal interface IMeshEventSource
 {
     event EventHandler<MeshSignalEvent>? MeshSignalReceived;
     event EventHandler<MeshRosterEvent>? MeshRosterReceived;
+    event EventHandler<MeshResyncEventArgs>? MeshResyncRequired;
+}
+
+internal enum MeshResyncReason { RosterRejected, Reconnected }
+
+// Raised when mesh state may have been missed: a mesh.roster frame failed validation (replay will not
+// resend it), or the gateway reconnected (live mesh.signal frames are never replayed). The coordinator
+// answers with a fresh ReadAsync. Like the other mesh events, handlers must only enqueue.
+internal sealed class MeshResyncEventArgs(MeshResyncReason reason):EventArgs
+{
+    internal MeshResyncReason Reason{get;}=reason;
 }
 
 internal static class MeshGatewayProtocol

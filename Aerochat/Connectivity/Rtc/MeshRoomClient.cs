@@ -11,6 +11,8 @@ namespace Aerochat.Connectivity.Rtc;
 
 internal sealed record MeshPeerEdge(Guid Id,Guid Offerer,Guid Answerer);
 internal sealed record MeshRoomSnapshot(Guid? RoomId,IReadOnlyList<Guid> Participants,IReadOnlyList<MeshPeerEdge> Edges);
+// The capability read: the caller's own server id (B-T16-MESH-SELF) and the current room.
+internal sealed record MeshCapability(Guid Self,MeshRoomSnapshot Room);
 internal sealed record MeshOutgoingSignal(Guid RoomId,Guid EdgeId,Guid To,string Action,string? Sdp=null,string? Candidate=null)
 { public override string ToString()=>"MeshOutgoingSignal { [redacted] }"; }
 internal sealed class MeshRequestException(HttpStatusCode status,string? code,TimeSpan? retryAfter)
@@ -21,7 +23,7 @@ internal sealed class MeshRequestException(HttpStatusCode status,string? code,Ti
 }
 internal interface IMeshRoomClient
 {
-    Task<MeshRoomSnapshot> ReadAsync(Guid conversation,CancellationToken token=default);
+    Task<MeshCapability> ReadAsync(Guid conversation,CancellationToken token=default);
     Task<MeshRoomSnapshot> JoinAsync(Guid conversation,Guid? room,CancellationToken token=default);
     Task<MeshRoomSnapshot> LeaveAsync(Guid conversation,Guid room,CancellationToken token=default);
     Task SignalAsync(Guid conversation,MeshOutgoingSignal signal,CancellationToken token=default);
@@ -41,12 +43,13 @@ internal sealed class MeshRoomClient:IMeshRoomClient
         _server=new Uri(server.GetLeftPart(UriPartial.Path).TrimEnd('/')+"/");_clock=clock??TimeProvider.System;_timeout=timeout??TimeSpan.FromSeconds(10);
         if(_timeout<=TimeSpan.Zero||_timeout>TimeSpan.FromSeconds(10))throw new ArgumentOutOfRangeException(nameof(timeout));
     }
-    public async Task<MeshRoomSnapshot> ReadAsync(Guid conversation,CancellationToken token=default)
+    public async Task<MeshCapability> ReadAsync(Guid conversation,CancellationToken token=default)
     {
         var json=await SendAsync(conversation,null,null,true,token).ConfigureAwait(false);
         if(!MeshRoomWire.IsObject(json)||!json.TryGetProperty("version",out var version)||version.ValueKind!=JsonValueKind.Number||!version.TryGetInt32(out int v)||v!=1
             ||!json.TryGetProperty("maxParticipants",out var max)||max.ValueKind!=JsonValueKind.Number||!max.TryGetInt32(out int m)||m!=4||!json.TryGetProperty("room",out var room))throw MeshRoomWire.Invalid();
-        return MeshRoomWire.Parse(room);
+        if(!json.TryGetProperty("self",out var self))throw MeshRoomWire.Invalid();
+        return new(MeshRoomWire.Id(self),MeshRoomWire.Parse(room));
     }
     public async Task<MeshRoomSnapshot> JoinAsync(Guid conversation,Guid? room,CancellationToken token=default)
     {
@@ -100,9 +103,11 @@ internal sealed class MeshRoomClient:IMeshRoomClient
                         var error=await ReadJsonAsync(response,4096,deadline.Token).ConfigureAwait(false);
                         if(MeshRoomWire.IsObject(error)&&error.TryGetProperty("error",out var value)&&value.ValueKind==JsonValueKind.String&&Codes.Contains(value.GetString()!))code=value.GetString();
                     }
-                    catch(Exception failure)when(failure is InvalidDataException or JsonException)
+                    catch(Exception failure)when(failure is InvalidDataException or JsonException or TimeoutException
+                        ||(failure is OperationCanceledException&&!token.IsCancellationRequested))
                     {
-                        // An oversized or malformed error body still reports the status and Retry-After.
+                        // An oversized, malformed or slow error body still reports the status and Retry-After.
+                        // Only the caller's own cancellation stays cancellation.
                     }
                 }
                 if(response.StatusCode==HttpStatusCode.TooManyRequests&&response.Headers.RetryAfter is { } header)
@@ -131,7 +136,7 @@ internal static class MeshRoomWire
     internal static InvalidDataException Invalid()=>new("Invalid mesh response.");
     internal static void RequireId(Guid id){if(id==Guid.Empty)throw new ArgumentException("A nonempty mesh id is required.");}
     internal static bool IsObject(JsonElement value)=>value.ValueKind==JsonValueKind.Object&&value.EnumerateObject().Select(p=>p.Name).Distinct(StringComparer.Ordinal).Count()==value.EnumerateObject().Count();
-    private static Guid Id(JsonElement value)
+    internal static Guid Id(JsonElement value)
     {
         if(value.ValueKind!=JsonValueKind.String||!(Guid.TryParseExact(value.GetString(),"D",out var id)||Guid.TryParseExact(value.GetString(),"N",out id))||id==Guid.Empty)throw Invalid();return id;
     }
