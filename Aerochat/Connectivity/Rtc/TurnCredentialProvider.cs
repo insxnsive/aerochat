@@ -6,7 +6,10 @@ using Aerochat.Connectivity.Auth;
 
 namespace Aerochat.Connectivity.Rtc;
 
-internal sealed record TurnIceServer(string[] Urls, string Username, string Credential);
+internal sealed record TurnIceServer(string[] Urls, string Username, string Credential)
+{
+    public override string ToString() => "TurnIceServer { [redacted] }";
+}
 internal sealed record TurnResponse(TurnIceServer[] IceServers, int Ttl);
 
 // One instance per app authentication lifetime. No credential is persisted or logged.
@@ -25,6 +28,7 @@ internal sealed class TurnCredentialProvider : IDisposable
     private int _leases, _generation;
     private bool _disposed;
     private TimeSpan _retry;
+    private int _refreshFailures;
     internal Task RefreshTask { get; private set; } = Task.CompletedTask;
 
     internal TurnCredentialProvider(HttpClient http, Uri server,
@@ -56,8 +60,12 @@ internal sealed class TurnCredentialProvider : IDisposable
             lock (_gate)
             {
                 ObjectDisposedException.ThrowIf(_disposed, this);
+                if (_identity != token)
+                {
+                    _cached = null; _identity = token; _generation++;
+                    _retry = TimeSpan.Zero; _refreshFailures = 0;
+                }
                 if (string.IsNullOrWhiteSpace(token)) { _cached = null; throw Failure(); }
-                if (_identity != token) { _cached = null; _identity = token; _generation++; }
                 if (!refresh && _cached is not null &&
                     (_cached.Ttl == 0 || _clock.GetElapsedTime(_started).TotalSeconds < _cached.Ttl))
                     return Copy(_cached);
@@ -77,7 +85,7 @@ internal sealed class TurnCredentialProvider : IDisposable
                 {
                     TimeSpan retry = response.Headers.RetryAfter?.Delta ??
                         (response.Headers.RetryAfter?.Date - _clock.GetUtcNow()) ?? TimeSpan.FromSeconds(5);
-                    lock (_gate) { _retryStarted = start; _retry = retry < TimeSpan.FromSeconds(1) ? TimeSpan.FromSeconds(1) : retry; }
+                    lock (_gate) { _retryStarted = _clock.GetTimestamp(); _retry = TimeSpan.FromSeconds(Math.Clamp(retry.TotalSeconds, 1, 300)); }
                 }
                 throw Failure();
             }
@@ -96,7 +104,7 @@ internal sealed class TurnCredentialProvider : IDisposable
             {
                 if (_disposed || _leases == 0 || generation != _generation) throw Failure();
                 if (value.Ttl > 0 && _clock.GetElapsedTime(start).TotalSeconds >= value.Ttl) throw Failure();
-                _cached = Copy(value); _started = start; _retry = TimeSpan.Zero;
+                _cached = Copy(value); _started = start; _retry = TimeSpan.Zero; _refreshFailures = 0;
                 Schedule(value.Ttl == 0 ? Timeout.InfiniteTimeSpan :
                     TimeSpan.FromSeconds(Math.Max(1, value.Ttl * .8 - _clock.GetElapsedTime(start).TotalSeconds)));
                 return Copy(value);
@@ -112,7 +120,14 @@ internal sealed class TurnCredentialProvider : IDisposable
         {
             lock (_gate)
                 if (!_disposed && _leases > 0)
-                    Schedule(_retry > TimeSpan.Zero ? _retry - _clock.GetElapsedTime(_retryStarted) : TimeSpan.FromSeconds(5));
+                {
+                    _refreshFailures = Math.Min(_refreshFailures + 1, 7);
+                    double backoff = Math.Min(300, 5 * Math.Pow(2, _refreshFailures - 1));
+                    double remaining = Math.Max(0, (_retry - _clock.GetElapsedTime(_retryStarted)).TotalSeconds);
+                    _retry = TimeSpan.FromSeconds(Math.Clamp(Math.Max(backoff, remaining), 1, 300));
+                    _retryStarted = _clock.GetTimestamp();
+                    Schedule(_retry);
+                }
         }
     }
     private void Schedule(TimeSpan delay) => _timer.Change(
@@ -128,14 +143,30 @@ internal sealed class TurnCredentialProvider : IDisposable
         foreach (var s in value.IceServers)
             if (s is null || s.Urls is null || s.Urls.Length is < 1 or > 16 ||
                 string.IsNullOrWhiteSpace(s.Username) || string.IsNullOrWhiteSpace(s.Credential) ||
-                s.Urls.Any(u => string.IsNullOrWhiteSpace(u) || u.Any(char.IsControl) ||
-                    !(u.StartsWith("turn:", StringComparison.OrdinalIgnoreCase) ||
-                      u.StartsWith("turns:", StringComparison.OrdinalIgnoreCase)))) throw Failure();
+                s.Urls.Any(u => string.IsNullOrWhiteSpace(u) || u.Any(char.IsControl) || !IsTurnUrl(u))) throw Failure();
+    }
+    private static bool IsTurnUrl(string value)
+    {
+        if (value.Length > 2048 || !Uri.TryCreate(value, UriKind.Absolute, out Uri? uri)
+            || (uri.Scheme != "turn" && uri.Scheme != "turns")) return false;
+        System.Text.RegularExpressions.Match match = System.Text.RegularExpressions.Regex.Match(value,
+            @"\Aturns?:(?<host>\[[0-9a-f:.]+\]|[a-z0-9](?:[a-z0-9.-]*[a-z0-9])?)(?::(?<port>[0-9]{1,5}))?(?:\?transport=(?:udp|tcp))?\z",
+            System.Text.RegularExpressions.RegexOptions.IgnoreCase | System.Text.RegularExpressions.RegexOptions.CultureInvariant, TimeSpan.FromSeconds(1));
+        if (!match.Success) return false;
+        string host = match.Groups["host"].Value;
+        if (host.StartsWith('['))
+        {
+            if (!System.Net.IPAddress.TryParse(host[1..^1], out System.Net.IPAddress? address)
+                || address.AddressFamily != System.Net.Sockets.AddressFamily.InterNetworkV6) return false;
+        }
+        else if (Uri.CheckHostName(host) == UriHostNameType.Unknown) return false;
+        return !match.Groups["port"].Success
+            || (int.TryParse(match.Groups["port"].Value, out int port) && port is >= 1 and <= 65535);
     }
     private void Release()
     {
         lock (_gate)
-            if (--_leases == 0) { _cached = null; _identity = null; _generation++; if (!_disposed) Schedule(Timeout.InfiniteTimeSpan); }
+            if (--_leases == 0) { _cached = null; _identity = null; _generation++; _retry = TimeSpan.Zero; _refreshFailures = 0; if (!_disposed) Schedule(Timeout.InfiniteTimeSpan); }
     }
     public void Dispose()
     {
