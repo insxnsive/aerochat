@@ -1188,6 +1188,51 @@ public sealed class CallClientTests
     }
 
     [Test]
+    public async Task An_ice_candidate_of_a_peer_that_is_no_longer_current_is_ignored()
+    {
+        await using var engine = new RtcPeerEngine(useAudioDevices: false);
+        await engine.InitializeAsync();
+        await engine.Hangup();
+        await engine.InitializeAsync();
+        var candidates = new List<RtcIceCandidate>();
+        engine.IceCandidateReady += (_, candidate) => candidates.Add(candidate);
+        var stale = new SIPSorcery.Net.RTCPeerConnection(null);
+
+        try
+        {
+            engine.OnPeerIceCandidate(stale, HostCandidate());
+        }
+        finally
+        {
+            stale.Close("test");
+        }
+
+        Assert.That(candidates, Is.Empty, "a candidate of a closed peer reached the next call");
+    }
+
+    [Test]
+    public async Task An_ice_candidate_of_the_current_peer_is_delivered()
+    {
+        await using var engine = new RtcPeerEngine(useAudioDevices: false);
+        await engine.InitializeAsync();
+        var candidates = new List<RtcIceCandidate>();
+        engine.IceCandidateReady += (_, candidate) => candidates.Add(candidate);
+
+        engine.OnPeerIceCandidate(engine.CurrentPeer!, HostCandidate());
+
+        Assert.That(candidates, Has.Count.EqualTo(1));
+        Assert.That(candidates[0].Candidate, Is.Not.Empty);
+    }
+
+    private static SIPSorcery.Net.RTCIceCandidate HostCandidate() =>
+        new(new SIPSorcery.Net.RTCIceCandidateInit
+        {
+            candidate = "candidate:1 1 udp 2113937151 192.0.2.1 5000 typ host",
+            sdpMid = "0",
+            sdpMLineIndex = 0
+        });
+
+    [Test]
     public async Task Call_coordinator_releases_media_when_hangup_signaling_fails()
     {
         PresentationState state = DemoData.Create();
