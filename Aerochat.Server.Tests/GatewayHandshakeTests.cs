@@ -7,15 +7,21 @@ namespace Aerochat.Server.Tests;
 
 public sealed class GatewayHandshakeTests
 {
-    [TestCase("/ws")]
-    [TestCase("/ws?token=")]
-    [TestCase("/ws?token=not-a-session")]
-    public async Task Missing_or_invalid_gateway_token_returns_401_with_bearer_challenge(string path)
+    [TestCase(null)]
+    [TestCase("Bearer not-a-session")]
+    [TestCase("Bearer ")]
+    [TestCase("Basic dXNlcjpwYXNz")]
+    public async Task Missing_or_invalid_gateway_bearer_token_returns_401_with_bearer_challenge(string? authorization)
     {
         using var factory = new ApiWebApplicationFactory();
         using HttpClient client = factory.CreateClient(new() { AllowAutoRedirect = false });
+        using var request = new HttpRequestMessage(HttpMethod.Get, "/ws");
+        if (authorization is not null)
+        {
+            request.Headers.TryAddWithoutValidation("Authorization", authorization);
+        }
 
-        using HttpResponseMessage response = await client.GetAsync(path);
+        using HttpResponseMessage response = await client.SendAsync(request);
 
         Assert.Multiple(() =>
         {
@@ -24,9 +30,29 @@ public sealed class GatewayHandshakeTests
         });
     }
 
-    [TestCase("/ws")]
+    [Test]
+    public async Task Query_string_token_without_header_is_rejected_as_invalid_request()
+    {
+        using var factory = new ApiWebApplicationFactory();
+        using HttpClient client = factory.CreateClient(new() { AllowAutoRedirect = false });
+
+        using HttpResponseMessage response = await client.GetAsync("/ws?token=not-a-session");
+        string body = await response.Content.ReadAsStringAsync();
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(response.StatusCode, Is.EqualTo(HttpStatusCode.BadRequest));
+            Assert.That(response.Headers.WwwAuthenticate, Is.Empty);
+            Assert.That(body, Does.Contain("invalid_request"));
+        });
+    }
+
+    [TestCase("/ws?token={0}")]
+    [TestCase("/ws?token=")]
     [TestCase("/ws?token={0}&token={0}")]
-    public async Task Authorization_header_cannot_rescue_absent_or_duplicate_query_token(string pathTemplate)
+    [TestCase("/ws?TOKEN={0}")]
+    [TestCase("/ws?lastEventId=1&token={0}")]
+    public async Task Query_string_token_is_rejected_even_when_the_header_is_valid(string pathTemplate)
     {
         using var factory = new ApiWebApplicationFactory();
         Guid userId = Guid.NewGuid();
@@ -57,11 +83,7 @@ public sealed class GatewayHandshakeTests
 
         using HttpResponseMessage response = await client.GetAsync(path);
 
-        Assert.Multiple(() =>
-        {
-            Assert.That(response.StatusCode, Is.EqualTo(HttpStatusCode.Unauthorized));
-            Assert.That(response.Headers.WwwAuthenticate.ToString(), Is.EqualTo("Bearer"));
-        });
+        Assert.That(response.StatusCode, Is.EqualTo(HttpStatusCode.BadRequest));
     }
 
     [Test]
@@ -87,8 +109,10 @@ public sealed class GatewayHandshakeTests
         string token = factory.Services.GetRequiredService<SessionService>()
             .Issue(new Identity("github", "gateway-handshake", "Gateway Handshake"));
         using HttpClient client = factory.CreateClient(new() { AllowAutoRedirect = false });
+        client.DefaultRequestHeaders.Authorization =
+            new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", token);
 
-        using HttpResponseMessage response = await client.GetAsync($"/ws?token={Uri.EscapeDataString(token)}");
+        using HttpResponseMessage response = await client.GetAsync("/ws");
 
         Assert.That(response.StatusCode, Is.EqualTo(HttpStatusCode.BadRequest));
     }

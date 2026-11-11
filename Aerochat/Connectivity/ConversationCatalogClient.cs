@@ -1,4 +1,5 @@
 using System.Net.Http;
+using Aerochat.Connectivity.Auth;
 using System.Net.Http.Headers;
 using System.Net.Http.Json;
 
@@ -25,7 +26,23 @@ public sealed class ConversationCatalogClient : IConversationCatalogClient, IDis
     public ConversationCatalogClient(HttpClient httpClient, Uri server)
     {
         _httpClient = httpClient ?? throw new ArgumentNullException(nameof(httpClient));
-        _server = server ?? throw new ArgumentNullException(nameof(server));
+        _server = ValidateServerUri(server);
+    }
+
+    private static Uri ValidateServerUri(Uri server)
+    {
+        ArgumentNullException.ThrowIfNull(server);
+        if (!server.IsAbsoluteUri
+            || (!string.Equals(server.Scheme, Uri.UriSchemeHttps, StringComparison.OrdinalIgnoreCase)
+                && !(string.Equals(server.Scheme, Uri.UriSchemeHttp, StringComparison.OrdinalIgnoreCase)
+                    && OAuthAuthClient.HasExactNumericLoopbackHost(server))))
+        {
+            throw new ArgumentException(
+                "The chat server URI must use HTTPS or exact numeric loopback HTTP.",
+                nameof(server));
+        }
+
+        return server;
     }
 
     public async Task<IReadOnlyList<ServerConversationSummary>> LoadAsync(

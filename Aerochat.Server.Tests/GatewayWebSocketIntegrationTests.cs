@@ -35,14 +35,49 @@ public sealed class GatewayWebSocketIntegrationTests
     {
         using LoopbackServerFixture fixture = await LoopbackServerFixture.StartAsync();
         using HttpClient client = new();
+        client.DefaultRequestHeaders.TryAddWithoutValidation("Authorization", "Bearer not-a-session");
 
-        using HttpResponseMessage response = await client.GetAsync($"{fixture.BaseUrl}/ws?token=not-a-session");
+        using HttpResponseMessage response = await client.GetAsync($"{fixture.BaseUrl}/ws");
 
         Assert.Multiple(() =>
         {
             Assert.That(response.StatusCode, Is.EqualTo(HttpStatusCode.Unauthorized));
             Assert.That(response.Headers.WwwAuthenticate.ToString(), Is.EqualTo("Bearer"));
         });
+    }
+
+    [TestCase("token={0}")]
+    [TestCase("TOKEN={0}")]
+    [TestCase("lastEventId=1&token={0}")]
+    [TestCase("token=")]
+    public async Task Real_upgrade_with_a_query_token_is_refused_even_with_a_valid_header(string queryTemplate)
+    {
+        using LoopbackServerFixture fixture = await LoopbackServerFixture.StartAsync();
+        (_, string token) = await CreateUserAsync(fixture, "query-refused");
+        using var socket = new ClientWebSocket();
+        socket.Options.SetRequestHeader("Authorization", "Bearer " + token);
+        string wsBase = string.Concat("ws://", fixture.BaseUrl.AsSpan("http://".Length));
+        string query = string.Format(
+            System.Globalization.CultureInfo.InvariantCulture, queryTemplate, Uri.EscapeDataString(token));
+
+        Assert.ThrowsAsync<WebSocketException>(async () => await socket.ConnectAsync(
+            new Uri($"{wsBase}/ws?{query}"), CancellationToken.None));
+        Assert.That(fixture.Services.GetRequiredService<GatewayHub>().ActiveConnectionCount, Is.Zero);
+    }
+
+    [TestCase("bearer ")]
+    [TestCase("BEARER  ")]
+    public async Task Bearer_scheme_is_case_insensitive_and_trims_spaces(string prefix)
+    {
+        using LoopbackServerFixture fixture = await LoopbackServerFixture.StartAsync();
+        (_, string token) = await CreateUserAsync(fixture, "bearer-case");
+        using var socket = new ClientWebSocket();
+        socket.Options.SetRequestHeader("Authorization", prefix + token);
+        string wsBase = string.Concat("ws://", fixture.BaseUrl.AsSpan("http://".Length));
+
+        await socket.ConnectAsync(new Uri($"{wsBase}/ws"), CancellationToken.None);
+
+        Assert.That(await ReceiveTextFrameAsync(socket), Does.Contain("gateway.ready"));
     }
 
     [Test]
@@ -359,8 +394,8 @@ public sealed class GatewayWebSocketIntegrationTests
             Assert.That(hub.ActiveConnectionCount, Is.Zero);
 
             using HttpClient probe = new();
-            using HttpResponseMessage rejected = await probe.GetAsync(
-                $"{fixture.BaseUrl}/ws?token={Uri.EscapeDataString(shortLivedToken)}");
+            probe.DefaultRequestHeaders.TryAddWithoutValidation("Authorization", "Bearer " + shortLivedToken);
+            using HttpResponseMessage rejected = await probe.GetAsync($"{fixture.BaseUrl}/ws");
             Assert.Multiple(() =>
             {
                 Assert.That(rejected.StatusCode, Is.EqualTo(HttpStatusCode.Unauthorized));
@@ -389,8 +424,8 @@ public sealed class GatewayWebSocketIntegrationTests
         Assert.That(await ReceiveTextFrameAsync(first), Does.Contain("gateway.ready"));
         GatewayHub hub = fixture.Services.GetRequiredService<GatewayHub>();
         using var client = new HttpClient();
-        using var request = new HttpRequestMessage(HttpMethod.Get,
-            $"{fixture.BaseUrl}/ws?token={Uri.EscapeDataString(token)}");
+        using var request = new HttpRequestMessage(HttpMethod.Get, $"{fixture.BaseUrl}/ws");
+        request.Headers.TryAddWithoutValidation("Authorization", "Bearer " + token);
         request.Version = HttpVersion.Version11;
         request.VersionPolicy = HttpVersionPolicy.RequestVersionExact;
         request.Headers.TryAddWithoutValidation("Connection", "Upgrade");
@@ -492,8 +527,8 @@ public sealed class GatewayWebSocketIntegrationTests
         string? origin = null)
     {
         using var client = new HttpClient();
-        using var request = new HttpRequestMessage(
-            HttpMethod.Get, $"{baseUrl}/ws?token={Uri.EscapeDataString(token)}");
+        using var request = new HttpRequestMessage(HttpMethod.Get, $"{baseUrl}/ws");
+        request.Headers.TryAddWithoutValidation("Authorization", "Bearer " + token);
         request.Version = HttpVersion.Version11;
         request.VersionPolicy = HttpVersionPolicy.RequestVersionExact;
         request.Headers.TryAddWithoutValidation("Connection", "Upgrade");
@@ -547,7 +582,7 @@ public sealed class GatewayWebSocketIntegrationTests
         context.RequestServices = scope.ServiceProvider;
         context.Request.Method = "GET";
         context.Request.Path = "/ws";
-        context.Request.QueryString = new QueryString("?token=" + Uri.EscapeDataString(token));
+        context.Request.Headers.Authorization = "Bearer " + token;
         context.RequestAborted = aborted.Token;
         context.Features.Set<IHttpWebSocketFeature>(new ControlledUpgrade(() =>
         {
@@ -654,7 +689,7 @@ public sealed class GatewayWebSocketIntegrationTests
     }
 
     [TestCase("invalid-token")]
-    [TestCase("duplicate-token")]
+    [TestCase("query-token")]
     [TestCase("non-upgrade")]
     [TestCase("blocked-origin")]
     public async Task Rejected_admission_prerequisites_take_no_slot(string scenario)
@@ -673,17 +708,18 @@ public sealed class GatewayWebSocketIntegrationTests
             {
                 case "invalid-token":
                     expected = HttpStatusCode.Unauthorized;
-                    using (HttpResponseMessage response = await client.GetAsync(
-                        $"{fixture.BaseUrl}/ws?token=not-a-session"))
+                    client.DefaultRequestHeaders.TryAddWithoutValidation("Authorization", "Bearer not-a-session");
+                    using (HttpResponseMessage response = await client.GetAsync($"{fixture.BaseUrl}/ws"))
                     {
                         actual = response.StatusCode;
                     }
 
                     break;
-                case "duplicate-token":
-                    expected = HttpStatusCode.Unauthorized;
+                case "query-token":
+                    expected = HttpStatusCode.BadRequest;
+                    client.DefaultRequestHeaders.TryAddWithoutValidation("Authorization", "Bearer " + token);
                     using (HttpResponseMessage response = await client.GetAsync(
-                        $"{fixture.BaseUrl}/ws?token={Uri.EscapeDataString(token)}&token={Uri.EscapeDataString(token)}"))
+                        $"{fixture.BaseUrl}/ws?token={Uri.EscapeDataString(token)}"))
                     {
                         actual = response.StatusCode;
                     }
@@ -691,8 +727,8 @@ public sealed class GatewayWebSocketIntegrationTests
                     break;
                 case "non-upgrade":
                     expected = HttpStatusCode.BadRequest;
-                    using (HttpResponseMessage response = await client.GetAsync(
-                        $"{fixture.BaseUrl}/ws?token={Uri.EscapeDataString(token)}"))
+                    client.DefaultRequestHeaders.TryAddWithoutValidation("Authorization", "Bearer " + token);
+                    using (HttpResponseMessage response = await client.GetAsync($"{fixture.BaseUrl}/ws"))
                     {
                         actual = response.StatusCode;
                     }
@@ -782,6 +818,7 @@ public sealed class GatewayWebSocketIntegrationTests
         string? origin = null)
     {
         var client = new ClientWebSocket();
+        client.Options.SetRequestHeader("Authorization", "Bearer " + token);
         if (origin is not null)
         {
             client.Options.SetRequestHeader("Origin", origin);
@@ -789,15 +826,11 @@ public sealed class GatewayWebSocketIntegrationTests
         string wsBase = baseUrl.StartsWith("http://", StringComparison.Ordinal)
             ? string.Concat("ws://", baseUrl.AsSpan("http://".Length))
             : baseUrl;
-        string query = $"token={Uri.EscapeDataString(token)}";
-        if (lastEventId is not null)
-        {
-            query += $"&lastEventId={Uri.EscapeDataString(lastEventId)}";
-        }
+        string query = lastEventId is null ? string.Empty : $"?lastEventId={Uri.EscapeDataString(lastEventId)}";
 
         try
         {
-            await client.ConnectAsync(new Uri($"{wsBase}/ws?{query}"), CancellationToken.None);
+            await client.ConnectAsync(new Uri($"{wsBase}/ws{query}"), CancellationToken.None);
         }
         catch
         {

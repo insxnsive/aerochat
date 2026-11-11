@@ -6,7 +6,7 @@ internal interface IGatewaySocket : IDisposable
 {
     WebSocketState State { get; }
 
-    Task ConnectAsync(Uri uri, CancellationToken cancellationToken);
+    Task ConnectAsync(Uri uri, string bearerToken, CancellationToken cancellationToken);
 
     Task<WebSocketReceiveResult> ReceiveAsync(
         ArraySegment<byte> buffer,
@@ -26,8 +26,11 @@ internal sealed class ClientWebSocketAdapter : IGatewaySocket
 
     public WebSocketState State => _socket.State;
 
-    public Task ConnectAsync(Uri uri, CancellationToken cancellationToken) =>
-        _socket.ConnectAsync(uri, cancellationToken);
+    public Task ConnectAsync(Uri uri, string bearerToken, CancellationToken cancellationToken)
+    {
+        _socket.Options.SetRequestHeader("Authorization", "Bearer " + bearerToken);
+        return _socket.ConnectAsync(uri, cancellationToken);
+    }
 
     public Task<WebSocketReceiveResult> ReceiveAsync(
         ArraySegment<byte> buffer,

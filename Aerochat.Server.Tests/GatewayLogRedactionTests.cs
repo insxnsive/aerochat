@@ -54,8 +54,8 @@ public sealed class GatewayLogRedactionTests
                 .CreateLogger("Aerochat.RedactionProbe").LogInformation("redaction-capture-active");
             using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(10));
             var client = factory.Server.CreateWebSocketClient();
-            using WebSocket socket = await client.ConnectAsync(
-                new Uri("ws://localhost/ws?token=" + Uri.EscapeDataString(token)), timeout.Token);
+            client.ConfigureRequest = request => request.Headers.Authorization = "Bearer " + token;
+            using WebSocket socket = await client.ConnectAsync(new Uri("ws://localhost/ws"), timeout.Token);
             var buffer = new byte[8192];
             WebSocketReceiveResult ready = await socket.ReceiveAsync(
                 new ArraySegment<byte>(buffer), timeout.Token);
@@ -160,11 +160,11 @@ public sealed class GatewayLogRedactionTests
                 .CreateLogger("Aerochat.RedactionProbe").LogInformation("redaction-capture-active");
             using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(10));
             using var socket = new ClientWebSocket();
+            socket.Options.SetRequestHeader("Authorization", "Bearer " + token);
             var uri = new UriBuilder(fixture.BaseUrl)
             {
                 Scheme = "ws",
-                Path = "/ws",
-                Query = "token=" + Uri.EscapeDataString(token)
+                Path = "/ws"
             };
             await socket.ConnectAsync(uri.Uri, timeout.Token);
             var buffer = new byte[8192];
