@@ -134,6 +134,22 @@ public sealed class CallSessionPresentation : ObservableObject
         return false;
     }
 
+    /// <summary>
+    /// Puts a call that was being accepted back to Incoming, for example when the accept was
+    /// cancelled. It only restores a call that is still Connecting under the same call id, so a call
+    /// that was hung up in the meantime is never brought back.
+    /// </summary>
+    public bool TryRestoreIncoming(string? callId)
+    {
+        if (State == CallSessionState.Connecting && CallId == callId)
+        {
+            State = CallSessionState.Incoming;
+            return true;
+        }
+
+        return false;
+    }
+
     public void SetLocalState(CallSessionState state)
     {
         State = state;

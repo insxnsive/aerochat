@@ -130,17 +130,28 @@ public sealed class CallCoordinator : ICallCoordinator
         return callId;
     }
 
-    private void ApplyRingOrOfferToSession(CallSignalEventArgs signal)
+    // Thrown when an accept finds that the call it took has ended or changed while it waited for the
+    // operations lock. It is not a failure of the call, so it does not end the call or hang up.
+    private sealed class AcceptSupersededException : InvalidOperationException
+    {
+        public AcceptSupersededException()
+            : base("The call ended or changed before it could be accepted.")
+        {
+        }
+    }
+
+    // Returns false when the session refused the signal.
+    private bool ApplyRingOrOfferToSession(CallSignalEventArgs signal)
     {
         // A signal with a call id goes through the checked path, which also clears the previous
         // call's offer when the id changes; an id-less signal keeps the legacy behavior.
         if (signal.CallId is null)
         {
             _state.ApplyCallSignal(signal.EventType, _conversationId, signal.Sdp, signal.Candidate, signal.Reason);
-            return;
+            return true;
         }
 
-        _state.ApplyRemoteCallSignal(
+        return _state.ApplyRemoteCallSignal(
             signal.EventType,
             _conversationId,
             signal.CallId,
@@ -185,13 +196,17 @@ public sealed class CallCoordinator : ICallCoordinator
     {
         ThrowIfDisposed();
 
+        // A second click while the call is already being accepted, or running, does nothing.
+        if (Session.State is CallSessionState.Connecting or CallSessionState.Connected)
+            return;
+
         // Take the offer and the call id and mark the call as accepted right away, before waiting for
         // the operations lock. The presentation write runs on the UI thread (ApplyPresentation is
         // synchronous), so a newer ring from the adapter cannot replace the call while this accept waits.
         string? acceptedOffer = null;
         string? acceptedCallId = null;
         ApplyPresentation(() => Session.TryBeginAccept(out acceptedOffer, out acceptedCallId));
-        if (acceptedOffer is null && Session.Sdp is null)
+        if (acceptedOffer is null)
             throw new InvalidOperationException("No incoming call offer is available.");
 
         try
@@ -200,37 +215,36 @@ public sealed class CallCoordinator : ICallCoordinator
         }
         catch
         {
-            // Never got to accept: put the call back so it can be accepted again.
-            if (acceptedOffer is not null)
-                ApplyPresentation(() => Session.SetLocalState(CallSessionState.Incoming));
+            // Never got to accept: put the call back so it can be accepted again, unless it ended meanwhile.
+            ApplyPresentation(() => Session.TryRestoreIncoming(acceptedCallId));
             throw;
         }
 
         try
         {
+            // This accept waited for the lock: make sure the call it took is still the call we are in.
+            if (Session.State != CallSessionState.Connecting
+                || Session.CallId != acceptedCallId
+                || (acceptedCallId is not null && _endedCallIds.Contains(acceptedCallId))
+                || (acceptedCallId is not null && _callId is not null && _callId != acceptedCallId))
+            {
+                throw new AcceptSupersededException();
+            }
+
             _hangupCompleted = false;
             _muted = false;
             if (_role == CallRole.Outgoing)
                 throw new InvalidOperationException("An outgoing call cannot accept its own offer.");
             _role = CallRole.Incoming;
             if (acceptedCallId is not null)
-            {
-                if (_callId is not null && _callId != acceptedCallId)
-                    throw new InvalidOperationException("The call changed before it could be accepted.");
                 _callId = acceptedCallId;
-            }
 
-            string offer = acceptedOffer
-                ?? Session.Sdp
-                ?? throw new InvalidOperationException("No incoming call offer is available.");
-            if (acceptedOffer is null)
-                ApplyPresentation(() => Session.SetLocalState(CallSessionState.Connecting));
-            string answer = await _engine.AcceptOffer(offer, cancellationToken).ConfigureAwait(false);
+            string answer = await _engine.AcceptOffer(acceptedOffer, cancellationToken).ConfigureAwait(false);
             _remoteDescriptionApplied = true;
             DrainPendingCandidates();
             await _signaling.AnswerAsync(_conversationId, answer, cancellationToken, callId: _callId).ConfigureAwait(false);
         }
-        catch (Exception exception)
+        catch (Exception exception) when (exception is not AcceptSupersededException)
         {
             await FailCallUnderLockAsync(
                 "Call acceptance failed",
@@ -356,11 +370,20 @@ public sealed class CallCoordinator : ICallCoordinator
                     // The same call offering again while it is answered must not reset it.
                     if (signal.CallId is not null && signal.CallId == _callId && _remoteDescriptionApplied)
                         break;
+                    // A different call: ignore it while this one is answered.
+                    if (signal.CallId != _callId && _callId is not null && _remoteDescriptionApplied)
+                        break;
+
+                    // The session decides first (ApplyPresentation is synchronous). A ring it refuses, for
+                    // example while the user is accepting another call or for a call that already ended,
+                    // is not followed by the coordinator either.
+                    bool accepted = false;
+                    ApplyPresentation(() => accepted = ApplyRingOrOfferToSession(signal));
+                    if (!accepted)
+                        break;
+
                     if (signal.CallId != _callId)
                     {
-                        // A different call: ignore it while this one is answered, otherwise follow it.
-                        if (_callId is not null && _remoteDescriptionApplied)
-                            break;
                         ClearCallId();
                         _callId = signal.CallId;
                         _remoteDescriptionApplied = false;
@@ -371,7 +394,6 @@ public sealed class CallCoordinator : ICallCoordinator
                         _pendingCandidates.Clear();
                     _role = CallRole.Incoming;
                     _hangupCompleted = false;
-                    ApplyPresentation(() => ApplyRingOrOfferToSession(signal));
                     break;
 
                 case "call.answer" when signal.Sdp is not null && _role == CallRole.Outgoing:
