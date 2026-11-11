@@ -10,6 +10,34 @@ namespace Aerochat.VisualShell.Tests;
 
 public sealed class ConnectivityTests
 {
+    [TestCase("http://127.0.0.1@evil.com/", false)]
+    [TestCase("http://127.0.0.1:80@evil.com/", false)]
+    [TestCase("http://evil.com@127.0.0.1/", false)]
+    [TestCase("http://[::1]:80@evil.com/", false)]
+    [TestCase("http://127.0.0.1./", false)]
+    [TestCase("http://127.0.0.1.:5080/", false)]
+    [TestCase("http://127.0.0.1.evil.com/", false)]
+    [TestCase("http://[::1]x/", false)]
+    [TestCase("http://[::1%25eth0]/", false)]
+    [TestCase("http://[0:0:0:0:0:0:0:1]/", false)]
+    [TestCase("http://[::ffff:127.0.0.1]/", false)]
+    [TestCase("http://127.1/", false)]
+    [TestCase("http://0x7f.0.0.1/", false)]
+    [TestCase("http://0177.0.0.1/", false)]
+    [TestCase("http://2130706433/", false)]
+    [TestCase("http://localhost/", false)]
+    [TestCase("http://0.0.0.0/", false)]
+    [TestCase("http://127.0.0.2/", false)]
+    [TestCase("http://[::]/", false)]
+    [TestCase("http://127.0.0.1/", true)]
+    [TestCase("http://127.0.0.1:5080/", true)]
+    [TestCase("http://[::1]/", true)]
+    [TestCase("http://[::1]:5080/", true)]
+    [TestCase("HTTP://127.0.0.1:5080/", true)]
+    public void Exact_numeric_loopback_host_parser_obeys_raw_authority_rules(string uri, bool expected)
+    {
+        Assert.That(OAuthAuthClient.HasExactNumericLoopbackHost(new Uri(uri)), Is.EqualTo(expected));
+    }
     private static readonly Uri TestServer = new("https://server.test/");
 
     [Test]
@@ -19,7 +47,7 @@ public sealed class ConnectivityTests
         var handler = new ConversationCatalogHandler(conversationId);
         var client = new ConversationCatalogClient(
             new HttpClient(handler),
-            new Uri("http://localhost:5080/"));
+            new Uri("http://127.0.0.1:5080/"));
 
         IReadOnlyList<ServerConversationSummary> conversations =
             await client.LoadAsync("session-token");
@@ -28,7 +56,7 @@ public sealed class ConnectivityTests
         {
             Assert.That(handler.Request?.Method, Is.EqualTo(HttpMethod.Get));
             Assert.That(handler.Request?.RequestUri?.AbsoluteUri,
-                Is.EqualTo("http://localhost:5080/conversations"));
+                Is.EqualTo("http://127.0.0.1:5080/conversations"));
             Assert.That(handler.Request?.Headers.Authorization?.Scheme, Is.EqualTo("Bearer"));
             Assert.That(handler.Request?.Headers.Authorization?.Parameter, Is.EqualTo("session-token"));
             Assert.That(conversations, Has.Count.EqualTo(1));
