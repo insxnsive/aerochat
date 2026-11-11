@@ -46,6 +46,7 @@ public sealed class CallCoordinator : ICallCoordinator
     private bool _hangupCompleted;
     private CallRole _role;
     private string? _callId;
+    private int _callGeneration;
     private const int EndedCallMemory = 8;
     private readonly Queue<string> _endedCallIds = new();
 
@@ -115,9 +116,11 @@ public sealed class CallCoordinator : ICallCoordinator
     }
 
     // Forgets the current call id and remembers it as ended, so a replayed ring or offer of the
-    // same call is not adopted as a new call. Callers hold the operations lock.
+    // same call is not adopted as a new call. Callers hold the operations lock. Every call that ends or
+    // starts also moves the call generation on, which late failures use to tell which call they belong to.
     private string? ClearCallId()
     {
+        Interlocked.Increment(ref _callGeneration);
         string? callId = _callId;
         _callId = null;
         if (callId is not null)
@@ -323,10 +326,12 @@ public sealed class CallCoordinator : ICallCoordinator
         if (signal.ConversationId != _conversationId || Volatile.Read(ref _disposed) != 0)
             return;
 
-        StartBackgroundTask(() => HandleSignalSafelyAsync(signal));
+        // A failure while handling this signal belongs to the call that was running when it arrived.
+        int generation = Volatile.Read(ref _callGeneration);
+        StartBackgroundTask(() => HandleSignalSafelyAsync(signal, generation));
     }
 
-    private async Task HandleSignalSafelyAsync(CallSignalEventArgs signal)
+    private async Task HandleSignalSafelyAsync(CallSignalEventArgs signal, int generation)
     {
         try
         {
@@ -337,7 +342,7 @@ public sealed class CallCoordinator : ICallCoordinator
         }
         catch (Exception)
         {
-            await EndCallAfterFailureAsync("Call signal handling failed", notifyRemote: true)
+            await EndCallAfterFailureAsync("Call signal handling failed", notifyRemote: true, onlyIfGeneration: generation)
                 .ConfigureAwait(false);
         }
     }
@@ -455,7 +460,8 @@ public sealed class CallCoordinator : ICallCoordinator
             return;
 
         string? callId = Volatile.Read(ref _callId);
-        StartBackgroundTask(() => SendIceAsync(candidate, callId));
+        int generation = Volatile.Read(ref _callGeneration);
+        StartBackgroundTask(() => SendIceAsync(candidate, callId, generation));
     }
 
     private void OnRtcStateChanged(object? sender, RtcPeerState state)
@@ -486,9 +492,11 @@ public sealed class CallCoordinator : ICallCoordinator
         if (state is not (RtcPeerState.Disconnected or RtcPeerState.Failed))
             return;
 
+        int generation = Volatile.Read(ref _callGeneration);
         StartBackgroundTask(() => EndCallAfterFailureAsync(
             $"RTC peer {state.ToString().ToLowerInvariant()}",
-            notifyRemote: true));
+            notifyRemote: true,
+            onlyIfGeneration: generation));
     }
 
     private void StartBackgroundTask(Func<Task> taskFactory)
@@ -516,7 +524,7 @@ public sealed class CallCoordinator : ICallCoordinator
             TaskScheduler.Default);
     }
 
-    private async Task SendIceAsync(RtcIceCandidate candidate, string? callId)
+    private async Task SendIceAsync(RtcIceCandidate candidate, string? callId, int generation)
     {
         try
         {
@@ -530,15 +538,15 @@ public sealed class CallCoordinator : ICallCoordinator
             // The server no longer knows the call this candidate belongs to. If that is still our
             // current call, the server ended or replaced it, so end it here without telling the server
             // again; a candidate of an older call is simply dropped.
-            await EndCallAfterFailureAsync("Call ended by the server", onlyIfCallId: callId).ConfigureAwait(false);
+            await EndCallAfterFailureAsync("Call ended by the server", onlyIfGeneration: generation).ConfigureAwait(false);
         }
         catch (Exception)
         {
-            await EndCallAfterFailureAsync("ICE signaling failed", onlyIfCallId: callId).ConfigureAwait(false);
+            await EndCallAfterFailureAsync("ICE signaling failed", onlyIfGeneration: generation).ConfigureAwait(false);
         }
     }
 
-    private async Task EndCallAfterFailureAsync(string reason, bool notifyRemote = false, string? onlyIfCallId = null)
+    private async Task EndCallAfterFailureAsync(string reason, bool notifyRemote = false, int? onlyIfGeneration = null)
     {
         await _operations.WaitAsync().ConfigureAwait(false);
         try
@@ -547,7 +555,7 @@ public sealed class CallCoordinator : ICallCoordinator
                 return;
 
             // A failure that belongs to an older call must not end the call that is running now.
-            if (onlyIfCallId is not null && _callId != onlyIfCallId)
+            if (onlyIfGeneration is not null && Volatile.Read(ref _callGeneration) != onlyIfGeneration)
                 return;
 
             _hangupCompleted = true;
