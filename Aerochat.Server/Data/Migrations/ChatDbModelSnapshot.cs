@@ -17,6 +17,15 @@ partial class ChatDbModelSnapshot : ModelSnapshot
             .HasAnnotation("ProductVersion", "8.0.30")
             .HasAnnotation("Relational:MaxIdentifierLength", 64);
 
+        var audit=modelBuilder.Entity<Aerochat.Server.Moderation.ModerationAuditRecord>();audit.ToTable("moderation_audit");audit.HasKey(a=>a.Id);
+        audit.Property(a=>a.Id).HasConversion<string>();audit.Property(a=>a.ActorId).HasConversion<string>();
+        audit.Property(a=>a.TargetId).HasConversion<string>();audit.Property(a=>a.ConversationId).HasConversion<string>();
+        audit.Property(a=>a.CreatedAt).HasConversion(v=>v.ToUniversalTime().ToString("O"),v=>DateTimeOffset.Parse(v));
+        audit.Property(a=>a.ReasonCode).IsRequired(false);audit.Property(a=>a.Action).IsRequired();audit.HasIndex(a=>new{a.CreatedAt,a.Id});
+        var bans=modelBuilder.Entity<Aerochat.Server.Moderation.ServerBanRecord>();bans.ToTable("server_bans");bans.HasKey(b=>b.UserId);
+        bans.Property(b=>b.UserId).HasConversion<string>();bans.Property(b=>b.OperatorId).HasConversion<string>();
+        bans.Property(b=>b.CreatedAt).HasConversion(v=>v.ToUniversalTime().ToString("O"),v=>DateTimeOffset.Parse(v));
+
         modelBuilder.Entity("Aerochat.Server.Data.Entities.ConversationEntity", b =>
         {
             b.Property<Guid>("Id").HasColumnType("TEXT").HasColumnName("id");
