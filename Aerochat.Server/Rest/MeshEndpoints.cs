@@ -37,7 +37,8 @@ public static class MeshEndpoints
         if(!members.Contains(user.Id))return ConversationAuth.Forbidden();
         if(conversation.Kind!="group")return Error("mesh_group_required");
         context.Response.Headers.CacheControl="no-store";
-        if(operation=="read")return Results.Ok(new{version=1,maxParticipants=4,room=rooms.Read(conversationId)});
+        // self is the authenticated caller's local user id, so the client can find itself in the roster and edges.
+        if(operation=="read")return Results.Ok(new{version=1,maxParticipants=4,self=user.Id,room=rooms.Read(conversationId)});
         if(request is null||request.Version!=1)return Error("mesh_upgrade_required");
         if(request.RoomId==Guid.Empty)return ConversationAuth.InvalidRequest();
         if(operation=="signal" && (request.To is null || request.To==Guid.Empty || request.EdgeId is null ||
