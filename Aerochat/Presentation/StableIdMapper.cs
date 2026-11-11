@@ -20,14 +20,14 @@ public static class StableIdMapper
         if (string.IsNullOrWhiteSpace(value))
             return false;
 
-        if (ulong.TryParse(value, NumberStyles.None, CultureInfo.InvariantCulture, out mapped))
-            return true;
-
         if (Guid.TryParse(value, out Guid guid))
         {
             mapped = Map(guid);
             return true;
         }
+
+        if (ulong.TryParse(value, NumberStyles.None, CultureInfo.InvariantCulture, out mapped))
+            return true;
 
         return false;
     }
