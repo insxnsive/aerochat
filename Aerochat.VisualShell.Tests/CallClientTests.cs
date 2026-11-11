@@ -1224,6 +1224,150 @@ public sealed class CallClientTests
         Assert.That(candidates[0].Candidate, Is.Not.Empty);
     }
 
+    [TestCase("ice")]
+    [TestCase("connected")]
+    [TestCase("disconnected")]
+    [TestCase("failed")]
+    [TestCase("closed")]
+    public async Task Peer_callback_in_flight_does_not_reach_a_replacement_call(string kind)
+    {
+        const string oldId = "11111111-1111-1111-1111-111111111111";
+        const string newId = "22222222-2222-2222-2222-222222222222";
+        var state = DemoData.Create();
+        string id = state.Conversations[0].Id.ToString();
+        state.GetOrCreateCallSession(id).ApplyRemote("call.ring", oldId, null, null, null);
+        var engine = new RtcPeerEngine(() => null, () => null);
+        var signaling = new RecordingCallSignalingClient();
+        var transport = new RecordingCallTransport();
+        await using var coordinator = new CallCoordinator(state, id, signaling, engine, transport);
+        await engine.InitializeAsync();
+        var oldPeer = engine.CurrentPeer!;
+        var entered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        using var resume = new ManualResetEventSlim();
+        engine.BeforePeerEventDelivery = () =>
+        {
+            entered.TrySetResult();
+            if (!resume.Wait(TimeSpan.FromSeconds(10))) throw new TimeoutException("review delivery seam");
+        };
+        Task callback = Task.Run(() => EmitPeerCallback(engine, oldPeer, kind));
+        try
+        {
+            await entered.Task.WaitAsync(TimeSpan.FromSeconds(5));
+            await coordinator.HangupAsync();
+            await engine.InitializeAsync();
+            transport.Raise(new CallSignalEventArgs("call.ring", id, callId: newId));
+            coordinator.Session.SetLocalState(CallSessionState.Connecting);
+            Assert.That(engine.CurrentPeer, Is.Not.SameAs(oldPeer));
+        }
+        finally
+        {
+            engine.BeforePeerEventDelivery = null;
+            resume.Set();
+            await callback.WaitAsync(TimeSpan.FromSeconds(5));
+        }
+        await coordinator.DrainBackgroundTasksAsync().WaitAsync(TimeSpan.FromSeconds(5));
+        Assert.Multiple(() =>
+        {
+            Assert.That(signaling.Actions.Count(action => action.StartsWith("hangup:", StringComparison.Ordinal)), Is.EqualTo(1));
+            Assert.That(signaling.Actions, Does.Not.Contain("ice:1 1 udp 2113937151 192.0.2.1 5000 typ host generation 0"));
+            Assert.That(coordinator.Session.CallId, Is.EqualTo(newId));
+            Assert.That(coordinator.Session.State, Is.EqualTo(CallSessionState.Connecting));
+            Assert.That(engine.State, Is.EqualTo(RtcPeerState.New), "old state overwrote the replacement engine");
+        });
+    }
+
+    [TestCase("ice")]
+    [TestCase("connected")]
+    [TestCase("disconnected")]
+    [TestCase("failed")]
+    [TestCase("closed")]
+    public async Task Current_peer_callbacks_still_reach_the_coordinator(string kind)
+    {
+        const string callId = "11111111-1111-1111-1111-111111111111";
+        var state = DemoData.Create();
+        string id = state.Conversations[0].Id.ToString();
+        state.GetOrCreateCallSession(id).ApplyRemote("call.ring", callId, null, null, null);
+        var engine = new RtcPeerEngine(() => null, () => null);
+        var signaling = new RecordingCallSignalingClient();
+        await using var coordinator = new CallCoordinator(state, id, signaling, engine, new RecordingCallTransport());
+        coordinator.Session.SetLocalState(CallSessionState.Connecting);
+        await engine.InitializeAsync();
+        EmitPeerCallback(engine, engine.CurrentPeer!, kind);
+        await coordinator.DrainBackgroundTasksAsync().WaitAsync(TimeSpan.FromSeconds(5));
+        var expected = kind switch
+        {
+            "connected" => CallSessionState.Connected,
+            "closed" => CallSessionState.Ended,
+            "disconnected" or "failed" => CallSessionState.Failed,
+            _ => CallSessionState.Connecting
+        };
+        Assert.That(coordinator.Session.State, Is.EqualTo(expected));
+        if (kind == "ice")
+        {
+            Assert.That(signaling.Actions, Has.Some.EqualTo("ice:1 1 udp 2113937151 192.0.2.1 5000 typ host generation 0"));
+            Assert.That(signaling.CallIds, Has.Some.EqualTo(callId));
+        }
+        if (kind is "disconnected" or "failed")
+            Assert.That(signaling.Actions, Has.Some.StartsWith("hangup:"));
+    }
+
+    [TestCase("ice")]
+    [TestCase("connected")]
+    public async Task Peer_callback_subscriber_can_reenter_engine_on_another_thread(string kind)
+    {
+        await using var engine = new RtcPeerEngine(() => null, () => null);
+        await engine.InitializeAsync();
+        int reentered = 0;
+        void Reenter()
+        {
+            Task.Run(() => { engine.Mute(); Interlocked.Increment(ref reentered); })
+                .WaitAsync(TimeSpan.FromSeconds(5)).GetAwaiter().GetResult();
+        }
+        engine.IceCandidateReady += (_, candidate) =>
+        {
+            if (kind == "ice" && candidate.Candidate == "1 1 udp 2113937151 192.0.2.1 5000 typ host generation 0") Reenter();
+        };
+        engine.StateChanged += (_, state) =>
+        {
+            if (kind == "connected" && state == RtcPeerState.Connected) Reenter();
+        };
+        EmitPeerCallback(engine, engine.CurrentPeer!, kind);
+        Assert.That(reentered, Is.EqualTo(1));
+    }
+
+    [TestCase("ice")]
+    [TestCase("connected")]
+    public async Task Peer_callback_does_not_wait_for_coordinator_operations(string kind)
+    {
+        var state = DemoData.Create();
+        string id = state.Conversations[0].Id.ToString();
+        var engine = new RtcPeerEngine(() => null, () => null);
+        var signaling = new RecordingCallSignalingClient(blockHangup: true);
+        await using var coordinator = new CallCoordinator(state, id, signaling, engine, new RecordingCallTransport());
+        await engine.InitializeAsync();
+        Task hangup = coordinator.HangupAsync();
+        await signaling.HangupStarted.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        try
+        {
+            await engine.InitializeAsync();
+            await Task.Run(() => EmitPeerCallback(engine, engine.CurrentPeer!, kind))
+                .WaitAsync(TimeSpan.FromSeconds(5));
+        }
+        finally
+        {
+            signaling.ReleaseHangup.TrySetResult();
+            await hangup.WaitAsync(TimeSpan.FromSeconds(5));
+        }
+        await coordinator.DrainBackgroundTasksAsync().WaitAsync(TimeSpan.FromSeconds(5));
+        Assert.That(signaling.Actions.Any(action => action.StartsWith("ice:", StringComparison.Ordinal)), Is.False);
+    }
+
+    private static void EmitPeerCallback(RtcPeerEngine engine, SIPSorcery.Net.RTCPeerConnection peer, string kind)
+    {
+        if (kind == "ice") engine.OnPeerIceCandidate(peer, HostCandidate());
+        else engine.OnPeerConnectionStateChanged(peer, Enum.Parse<SIPSorcery.Net.RTCPeerConnectionState>(kind));
+    }
+
     private static SIPSorcery.Net.RTCIceCandidate HostCandidate() =>
         new(new SIPSorcery.Net.RTCIceCandidateInit
         {

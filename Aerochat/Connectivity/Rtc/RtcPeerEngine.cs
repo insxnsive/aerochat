@@ -403,6 +403,20 @@ public sealed class RtcPeerEngine : IRtcPeerEngine, IScreenShareFrameSource, ISc
 
     // A candidate from a peer that is no longer the engine's current peer (for example one that a
     // hangup closed) must not reach the next call.
+    // Peer callbacks use an opaque sender stamp. No SIPSorcery type leaves this class.
+    private sealed record PeerEventSource(RtcPeerEngine Owner, RTCPeerConnection Peer);
+
+    internal bool IsPeerEvent(object? sender) => sender is PeerEventSource;
+
+    internal bool IsCurrentPeerEvent(object? sender)
+    {
+        lock (_gate)
+            return sender is PeerEventSource source
+                && ReferenceEquals(source.Owner, this) && ReferenceEquals(source.Peer, _peer);
+    }
+
+    internal Action? BeforePeerEventDelivery { get; set; }
+
     internal void OnPeerIceCandidate(RTCPeerConnection source, RTCIceCandidate candidate)
     {
         lock (_gate)
@@ -411,8 +425,10 @@ public sealed class RtcPeerEngine : IRtcPeerEngine, IScreenShareFrameSource, ISc
                 return;
         }
 
+        BeforePeerEventDelivery?.Invoke();
+
         if (!string.IsNullOrWhiteSpace(candidate.candidate))
-            IceCandidateReady?.Invoke(this, new RtcIceCandidate(candidate.candidate, candidate.sdpMid, candidate.sdpMLineIndex));
+            IceCandidateReady?.Invoke(new PeerEventSource(this, source), new RtcIceCandidate(candidate.candidate, candidate.sdpMid, candidate.sdpMLineIndex));
     }
 
     internal RTCPeerConnection? CurrentPeer
@@ -430,20 +446,23 @@ public sealed class RtcPeerEngine : IRtcPeerEngine, IScreenShareFrameSource, ISc
     // hangup closed) must not change the state of the next call. The hangup itself raises Closed.
     internal void OnPeerConnectionStateChanged(RTCPeerConnection source, RTCPeerConnectionState state)
     {
-        lock (_gate)
-        {
-            if (!ReferenceEquals(source, _peer))
-                return;
-        }
-
-        SetState(state switch
+        RtcPeerState mapped = state switch
         {
             RTCPeerConnectionState.connected => RtcPeerState.Connected,
             RTCPeerConnectionState.disconnected => RtcPeerState.Disconnected,
             RTCPeerConnectionState.failed => RtcPeerState.Failed,
             RTCPeerConnectionState.closed => RtcPeerState.Closed,
             _ => RtcPeerState.Connecting
-        });
+        };
+        lock (_gate)
+        {
+            if (!ReferenceEquals(source, _peer) || State == mapped)
+                return;
+            State = mapped;
+        }
+
+        BeforePeerEventDelivery?.Invoke();
+        StateChanged?.Invoke(new PeerEventSource(this, source), mapped);
     }
 
     private static void ThrowIfDescriptionFailed(SetDescriptionResultEnum result)
