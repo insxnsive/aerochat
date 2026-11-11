@@ -41,14 +41,15 @@ public sealed class OAuthAuthClient : IAuthClient
             throw new ArgumentOutOfRangeException(nameof(signInTimeout));
 
         if (!serverUri.IsAbsoluteUri
-            || (serverUri.Scheme != Uri.UriSchemeHttp && serverUri.Scheme != Uri.UriSchemeHttps)
+            || (serverUri.Scheme != Uri.UriSchemeHttps
+                && !(serverUri.Scheme == Uri.UriSchemeHttp && HasExactNumericLoopbackHost(serverUri)))
             || !string.IsNullOrEmpty(serverUri.UserInfo)
             || !StringComparer.Ordinal.Equals(serverUri.AbsolutePath, "/")
             || !string.IsNullOrEmpty(serverUri.Query)
             || !string.IsNullOrEmpty(serverUri.Fragment))
         {
             throw new ArgumentException(
-                "The authentication server URI must be an unambiguous HTTP(S) origin.",
+                "The authentication server URI must be an unambiguous HTTPS origin or exact numeric loopback HTTP origin.",
                 nameof(serverUri));
         }
 
@@ -184,6 +185,42 @@ public sealed class OAuthAuthClient : IAuthClient
 
             return new AuthSession(tokenResponse.AccessToken, tokenResponse.ExpiresIn);
         }
+    }
+
+    internal static bool HasExactNumericLoopbackHost(Uri uri)
+    {
+        if (!uri.IsAbsoluteUri)
+            return false;
+
+        string raw = uri.OriginalString;
+        int schemeSeparator = raw.IndexOf("://", StringComparison.Ordinal);
+        if (schemeSeparator < 0)
+            return false;
+
+        int authorityStart = schemeSeparator + 3;
+        int authorityLength = raw[authorityStart..].IndexOfAny(['/', '?', '#']);
+        int authorityEnd = authorityLength < 0
+            ? raw.Length
+            : authorityStart + authorityLength;
+        string authority = raw[authorityStart..authorityEnd];
+        if (authority.Length == 0 || authority.Contains('@', StringComparison.Ordinal))
+            return false;
+
+        if (authority[0] == '[')
+        {
+            int closingBracket = authority.IndexOf(']');
+            return closingBracket == 4
+                && StringComparer.Ordinal.Equals(authority[1..closingBracket], "::1")
+                && (closingBracket == authority.Length - 1
+                    || authority[closingBracket + 1] == ':');
+        }
+
+        int portSeparator = authority.IndexOf(':');
+        string host = portSeparator < 0
+            ? authority
+            : authority[..portSeparator];
+        return StringComparer.Ordinal.Equals(host, "127.0.0.1")
+            && (portSeparator < 0 || portSeparator == host.Length);
     }
 
     private static AuthException ExpectedFailure(Exception exception) =>
