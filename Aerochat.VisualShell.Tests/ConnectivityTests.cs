@@ -182,12 +182,45 @@ public sealed class ConnectivityTests
 
         Assert.Multiple(() =>
         {
+            Assert.That(listener.CallbackUri.AbsolutePath, Does.StartWith("/oauth/callback/"));
+            Assert.That(listener.CallbackUri.AbsolutePath.Length, Is.GreaterThan("/oauth/callback/".Length + 20));
             Assert.That(wrongPath.StatusCode, Is.EqualTo(HttpStatusCode.BadRequest));
             Assert.That(missingCode.StatusCode, Is.EqualTo(HttpStatusCode.BadRequest));
             Assert.That(valid.StatusCode, Is.EqualTo(HttpStatusCode.OK));
             Assert.That(valid.Content.ReadAsStringAsync(cancellation.Token).GetAwaiter().GetResult(), Does.Not.Contain("test-handoff"));
         });
         Assert.That(await codeTask, Is.EqualTo("test-handoff"));
+    }
+
+    [Test]
+    public async Task Loopback_listener_uses_unpredictable_per_instance_path_and_rejects_fixed_or_other_instance_path()
+    {
+        await using var first = new LoopbackCallbackListener();
+        await using var second = new LoopbackCallbackListener();
+        first.Start();
+        second.Start();
+
+        Assert.That(first.CallbackUri.AbsolutePath, Is.Not.EqualTo("/oauth/callback"));
+        Assert.That(first.CallbackUri.AbsolutePath, Is.Not.EqualTo(second.CallbackUri.AbsolutePath));
+
+        using var client = new HttpClient();
+        using var cancellation = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+        Task<string> codeTask = first.WaitForCodeAsync(cancellation.Token);
+
+        using HttpResponseMessage fixedPath = await client.GetAsync(
+            new Uri(first.CallbackUri, "/oauth/callback?code=injected"), cancellation.Token);
+        using HttpResponseMessage otherInstancePath = await client.GetAsync(
+            new Uri(first.CallbackUri, second.CallbackUri.AbsolutePath + "?code=injected"), cancellation.Token);
+        using HttpResponseMessage exactPath = await client.GetAsync(
+            new Uri(first.CallbackUri + "?code=expected-handoff"), cancellation.Token);
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(fixedPath.StatusCode, Is.EqualTo(HttpStatusCode.BadRequest));
+            Assert.That(otherInstancePath.StatusCode, Is.EqualTo(HttpStatusCode.BadRequest));
+            Assert.That(exactPath.StatusCode, Is.EqualTo(HttpStatusCode.OK));
+        });
+        Assert.That(await codeTask, Is.EqualTo("expected-handoff"));
     }
 
     [Test]
@@ -241,7 +274,7 @@ public sealed class ConnectivityTests
             Assert.That(browser.Opened[0].AbsoluteUri, Does.Not.Contain("session-token"));
             Assert.That(handler.Request!.Method, Is.EqualTo(HttpMethod.Post));
             Assert.That(handler.Request.RequestUri!.AbsoluteUri, Is.EqualTo("https://server.example/auth/session/exchange"));
-            Assert.That(handler.RequestBody, Is.EqualTo("{\"code\":\"handoff-code\"}"));
+            Assert.That(handler.RequestBody, Is.EqualTo("{\"code\":\"handoff-code\",\"returnUri\":\"http://127.0.0.1:4321/oauth/callback\"}"));
             Assert.That(cache.SavedToken, Is.EqualTo("session-token"));
         });
     }
