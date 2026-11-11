@@ -14,6 +14,7 @@ public partial class App : Application
     private IChatTransport? _chatTransport;
     private PresentationAdapter? _presentationAdapter;
     private ConversationCatalogClient? _conversationCatalog;
+    private TurnCredentialProvider? _turnCredentials;
 
     public App() : this(false) { }
 
@@ -42,7 +43,11 @@ public partial class App : Application
                 currentState,
                 currentNavigator,
                 authClient,
-                () => home?.ConnectLiveAsync() ?? Task.CompletedTask),
+                () =>
+                {
+                    _turnCredentials?.Dispose(); _turnCredentials = null;
+                    return home?.ConnectLiveAsync() ?? Task.CompletedTask;
+                }),
             (currentState, conversation, currentNavigator) => new Chat(
                 currentState,
                 conversation,
@@ -118,11 +123,16 @@ public partial class App : Application
         if (signaling is null || _chatTransport is null)
             return new OfflineCallCoordinator(state, conversation.Id.ToString());
 
+        if (_turnCredentials is null && authClient is OAuthAuthClient oauth &&
+            TryGetConfiguredServer(out Uri? turnServer) && turnServer is not null)
+            _turnCredentials = new TurnCredentialProvider(new HttpClient(), turnServer, oauth.LoadCachedTokenAsync);
+        var engine = new RtcPeerEngine();
+        if (_turnCredentials is not null) engine.UseTurn(_turnCredentials);
         return new CallCoordinator(
             state,
             conversation.TransportId,
             signaling,
-            new RtcPeerEngine(),
+            engine,
             _chatTransport,
             action => Dispatcher.Invoke(action));
     }
@@ -149,6 +159,7 @@ public partial class App : Application
 
     private async Task DisposeConnectivityAsync()
     {
+        _turnCredentials?.Dispose();
         _presentationAdapter?.Dispose();
         _conversationCatalog?.Dispose();
         if (_chatTransport is not null)
