@@ -72,7 +72,7 @@ public sealed class OAuthFlowStore
                 var authorizationState = new OAuthAuthorizationState(
                     provider,
                     codeVerifier,
-                    returnUri ?? new Uri("http://127.0.0.1/"),
+                    returnUri,
                     now.Add(AuthorizationStateTtl));
                 if (_states.TryAdd(state, authorizationState))
                 {
