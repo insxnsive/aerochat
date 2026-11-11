@@ -1,8 +1,11 @@
+using System.Net;
 using System.Net.Http.Headers;
 using System.Text;
 using System.Text.Json;
 using Aerochat.Server.Auth;
+using Aerochat.Server.Data;
 using Aerochat.Server.Data.Entities;
+using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
 
 namespace Aerochat.Server.Tests;
@@ -39,6 +42,15 @@ public sealed class BodyLengthIntegrationTests
             $"/conversations/{conversationId}/messages",
             new StringContent(JsonSerializer.Serialize(new { body = new string('x', 2001), kind = "message" }), Encoding.UTF8, "application/json"));
 
-        Assert.That(await response.Content.ReadAsStringAsync(), Is.EqualTo("{\"error\":\"body_too_long\"}"));
+        string responseBody = await response.Content.ReadAsStringAsync();
+        await using AsyncServiceScope scope = factory.Services.CreateAsyncScope();
+        ChatDb db = scope.ServiceProvider.GetRequiredService<ChatDb>();
+        int persistedCount = await db.Messages.CountAsync(message => message.ConversationId == conversationId);
+        Assert.Multiple(() =>
+        {
+            Assert.That(response.StatusCode, Is.EqualTo(HttpStatusCode.BadRequest));
+            Assert.That(responseBody, Is.EqualTo("{\"error\":\"body_too_long\"}"));
+            Assert.That(persistedCount, Is.Zero);
+        });
     }
 }
