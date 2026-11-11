@@ -150,6 +150,10 @@ public sealed class CallCoordinator : ICallCoordinator
         // call's offer when the id changes; an id-less signal keeps the legacy behavior.
         if (signal.CallId is null)
         {
+            // An id-less ring or offer must not restart a call that is being accepted or is running.
+            if (Session.State is CallSessionState.Connecting or CallSessionState.Connected)
+                return false;
+
             _state.ApplyCallSignal(signal.EventType, _conversationId, signal.Sdp, signal.Candidate, signal.Reason);
             return true;
         }
