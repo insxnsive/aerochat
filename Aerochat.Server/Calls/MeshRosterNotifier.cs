@@ -7,7 +7,7 @@ namespace Aerochat.Server.Calls;
 // after acquiring that lock through its normal route, outside the callback.
 public sealed class MeshRosterNotifier(MeshRooms rooms,GatewayHub gateway,ILogger<MeshRosterNotifier>? logger=null):BackgroundService
 {
-    public void Flush()=>gateway.WithPresenceLock(()=>
+    public void Flush()=>gateway.WithDeliveryLock(()=>
     {
         foreach(var change in rooms.DrainChanges())
             gateway.Publish("mesh.roster",JsonSerializer.SerializeToElement(new{conversationId=change.Conversation,room=change.Snapshot},new JsonSerializerOptions(JsonSerializerDefaults.Web)),change.Snapshot.Participants);
