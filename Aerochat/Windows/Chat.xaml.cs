@@ -1,4 +1,5 @@
 using System.ComponentModel;
+using System.Globalization;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Controls.Primitives;
@@ -9,6 +10,7 @@ using Aerochat.Controls;
 using Aerochat.Connectivity;
 using Aerochat.Connectivity.Rtc;
 using Aerochat.Presentation;
+using Aerochat.Localization;
 
 namespace Aerochat.Windows;
 
@@ -66,18 +68,22 @@ public partial class Chat : Window
     public Exception? LastCallError { get; private set; }
     public string CallStatusText => Calls?.Session.State switch
     {
-        CallSessionState.Starting => "Starting call…",
-        CallSessionState.Ringing => $"Calling {Conversation.Name}…",
-        CallSessionState.Incoming => $"Incoming call from {Conversation.Name}",
+        CallSessionState.Starting => LocalizationManager.Instance.Get("CallStatusStarting"),
+        CallSessionState.Ringing => string.Format(CultureInfo.CurrentCulture,
+            LocalizationManager.Instance.Get("CallStatusRinging"), Conversation.Name),
+        CallSessionState.Incoming => string.Format(CultureInfo.CurrentCulture,
+            LocalizationManager.Instance.Get("CallStatusIncoming"), Conversation.Name),
         CallSessionState.Offering when Calls.Session.Sdp is not null =>
-            $"Incoming call from {Conversation.Name}",
-        CallSessionState.Offering => $"Waiting for {Conversation.Name}…",
-        CallSessionState.Connecting => "Connecting…",
-        CallSessionState.Connected when Calls.IsMuted => "Connected · Muted",
-        CallSessionState.Connected => "Connected",
-        CallSessionState.Failed => "Call failed",
-        CallSessionState.Ended => "Call ended",
-        _ => "Voice call"
+            string.Format(CultureInfo.CurrentCulture,
+                LocalizationManager.Instance.Get("CallStatusIncoming"), Conversation.Name),
+        CallSessionState.Offering => string.Format(CultureInfo.CurrentCulture,
+            LocalizationManager.Instance.Get("CallStatusWaiting"), Conversation.Name),
+        CallSessionState.Connecting => LocalizationManager.Instance.Get("CallStatusConnecting"),
+        CallSessionState.Connected when Calls.IsMuted => LocalizationManager.Instance.Get("CallStatusConnectedMuted"),
+        CallSessionState.Connected => LocalizationManager.Instance.Get("CallStatusConnected"),
+        CallSessionState.Failed => LocalizationManager.Instance.Get("CallStatusFailed"),
+        CallSessionState.Ended => LocalizationManager.Instance.Get("CallStatusEnded"),
+        _ => LocalizationManager.Instance.Get("CallStatusIdle")
     };
     public bool IsStickerPickerOpen => StickerFlyout.IsOpen;
 
@@ -545,7 +551,7 @@ public partial class Chat : Window
         MuteCallButton.Source = new BitmapImage(new Uri(Calls.IsMuted
             ? "pack://application:,,,/Aerochat;component/Resources/AudioPlayer/vol_muted.png"
             : "pack://application:,,,/Aerochat;component/Resources/AudioPlayer/vol_high.png"));
-        MuteCallButton.ToolTip = Calls.IsMuted ? "Unmute" : "Mute";
+        MuteCallButton.ToolTip = LocalizationManager.Instance.Get(Calls.IsMuted ? "CallUnmute" : "CallMute");
         LeaveCallButton.Visibility = session.State is CallSessionState.Idle or CallSessionState.Failed or CallSessionState.Ended
             ? Visibility.Collapsed
             : Visibility.Visible;
