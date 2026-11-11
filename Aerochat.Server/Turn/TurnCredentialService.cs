@@ -47,6 +47,9 @@ public sealed class TurnSettings
         if (urls.Length == 0 && secret is null) return new([], string.Empty, ttl, limit, window);
         if (urls.Length == 0 || string.IsNullOrWhiteSpace(secret)
             || Encoding.UTF8.GetByteCount(secret) < 32 || secret.Any(char.IsControl)
+            || secret.IndexOfAny(['<', '>']) >= 0
+            || new[] { "placeholder", "example", "changeme", "change-me", "change_me" }
+                .Any(marker => secret.Contains(marker, StringComparison.OrdinalIgnoreCase))
             || string.Equals(secret, configuration["Auth:SessionSigningKey"], StringComparison.Ordinal)) throw Invalid();
         foreach (string url in urls)
         {
