@@ -55,12 +55,11 @@ public sealed class ConversationCatalogClient : IConversationCatalogClient, IDis
             new Uri(_server, "conversations"));
         request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", token);
         using HttpResponseMessage response = await _httpClient
-            .SendAsync(request, cancellationToken)
+            .SendAsync(request, HttpCompletionOption.ResponseHeadersRead, cancellationToken)
             .ConfigureAwait(false);
         response.EnsureSuccessStatusCode();
-        return await response.Content
-            .ReadFromJsonAsync<List<ServerConversationSummary>>(cancellationToken: cancellationToken)
-            .ConfigureAwait(false) ?? [];
+        return await BoundedJsonResponse.ReadAsync<List<ServerConversationSummary>>(
+            response, 1024 * 1024, cancellationToken).ConfigureAwait(false) ?? [];
     }
 
     public void Dispose() => _httpClient.Dispose();
