@@ -1268,7 +1268,8 @@ public sealed class CallClientTests
         await coordinator.DrainBackgroundTasksAsync().WaitAsync(TimeSpan.FromSeconds(5));
         Assert.Multiple(() =>
         {
-            Assert.That(signaling.Actions, Has.Count.EqualTo(1), "old peer sent ICE or ended the new call");
+            Assert.That(signaling.Actions.Count(action => action.StartsWith("hangup:", StringComparison.Ordinal)), Is.EqualTo(1));
+            Assert.That(signaling.Actions, Does.Not.Contain("ice:1 1 udp 2113937151 192.0.2.1 5000 typ host generation 0"));
             Assert.That(coordinator.Session.CallId, Is.EqualTo(newId));
             Assert.That(coordinator.Session.State, Is.EqualTo(CallSessionState.Connecting));
             Assert.That(engine.State, Is.EqualTo(RtcPeerState.New), "old state overwrote the replacement engine");
@@ -1322,8 +1323,14 @@ public sealed class CallClientTests
             Task.Run(() => { engine.Mute(); Interlocked.Increment(ref reentered); })
                 .WaitAsync(TimeSpan.FromSeconds(5)).GetAwaiter().GetResult();
         }
-        engine.IceCandidateReady += (_, _) => Reenter();
-        engine.StateChanged += (_, _) => Reenter();
+        engine.IceCandidateReady += (_, candidate) =>
+        {
+            if (kind == "ice" && candidate.Candidate == "1 1 udp 2113937151 192.0.2.1 5000 typ host generation 0") Reenter();
+        };
+        engine.StateChanged += (_, state) =>
+        {
+            if (kind == "connected" && state == RtcPeerState.Connected) Reenter();
+        };
         EmitPeerCallback(engine, engine.CurrentPeer!, kind);
         Assert.That(reentered, Is.EqualTo(1));
     }
