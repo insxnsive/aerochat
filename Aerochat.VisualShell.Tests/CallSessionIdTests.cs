@@ -50,6 +50,30 @@ public sealed class CallSessionIdTests
     }
 
     [Test]
+    public void Restoring_after_a_cancelled_accept_does_not_resurrect_a_hung_up_call()
+    {
+        PresentationState state = DemoData.Create();
+        string conversationId = state.Conversations[0].Id.ToString();
+        using var adapter = new PresentationAdapter(state, new NullTransport());
+        adapter.ApplyCallSignal(new CallSignalEventArgs("call.ring", conversationId, callId: Current));
+        adapter.ApplyCallSignal(new CallSignalEventArgs("call.offer", conversationId, sdp: "offer-sdp", callId: Current));
+        CallSessionPresentation session = state.GetOrCreateCallSession(conversationId);
+        session.TryBeginAccept(out _, out string? callId);
+
+        bool restoredWhileConnecting = session.TryRestoreIncoming(callId);
+        session.TryBeginAccept(out _, out callId);
+        adapter.ApplyCallSignal(new CallSignalEventArgs("call.hangup", conversationId, reason: "peer_disconnected", callId: Current));
+        bool restoredAfterHangup = session.TryRestoreIncoming(callId);
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(restoredWhileConnecting, Is.True);
+            Assert.That(restoredAfterHangup, Is.False);
+            Assert.That(session.State, Is.EqualTo(CallSessionState.Ended));
+        });
+    }
+
+    [Test]
     public void Accepting_takes_the_offer_and_blocks_a_newer_ring()
     {
         PresentationState state = DemoData.Create();
