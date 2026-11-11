@@ -13,7 +13,7 @@ Time-boxed feasibility spike in isolated `task12-rtc-spike` worktree. Scratch pr
 |---|---|---|
 | `SIPSorcery` | **8.0.14** (8.x line) | 8.0.23 exists but pulls nothing newer for net8 media; **GHSA-jwjp-4649-v8jp (high, SCTP SACK OOB DoS)** affects <= 10.0.13, first patched in 10.0.14 (.NET 10 only); 8.0.14 additionally flagged by **GHSA-28gm-jrmw-xx93 (high)** |
 | `SIPSorceryMedia.Windows` | **8.0.14** | requires TFM >= `net8.0-windows10.0.17763`; every 10.x release targets net10.0 only |
-| `SIPSorceryMedia.Encoders` | **8.0.7** (8.x line; **8.0.14 was never published** — the earlier "8.0.14" row here was wrong and caused a silent NU1603 float to 10.0.4) | the net8-era VP8/Vorbis encoder companion (`SIPSorcery.VP8` standalone package is net10-only, all versions) |
+| `SIPSorceryMedia.Encoders` | **10.0.4** (pinned in `Aerochat/Aerochat.csproj`; **8.0.14 was never published**, and requesting it makes NuGet float to 10.0.4 with NU1603; 10.0.4 supports `net8.0-windows10.0.17763`) | the VP8/Vorbis encoder companion used by `Aerochat` (`SIPSorcery.VP8` standalone package is net10-only, all versions) |
 | `SIPSorcery.VP8` | none | net10.0 only across its entire published range |
 
 ## Build verification (performed by orchestrator, real nuget.org access)
@@ -21,7 +21,7 @@ Time-boxed feasibility spike in isolated `task12-rtc-spike` worktree. Scratch pr
 | Probe | Pin | TFM | Result |
 |---|---|---|---|
 | `spike/AudioLoopback` | SIPSorcery 8.0.14 + SIPSorceryMedia.Windows 8.0.14 | net8.0-windows10.0.17763 | **compiles, 0 errors** |
-| `spike/ScreenCaptureVp8` | Requested SIPSorcery 8.0.14 + SIPSorceryMedia.Encoders 8.0.14 (invalid encoder pin) | net8.0-windows10.0.19041 | Prior build does not verify the supported Encoders 8.0.7 pin; probe rebuild required |
+| `spike/ScreenCaptureVp8` | Requested SIPSorcery 8.0.14 + SIPSorceryMedia.Encoders 8.0.14 (invalid encoder pin; resolves to 10.0.4) | net8.0-windows10.0.19041 | `Aerochat/Aerochat.csproj` pins `SIPSorceryMedia.Encoders` 10.0.4 directly |
 | `spike/PeerRelay` | (WebSocket relay, no RTC pkg) | net8.0 | **compiles, 0 errors** |
 
 ## Results
@@ -32,7 +32,7 @@ Worker sandbox could not restore any package (NU1301 SSL/Schannel failure inside
 
 ### 2. Windows.Graphics.Capture -> VP8 — PARTIALLY VERIFIED (build-level)
 
-The scratch probe still requests the invalid SIPSorceryMedia.Encoders 8.0.14 pin. The supported application pins Encoders 8.0.7; a rebuild of this probe with that pin is not verified here. Runtime capture/encode was not exercised. The plan's assumed SIPSorcery.VP8 package does not provide the net8 dependency used by the application.
+The scratch probe still requests the unpublished `SIPSorceryMedia.Encoders` 8.0.14 version, while `Aerochat/Aerochat.csproj` explicitly pins `SIPSorceryMedia.Encoders` 10.0.4. Runtime capture/encode was not exercised in the spike probe. The plan's assumed `SIPSorcery.VP8` package does not provide the net8 dependency used by the application.
 
 ### 3. Two peers over localhost WebSocket relay — PARTIALLY VERIFIED (build-level)
 
@@ -44,7 +44,7 @@ Relay console compiles. The offer/answer exchange between two SIPSorcery peer pr
 
 1. **Known unpatched-on-net8 advisories.** Every net8-compatible SIPSorcery release carries high-severity advisories patched only in the .NET 10 line (SCTP SACK OOB read among them). Exposure is primarily malformed-packet DoS; acceptable for a self-hosted friends-scale v1 if documented, or defer client RTC until a .NET 10 upgrade.
 2. **TFM raise required.** RTC work forces the WPF client from `net8.0-windows7.0` to at least `net8.0-windows10.0.17763`. This is a client-wide change and must be gated through the visual smoke suite.
-3. **Encoder companion swap.** Use `SIPSorceryMedia.Encoders` 8.0.x for VP8; the plan's named `SIPSorcery.VP8` package is net10-only.
+3. **Encoder companion swap.** Use `SIPSorceryMedia.Encoders` 10.0.4 for VP8; the plan's named `SIPSorcery.VP8` package is net10-only.
 
 Task 13 (call signaling state machine) carries none of these risks — it is pure server-side data and can proceed immediately.
 
@@ -53,5 +53,5 @@ Task 13 (call signaling state machine) carries none of these risks — it is pur
 ```xml
 <PackageReference Include="SIPSorcery" Version="8.0.14" />
 <PackageReference Include="SIPSorceryMedia.Windows" Version="8.0.14" />   <!-- TFM net8.0-windows10.0.17763+ -->
-<PackageReference Include="SIPSorceryMedia.Encoders" Version="8.0.7" />   <!-- VP8 on net8; 8.0.14 does NOT exist for this package -->
+<PackageReference Include="SIPSorceryMedia.Encoders" Version="10.0.4" />  <!-- VP8 on net8.0-windows10.0.17763+; 8.0.14 does NOT exist for this package -->
 ```

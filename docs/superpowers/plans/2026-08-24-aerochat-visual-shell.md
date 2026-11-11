@@ -12,7 +12,7 @@
 
 ## Global Constraints
 
-- Work in `C:/Users/insxn/Documents/chataero.v2` on a local `visual-shell` branch.
+- Work from the repository root on a local `visual-shell` branch.
 - Do not push to `origin` or create a public repository.
 - Preserve the existing Windows Live Messenger 2009 visual language. Do not redesign, modernize, restyle, or replace visual assets.
 - Launch directly into a populated Home window.
