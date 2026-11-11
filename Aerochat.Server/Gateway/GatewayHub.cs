@@ -84,6 +84,7 @@ public sealed class GatewayHub
 
     internal T WithPresenceLock<T>(Func<T> action)
     {
+        lock (_deliveryGate)
         lock (_gate)
         {
             return action();
