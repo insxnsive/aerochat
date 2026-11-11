@@ -3,10 +3,11 @@ using System.Net.WebSockets;
 using System.Text;
 using System.Text.Json;
 using Aerochat.Connectivity.Auth;
+using Aerochat.Connectivity.Rtc;
 
 namespace Aerochat.Connectivity;
 
-public sealed class GatewayClient : IChatTransport
+public sealed class GatewayClient : IChatTransport, IMeshEventSource
 {
     private const int ReceiveBufferSize = 16 * 1024;
     internal const int MaxMessageBytes = 256 * 1024;
@@ -54,6 +55,23 @@ public sealed class GatewayClient : IChatTransport
     public event EventHandler<MessageCreatedEventArgs>? MessageCreated;
     public event EventHandler<PresenceUpdatedEventArgs>? PresenceUpdated;
     public event EventHandler<CallSignalEventArgs>? CallSignalReceived;
+
+    // Mesh events stay internal: only the group-call coordinator subscribes, through IMeshEventSource.
+    private readonly object _meshGate = new();
+    private EventHandler<MeshSignalEvent>? _meshSignal;
+    private EventHandler<MeshRosterEvent>? _meshRoster;
+
+    event EventHandler<MeshSignalEvent>? IMeshEventSource.MeshSignalReceived
+    {
+        add { lock (_meshGate) _meshSignal += value; }
+        remove { lock (_meshGate) _meshSignal -= value; }
+    }
+
+    event EventHandler<MeshRosterEvent>? IMeshEventSource.MeshRosterReceived
+    {
+        add { lock (_meshGate) _meshRoster += value; }
+        remove { lock (_meshGate) _meshRoster -= value; }
+    }
 
     public string? LastEventId => Volatile.Read(ref _lastEventId);
 
@@ -503,6 +521,14 @@ public sealed class GatewayClient : IChatTransport
             case "call.screen.stopped":
                 if (GatewayProtocol.TryParseCallSignal(frame, out CallSignalEventArgs? call))
                     InvokeSubscribers(CallSignalReceived, call!);
+                break;
+            case "mesh.signal":
+                if (MeshGatewayProtocol.TryParseSignal(frame.Data, out MeshSignalEvent? meshSignal))
+                    InvokeSubscribers(Volatile.Read(ref _meshSignal), meshSignal!);
+                break;
+            case "mesh.roster":
+                if (MeshGatewayProtocol.TryParseRoster(frame.Data, out MeshRosterEvent? meshRoster))
+                    InvokeSubscribers(Volatile.Read(ref _meshRoster), meshRoster!);
                 break;
         }
 
