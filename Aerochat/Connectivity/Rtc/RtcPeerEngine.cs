@@ -26,6 +26,11 @@ public sealed class RtcPeerEngine : IRtcPeerEngine, IScreenShareFrameSource, ISc
     private readonly object _disposeGate = new();
     private readonly Func<IRtcAudioEndpoint?> _audioEndpointFactory;
     private readonly Func<IRtcVideoEndpoint?> _videoEndpointFactory;
+    private readonly SemaphoreSlim _initialize = new(1);
+    private TurnCredentialProvider? _turn;
+    private TurnCredentialProvider.Lease? _turnLease;
+    private int _lifetime;
+    internal void UseTurn(TurnCredentialProvider provider) => _turn = provider;
     private Task? _disposeTask;
     private RTCPeerConnection? _peer;
     private IRtcAudioEndpoint? _audio;
@@ -70,7 +75,32 @@ public sealed class RtcPeerEngine : IRtcPeerEngine, IScreenShareFrameSource, ISc
     public event EventHandler<ScreenShareFrame>? FrameReceived;
     public RtcPeerState State { get; private set; } = RtcPeerState.New;
 
-    public Task InitializeAsync(CancellationToken cancellationToken = default)
+    public async Task InitializeAsync(CancellationToken cancellationToken = default)
+    {
+        await _initialize.WaitAsync(cancellationToken).ConfigureAwait(false);
+        TurnCredentialProvider.Lease? lease = null;
+        try
+        {
+            int lifetime;
+            lock (_gate)
+            {
+                ObjectDisposedException.ThrowIf(_disposed, this);
+                if (_initialized) return;
+                lifetime = _lifetime;
+            }
+            if (_turn is not null) lease = await _turn.AcquireAsync(cancellationToken).ConfigureAwait(false);
+            lock (_gate)
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                if (lifetime != _lifetime) throw new OperationCanceledException();
+                InitializeCore(cancellationToken, lease?.Value);
+                _turnLease = lease; lease = null;
+            }
+        }
+        finally { lease?.Dispose(); _initialize.Release(); }
+    }
+
+    private Task InitializeCore(CancellationToken cancellationToken, TurnResponse? turn)
     {
         cancellationToken.ThrowIfCancellationRequested();
         lock (_gate)
@@ -79,7 +109,12 @@ public sealed class RtcPeerEngine : IRtcPeerEngine, IScreenShareFrameSource, ISc
             if (_initialized)
                 return Task.CompletedTask;
 
-            RTCPeerConnection peer = new RTCPeerConnection(null);
+            RTCConfiguration configuration = new()
+            {
+                iceServers = turn?.IceServers.SelectMany(s => s.Urls.Select(url =>
+                    new RTCIceServer { urls = url, username = s.Username, credential = s.Credential })).ToList() ?? []
+            };
+            RTCPeerConnection peer = new RTCPeerConnection(configuration);
             _peer = peer;
             peer.onicecandidate += candidate => OnPeerIceCandidate(peer, candidate);
             peer.onconnectionstatechange += state => OnPeerConnectionStateChanged(peer, state);
@@ -253,6 +288,8 @@ public sealed class RtcPeerEngine : IRtcPeerEngine, IScreenShareFrameSource, ISc
         EventHandler<ScreenShareFrame>? decodedFrameHandler;
         lock (_gate)
         {
+            _lifetime++;
+            _turnLease?.Dispose(); _turnLease = null;
             peer = _peer;
             audio = _audio;
             video = _video;
