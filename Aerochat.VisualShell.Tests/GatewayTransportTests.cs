@@ -211,6 +211,42 @@ public sealed class GatewayTransportTests
             Is.EqualTo("wss://server.example/ws?token=token%20with%2Fslash&lastEventId=instance%3A7%2Fnext"));
     }
 
+    [TestCase("http://server.example/")]
+    [TestCase("ws://server.example/")]
+    [TestCase("http://localhost:5080/")]
+    [TestCase("ws://localhost:5080/")]
+    [TestCase("http://0177.0.0.1:5080/")]
+    [TestCase("ws://2130706433:5080/")]
+    [TestCase("http://[::ffff:127.0.0.1]:5080/")]
+    public async Task Gateway_uri_and_connect_reject_cleartext_non_numeric_loopback_servers(string serverUrl)
+    {
+        await using var client = new GatewayClient();
+        var server = new Uri(serverUrl);
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(
+                () => GatewayClient.BuildGatewayUri(server, "token", null),
+                Throws.TypeOf<ArgumentException>());
+            Assert.That(
+                async () => await client.ConnectAsync(server, "token"),
+                Throws.TypeOf<ArgumentException>());
+        });
+    }
+
+    [TestCase("https://server.example/", "wss://server.example/ws?token=token")]
+    [TestCase("wss://server.example/", "wss://server.example/ws?token=token")]
+    [TestCase("http://127.0.0.1:5080/", "ws://127.0.0.1:5080/ws?token=token")]
+    [TestCase("ws://127.0.0.1:5080/", "ws://127.0.0.1:5080/ws?token=token")]
+    [TestCase("http://[::1]:5080/", "ws://[::1]:5080/ws?token=token")]
+    [TestCase("ws://[::1]:5080/", "ws://[::1]:5080/ws?token=token")]
+    public void Gateway_uri_allows_tls_and_exact_numeric_loopback_http_or_ws(string serverUrl, string expected)
+    {
+        Uri uri = GatewayClient.BuildGatewayUri(new Uri(serverUrl), "token", null);
+
+        Assert.That(uri.AbsoluteUri, Is.EqualTo(expected));
+    }
+
     [Test]
     public async Task Gateway_client_send_operations_report_push_only_deviation()
     {
@@ -274,7 +310,7 @@ public sealed class GatewayTransportTests
 
         try
         {
-            await client.ConnectAsync(new Uri("ws://gateway.example"), "token")
+            await client.ConnectAsync(new Uri("wss://gateway.example"), "token")
                 .WaitAsync(TimeSpan.FromSeconds(5));
             TestContext.Progress.WriteLine("connect-returned");
             await handlerStarted.Task.WaitAsync(TimeSpan.FromSeconds(5));
@@ -310,7 +346,7 @@ public sealed class GatewayTransportTests
             handlerCompleted.TrySetResult();
         };
 
-        await client.ConnectAsync(new Uri("ws://gateway.example"), "token")
+        await client.ConnectAsync(new Uri("wss://gateway.example"), "token")
             .WaitAsync(TimeSpan.FromSeconds(5));
         await handlerCompleted.Task.WaitAsync(TimeSpan.FromSeconds(5));
         await client.DisposeAsync().AsTask().WaitAsync(TimeSpan.FromSeconds(5));
@@ -338,7 +374,7 @@ public sealed class GatewayTransportTests
 
         try
         {
-            await client.ConnectAsync(new Uri("ws://gateway.example"), "token")
+            await client.ConnectAsync(new Uri("wss://gateway.example"), "token")
                 .WaitAsync(TimeSpan.FromSeconds(5));
             await socket.ReceiveStarted.Task.WaitAsync(TimeSpan.FromSeconds(5));
 
@@ -386,7 +422,7 @@ public sealed class GatewayTransportTests
 
         try
         {
-            await client.ConnectAsync(new Uri("ws://gateway.example"), "token")
+            await client.ConnectAsync(new Uri("wss://gateway.example"), "token")
                 .WaitAsync(TimeSpan.FromSeconds(5));
             await laterHandlerReceived.Task.WaitAsync(TimeSpan.FromSeconds(5));
             Assert.That(client.LastEventId, Is.EqualTo("gateway:2"));
@@ -420,7 +456,7 @@ public sealed class GatewayTransportTests
 
         try
         {
-            await client.ConnectAsync(new Uri("ws://gateway.example"), "token")
+            await client.ConnectAsync(new Uri("wss://gateway.example"), "token")
                 .WaitAsync(TimeSpan.FromSeconds(5));
             await bothReceived.Task.WaitAsync(TimeSpan.FromSeconds(5));
 
@@ -464,7 +500,7 @@ public sealed class GatewayTransportTests
 
         try
         {
-            await client.ConnectAsync(new Uri("ws://gateway.example"), "token")
+            await client.ConnectAsync(new Uri("wss://gateway.example"), "token")
                 .WaitAsync(TimeSpan.FromSeconds(5));
             await secondFrameReceived.Task.WaitAsync(TimeSpan.FromSeconds(5));
 
@@ -504,7 +540,7 @@ public sealed class GatewayTransportTests
             jitter: null,
             delay: (_, _) => Task.CompletedTask);
 
-        await client.ConnectAsync(new Uri("ws://gateway.example"), "token");
+        await client.ConnectAsync(new Uri("wss://gateway.example"), "token");
         await recovered.ConnectStarted.Task.WaitAsync(TimeSpan.FromSeconds(5));
 
         Assert.Multiple(() =>
@@ -532,7 +568,7 @@ public sealed class GatewayTransportTests
                 return Task.CompletedTask;
             });
 
-        await client.ConnectAsync(new Uri("ws://gateway.example"), "token");
+        await client.ConnectAsync(new Uri("wss://gateway.example"), "token");
         await replacement.ConnectStarted.Task.WaitAsync(TimeSpan.FromSeconds(5));
 
         Task dispose = client.DisposeAsync().AsTask();
@@ -566,7 +602,7 @@ public sealed class GatewayTransportTests
 
         try
         {
-            await client.ConnectAsync(new Uri("ws://gateway.example"), "token")
+            await client.ConnectAsync(new Uri("wss://gateway.example"), "token")
                 .WaitAsync(TimeSpan.FromSeconds(5));
             await handlerStarted.Task.WaitAsync(TimeSpan.FromSeconds(5));
 
@@ -604,7 +640,7 @@ public sealed class GatewayTransportTests
                 await Task.Delay(Timeout.InfiniteTimeSpan, cancellationToken);
             });
 
-        await client.ConnectAsync(new Uri("ws://gateway.example"), "token");
+        await client.ConnectAsync(new Uri("wss://gateway.example"), "token");
         await delayStarted.Task.WaitAsync(TimeSpan.FromSeconds(5));
 
         await client.DisposeAsync().AsTask().WaitAsync(TimeSpan.FromSeconds(5));
@@ -761,10 +797,10 @@ public sealed class GatewayTransportTests
         try
         {
             InvalidOperationException firstFailure = Assert.ThrowsAsync<InvalidOperationException>(
-                async () => await client.ConnectAsync(new Uri("ws://gateway.example"), "token"))!;
+                async () => await client.ConnectAsync(new Uri("wss://gateway.example"), "token"))!;
             Assert.That(firstFailure, Is.SameAs(failure));
 
-            await client.ConnectAsync(new Uri("ws://gateway.example"), "token")
+            await client.ConnectAsync(new Uri("wss://gateway.example"), "token")
                 .WaitAsync(TimeSpan.FromSeconds(5));
 
             Assert.Multiple(() =>
@@ -849,7 +885,7 @@ public sealed class GatewayTransportTests
             jitter: null,
             delay: (_, _) => Task.CompletedTask);
 
-        Task connectTask = client.ConnectAsync(new Uri("ws://gateway.example"), "token");
+        Task connectTask = client.ConnectAsync(new Uri("wss://gateway.example"), "token");
 
         try
         {
@@ -873,7 +909,7 @@ public sealed class GatewayTransportTests
             jitter: null,
             delay: (_, _) => Task.CompletedTask);
 
-        Task connect = client.ConnectAsync(new Uri("ws://gateway.example"), "token");
+        Task connect = client.ConnectAsync(new Uri("wss://gateway.example"), "token");
         await socket.ConnectStarted.Task.WaitAsync(TimeSpan.FromSeconds(5));
 
         ValueTask dispose = client.DisposeAsync();

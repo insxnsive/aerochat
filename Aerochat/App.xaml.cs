@@ -127,11 +127,14 @@ public partial class App : Application
             action => Dispatcher.Invoke(action));
     }
 
-    private static bool TryGetConfiguredServer(out Uri? serverUri)
+    private static bool TryGetConfiguredServer(out Uri? serverUri) =>
+        TryValidateConfiguredServerUri(Environment.GetEnvironmentVariable("AEROCHAT_SERVER_URL"), out serverUri);
+
+    internal static bool TryValidateConfiguredServerUri(string? configuredServer, out Uri? serverUri)
     {
-        string? configuredServer = Environment.GetEnvironmentVariable("AEROCHAT_SERVER_URL");
         if (!Uri.TryCreate(configuredServer, UriKind.Absolute, out serverUri)
-            || (serverUri.Scheme != Uri.UriSchemeHttp && serverUri.Scheme != Uri.UriSchemeHttps)
+            || (serverUri.Scheme != Uri.UriSchemeHttps
+                && !(serverUri.Scheme == Uri.UriSchemeHttp && OAuthAuthClient.HasExactNumericLoopbackHost(serverUri)))
             || !string.IsNullOrEmpty(serverUri.UserInfo)
             || !StringComparer.Ordinal.Equals(serverUri.AbsolutePath, "/")
             || !string.IsNullOrEmpty(serverUri.Query)
