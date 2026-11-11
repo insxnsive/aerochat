@@ -75,8 +75,9 @@ generic controls when the existing visual control can be retained.
   `IGatewaySink`. `WaitForFrameAsync` blocks until a frame, `Complete`, or `Abort`;
   `TerminalAbortReason` exposes why the connection ended (`Closed`, `PolicyViolation`,
   `Overloaded`, ...).
-- `Rest/GatewayEndpoints.cs` — `GET /ws?token=&lastEventId=`. Auth via exact query
-  token through `ConversationAuth`; missing/invalid/no-local-user returns HTTP 401 +
+- `Rest/GatewayEndpoints.cs` - `GET /ws?lastEventId=`. Auth via the
+  `Authorization: Bearer` header; a `token` query parameter is refused with HTTP 400
+  `invalid_request`; missing/invalid/no-local-user returns HTTP 401 +
   `WWW-Authenticate: Bearer`, authenticated non-upgrade GET returns 400. Push-only:
   inbound text/binary closes with policy violation (1008). Close codes: invalid/future
   cursor 1008, expired resync 1000 after ready+resync_required controls,
