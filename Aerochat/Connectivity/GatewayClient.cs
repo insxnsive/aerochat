@@ -2,6 +2,7 @@ using System.IO;
 using System.Net.WebSockets;
 using System.Text;
 using System.Text.Json;
+using Aerochat.Connectivity.Auth;
 
 namespace Aerochat.Connectivity;
 
@@ -194,12 +195,16 @@ public sealed class GatewayClient : IChatTransport
     {
         ArgumentNullException.ThrowIfNull(server);
         ArgumentException.ThrowIfNullOrWhiteSpace(token);
-        if (!string.Equals(server.Scheme, Uri.UriSchemeHttp, StringComparison.OrdinalIgnoreCase)
-            && !string.Equals(server.Scheme, Uri.UriSchemeHttps, StringComparison.OrdinalIgnoreCase)
-            && !string.Equals(server.Scheme, "ws", StringComparison.OrdinalIgnoreCase)
-            && !string.Equals(server.Scheme, "wss", StringComparison.OrdinalIgnoreCase))
+        bool isTls = string.Equals(server.Scheme, Uri.UriSchemeHttps, StringComparison.OrdinalIgnoreCase)
+            || string.Equals(server.Scheme, "wss", StringComparison.OrdinalIgnoreCase);
+        bool isCleartext = string.Equals(server.Scheme, Uri.UriSchemeHttp, StringComparison.OrdinalIgnoreCase)
+            || string.Equals(server.Scheme, "ws", StringComparison.OrdinalIgnoreCase);
+        if (!server.IsAbsoluteUri
+            || (!isTls && !(isCleartext && OAuthAuthClient.HasExactNumericLoopbackHost(server))))
         {
-            throw new ArgumentException("The gateway server URI must use HTTP(S) or WS(S).", nameof(server));
+            throw new ArgumentException(
+                "The gateway server URI must use HTTPS/WSS or exact numeric loopback HTTP/WS.",
+                nameof(server));
         }
 
         UriBuilder builder = new(server)

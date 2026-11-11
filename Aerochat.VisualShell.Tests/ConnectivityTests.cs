@@ -303,6 +303,11 @@ public sealed class ConnectivityTests
     [TestCase("https://server.example/?tenant=other")]
     [TestCase("https://server.example/#fragment")]
     [TestCase("https://server.example/base")]
+    [TestCase("http://server.example/")]
+    [TestCase("http://localhost:5080/")]
+    [TestCase("http://0177.0.0.1:5080/")]
+    [TestCase("http://2130706433:5080/")]
+    [TestCase("http://[::ffff:127.0.0.1]:5080/")]
     public void OAuth_auth_client_rejects_ambiguous_server_uris(string serverUrl)
     {
         using var httpClient = new HttpClient(new RecordingHandler());
@@ -315,6 +320,60 @@ public sealed class ConnectivityTests
                 new RecordingBrowser(),
                 () => new FakeListener("handoff-code")),
             Throws.TypeOf<ArgumentException>());
+    }
+
+    [TestCase("https://server.example/")]
+    [TestCase("http://127.0.0.1:5080/")]
+    [TestCase("http://[::1]:5080/")]
+    public void OAuth_auth_client_and_chat_message_client_allow_https_and_exact_numeric_loopback_http(string serverUrl)
+    {
+        using var httpClient = new HttpClient(new RecordingHandler());
+        var server = new Uri(serverUrl);
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(
+                () => new OAuthAuthClient(
+                    httpClient,
+                    server,
+                    new RecordingTokenCache(),
+                    new RecordingBrowser(),
+                    () => new FakeListener("handoff-code")),
+                Throws.Nothing);
+            Assert.That(
+                () => new ChatMessageClient(httpClient, server, "session-token"),
+                Throws.Nothing);
+            Assert.That(
+                () => new ChatMessageClient(httpClient, server, _ => Task.FromResult<string?>("session-token")),
+                Throws.Nothing);
+            Assert.That(
+                Aerochat.App.TryValidateConfiguredServerUri(serverUrl, out Uri? configured) && configured is not null,
+                Is.True);
+        });
+    }
+
+    [TestCase("http://server.example/")]
+    [TestCase("http://localhost:5080/")]
+    [TestCase("http://0177.0.0.1:5080/")]
+    [TestCase("http://2130706433:5080/")]
+    [TestCase("http://[::ffff:127.0.0.1]:5080/")]
+    public void Chat_message_client_and_configured_server_reject_cleartext_non_numeric_loopback_uris(string serverUrl)
+    {
+        using var httpClient = new HttpClient(new RecordingHandler());
+        var server = new Uri(serverUrl);
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(
+                () => new ChatMessageClient(httpClient, server, "session-token"),
+                Throws.TypeOf<ArgumentException>());
+            Assert.That(
+                () => new ChatMessageClient(httpClient, server, _ => Task.FromResult<string?>("session-token")),
+                Throws.TypeOf<ArgumentException>());
+            Assert.That(
+                Aerochat.App.TryValidateConfiguredServerUri(serverUrl, out _),
+                Is.False);
+        });
     }
 
     [Test]

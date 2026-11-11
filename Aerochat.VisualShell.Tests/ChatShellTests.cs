@@ -32,7 +32,7 @@ public sealed class ChatShellTests
             conversation.Participants.Add(state.CurrentUser);
             var handler = new RecordingHandler();
             var client = new ChatMessageClient(new HttpClient(handler),
-                new Uri("http://localhost:5080/"), "session-token");
+                new Uri("http://127.0.0.1:5080/"), "session-token");
             var chat = new Chat(state, conversation, new WindowNavigator(state), client);
             conversation.Draft = "sent live";
 
@@ -62,7 +62,7 @@ public sealed class ChatShellTests
                 IsServerBacked = true, Recipient = source.Recipient
             };
             var handler = new RecordingHandler();
-            var client = new ChatMessageClient(new HttpClient(handler), new Uri("http://localhost:5080/"), "session-token");
+            var client = new ChatMessageClient(new HttpClient(handler), new Uri("http://127.0.0.1:5080/"), "session-token");
             var chat = new Chat(state, conversation, new WindowNavigator(state), client);
 
             chat.SelectStickerAsync(StickerCatalog.Items[0]).GetAwaiter().GetResult();
