@@ -14,7 +14,8 @@ public sealed class ConversationMessageService(
     IExternalUserStore externalUsers,
     SessionService sessions,
     TimeProvider clock,
-    GatewayHub gateway)
+    GatewayHub gateway,
+    MessageMutationGate mutationGate)
 {
     private static readonly HashSet<string> MessageKinds =
     ["message", "sticker", "gif", "system"];
@@ -34,7 +35,14 @@ public sealed class ConversationMessageService(
         "HighFive.png"
     };
 
-    public async Task<IResult> SendAsync(
+    public async Task<IResult> SendAsync(HttpContext httpContext,string conversationId,SendMessageRequest? request,CancellationToken cancellationToken)
+    {
+        await mutationGate.Semaphore.WaitAsync(cancellationToken);
+        try { return await SendCoreAsync(httpContext,conversationId,request,cancellationToken); }
+        finally { mutationGate.Semaphore.Release(); }
+    }
+
+    private async Task<IResult> SendCoreAsync(
         HttpContext httpContext,
         string conversationId,
         SendMessageRequest? request,

@@ -21,6 +21,9 @@ public static class ConversationEndpoints
         endpoints.MapGet("/conversations", GetConversationsAsync);
         endpoints.MapGet("/conversations/{conversationId}/messages", GetMessagesAsync);
         endpoints.MapPost("/conversations/{conversationId}/messages", SendMessageAsync);
+        endpoints.MapDelete("/conversations/{conversationId}/messages/{messageId}",
+            (HttpContext http,string conversationId,string messageId,MessageDeletionService service,CancellationToken token)
+                =>service.DeleteAsync(http,conversationId,messageId,token));
     }
 
     private static async Task<IResult> GetConversationsAsync(

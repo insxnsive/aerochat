@@ -95,6 +95,8 @@ internal static class ServerComposition
         builder.Services.AddDbContext<ChatDb>(options => options.UseSqlite(chatConnectionString));
         builder.Services.AddScoped<IExternalUserStore, EfExternalUserStore>();
         builder.Services.AddScoped<ConversationMessageService>();
+        builder.Services.AddSingleton<MessageMutationGate>();
+        builder.Services.AddScoped<MessageDeletionService>();
         builder.Services.AddHttpClient<IOAuthProviderClient, OAuthProviderClient>();
         builder.Services.AddHttpClient<TenorProxyService>().RemoveAllLoggers();
         builder.Services.AddScoped(sp => new OAuthFlowService(
