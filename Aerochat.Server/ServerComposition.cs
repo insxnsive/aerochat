@@ -66,6 +66,9 @@ internal static class ServerComposition
             AllowedOrigins = ParseAllowedOrigins(builder.Configuration["Gateway:AllowedOrigins"])
         };
         builder.Services.AddSingleton(gatewayOptions);
+        builder.Services.AddSingleton<MeshSignalRateLimiter>();
+        builder.Services.AddSingleton<MeshRooms>();
+        builder.Services.AddHostedService<MeshRosterNotifier>();
         builder.Services.AddSingleton<CallRegistry>();
         builder.Services.AddSingleton<GatewayHub>(sp =>
         {
@@ -73,7 +76,11 @@ internal static class ServerComposition
             registry.EnableGatewayPresence();
             return new GatewayHub(sp.GetRequiredService<GatewayOptions>())
             {
-                PresenceChanged = registry.SetGatewayPresence
+                PresenceChanged = (user, connected) =>
+                {
+                    registry.SetGatewayPresence(user, connected);
+                    sp.GetRequiredService<MeshRooms>().SetPresence(user, connected);
+                }
             };
         });
         builder.Services.AddSingleton<ConnectedCallCleanupService>();
@@ -115,6 +122,7 @@ internal static class ServerComposition
         app.MapOAuthEndpoints();
         app.MapConversationEndpoints();
         app.MapCallEndpoints();
+        app.MapMeshEndpoints();
         app.MapGifEndpoints();
         app.MapGatewayEndpoints();
         app.MapTurnEndpoints();

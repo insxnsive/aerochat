@@ -419,10 +419,14 @@ public sealed class GatewayHub
                     _maxFrameBytes);
                 record = new GatewayEventRecord(sequence, eventId, type, envelope, audienceSnapshot);
                 _sequence = sequence;
-                _replay.AddLast(record);
-                while (_replay.Count > _replayCapacity)
+                // Mesh signals belong to the current edge lifetime, never to reconnect replay.
+                if (!string.Equals(type, "mesh.signal", StringComparison.Ordinal))
                 {
-                    _replay.RemoveFirst();
+                    _replay.AddLast(record);
+                    while (_replay.Count > _replayCapacity)
+                    {
+                        _replay.RemoveFirst();
+                    }
                 }
 
                 recipients = GetRecipientsLocked(audienceSnapshot);
