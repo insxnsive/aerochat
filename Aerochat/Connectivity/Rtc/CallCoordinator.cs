@@ -150,6 +150,10 @@ public sealed class CallCoordinator : ICallCoordinator
         // call's offer when the id changes; an id-less signal keeps the legacy behavior.
         if (signal.CallId is null)
         {
+            // An id-less ring or offer must not restart a call that is being accepted or is running.
+            if (Session.State is CallSessionState.Connecting or CallSessionState.Connected)
+                return false;
+
             _state.ApplyCallSignal(signal.EventType, _conversationId, signal.Sdp, signal.Candidate, signal.Reason);
             return true;
         }
@@ -432,14 +436,22 @@ public sealed class CallCoordinator : ICallCoordinator
                     ClearCallId();
                     _remoteDescriptionApplied = false;
                     _pendingCandidates.Clear();
-                    await _engine.Hangup(signal.Reason ?? "remote hangup").ConfigureAwait(false);
-                    _role = CallRole.None;
-                    ApplyPresentation(() => _state.ApplyCallSignal(
-                        signal.EventType,
-                        _conversationId,
-                        signal.Sdp,
-                        signal.Candidate,
-                        signal.Reason));
+                    try
+                    {
+                        await _engine.Hangup(signal.Reason ?? "remote hangup").ConfigureAwait(false);
+                    }
+                    finally
+                    {
+                        // The call is over for the user even when releasing the media fails.
+                        _role = CallRole.None;
+                        ApplyPresentation(() => _state.ApplyCallSignal(
+                            signal.EventType,
+                            _conversationId,
+                            signal.Sdp,
+                            signal.Candidate,
+                            signal.Reason));
+                    }
+
                     break;
             }
         }
