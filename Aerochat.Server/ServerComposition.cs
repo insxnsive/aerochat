@@ -41,6 +41,9 @@ internal static class ServerComposition
         builder.Services.AddSingleton<TimeProvider>(TimeProvider.System);
         builder.Services.AddSingleton(TurnSettings.FromConfiguration(builder.Configuration));
         builder.Services.AddSingleton<TurnCredentialService>();
+        builder.Services.AddSingleton(Aerochat.Server.Moderation.ModerationSettings.FromConfiguration(builder.Configuration));
+        builder.Services.AddSingleton<Aerochat.Server.Moderation.ModerationQuota>();
+        builder.Services.AddScoped<Aerochat.Server.Moderation.ModerationAudit>();
         RateLimitOptions rateLimitOptions = new()
         {
             Limit = builder.Configuration.GetValue("RateLimit:Limit", 30),
