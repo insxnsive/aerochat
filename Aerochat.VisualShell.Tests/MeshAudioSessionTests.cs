@@ -28,7 +28,7 @@ public sealed class MeshAudioSessionTests
     public async Task Three_real_peer_connections_share_one_capture_and_keep_playback_separate()
     {
         int captures=0;var capture=new Capture();var sinks=new List<Playback>();
-        await using var owner=new MeshAudioSession(()=>{captures++;return capture;},()=>{var sink=new Playback();sinks.Add(sink);return sink;});
+        await using var owner=new MeshAudioSession(()=>{captures++;return capture;},()=>{var sink=new Playback();sinks.Add(sink);return sink;},initialMuted:false);
         var peers=new List<RtcPeerEngine>();var remotes=new List<RtcPeerEngine>();
         try
         {
@@ -82,7 +82,7 @@ public sealed class MeshAudioSessionTests
     [Test]
     public async Task Incompatible_codec_is_rejected_and_one_bad_subscriber_does_not_drop_other_peers()
     {
-        var capture=new Capture();await using var owner=new MeshAudioSession(()=>capture,()=>new Playback());var first=await owner.AddPeerAsync();var second=await owner.AddPeerAsync();
+        var capture=new Capture();await using var owner=new MeshAudioSession(()=>capture,()=>new Playback(),initialMuted:false);var first=await owner.AddPeerAsync();var second=await owner.AddPeerAsync();
         var a=Audio(first);var b=Audio(second);Assert.Throws<InvalidOperationException>(()=>a.SetFormat(new AudioFormat(SDPWellKnownMediaFormatsEnum.PCMA)));
         await a.StartAsync();await b.StartAsync();int received=0;a.EncodedSample+=(_,_)=>throw new InvalidOperationException("fixture");b.EncodedSample+=(_,_)=>received++;
         Assert.DoesNotThrow(()=>capture.Emit());Assert.That(received,Is.EqualTo(1));
