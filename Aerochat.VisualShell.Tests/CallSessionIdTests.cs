@@ -9,6 +9,47 @@ public sealed class CallSessionIdTests
     private const string Other = "22222222-2222-2222-2222-222222222222";
 
     [Test]
+    public void A_replayed_ring_of_an_ended_call_is_not_adopted_by_the_session()
+    {
+        PresentationState state = DemoData.Create();
+        string conversationId = state.Conversations[0].Id.ToString();
+        using var adapter = new PresentationAdapter(state, new NullTransport());
+        adapter.ApplyCallSignal(new CallSignalEventArgs("call.ring", conversationId, callId: Current));
+        adapter.ApplyCallSignal(new CallSignalEventArgs("call.hangup", conversationId, reason: "peer_disconnected", callId: Current));
+        CallSessionPresentation session = state.GetOrCreateCallSession(conversationId);
+
+        adapter.ApplyCallSignal(new CallSignalEventArgs("call.ring", conversationId, callId: Current));
+        adapter.ApplyCallSignal(new CallSignalEventArgs("call.offer", conversationId, sdp: "replayed-offer", callId: Current));
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(session.State, Is.EqualTo(CallSessionState.Ended));
+            Assert.That(session.CallId, Is.Null);
+            Assert.That(session.Sdp, Is.Null);
+        });
+    }
+
+    [Test]
+    public void A_call_that_a_newer_ring_replaced_is_remembered_as_ended()
+    {
+        PresentationState state = DemoData.Create();
+        string conversationId = state.Conversations[0].Id.ToString();
+        using var adapter = new PresentationAdapter(state, new NullTransport());
+        adapter.ApplyCallSignal(new CallSignalEventArgs("call.ring", conversationId, callId: Current));
+        adapter.ApplyCallSignal(new CallSignalEventArgs("call.ring", conversationId, callId: Other));
+        adapter.ApplyCallSignal(new CallSignalEventArgs("call.hangup", conversationId, reason: "peer_disconnected", callId: Other));
+        CallSessionPresentation session = state.GetOrCreateCallSession(conversationId);
+
+        adapter.ApplyCallSignal(new CallSignalEventArgs("call.ring", conversationId, callId: Current));
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(session.State, Is.EqualTo(CallSessionState.Ended));
+            Assert.That(session.CallId, Is.Null);
+        });
+    }
+
+    [Test]
     public void Accepting_takes_the_offer_and_blocks_a_newer_ring()
     {
         PresentationState state = DemoData.Create();

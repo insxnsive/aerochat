@@ -20,9 +20,28 @@ public sealed class CallSessionPresentation : ObservableObject
     private string? _candidate;
     private string? _reason;
     private string? _callId;
+    private const int EndedCallMemory = 8;
+    private readonly Queue<string> _endedCallIds = new();
 
     public required string ConversationId { get; init; }
-    public string? CallId { get => _callId; private set => SetProperty(ref _callId, value); }
+
+    public string? CallId
+    {
+        get => _callId;
+        private set
+        {
+            // Remember every call id the session stops following (ended, failed or replaced), so a
+            // replay of it is not adopted again as a new call.
+            if (_callId is not null && _callId != value)
+            {
+                _endedCallIds.Enqueue(_callId);
+                while (_endedCallIds.Count > EndedCallMemory)
+                    _endedCallIds.Dequeue();
+            }
+
+            SetProperty(ref _callId, value);
+        }
+    }
     public CallSessionState State { get => _state; private set => SetProperty(ref _state, value); }
     public string? Sdp { get => _sdp; private set => SetProperty(ref _sdp, value); }
     public string? Candidate { get => _candidate; private set => SetProperty(ref _candidate, value); }
@@ -59,6 +78,10 @@ public sealed class CallSessionPresentation : ObservableObject
 
         if (eventType is "call.ring" or "call.offer")
         {
+            // A call that already ended or was replaced is never adopted again.
+            if (_endedCallIds.Contains(callId))
+                return false;
+
             // A call that is already being placed or running is never replaced or restarted.
             if (IsCallInProgress)
                 return false;

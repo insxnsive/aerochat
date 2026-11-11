@@ -46,7 +46,7 @@ public sealed class CallCoordinator : ICallCoordinator
     private bool _hangupCompleted;
     private CallRole _role;
     private string? _callId;
-    private const int EndedCallMemory = 2;
+    private const int EndedCallMemory = 8;
     private readonly Queue<string> _endedCallIds = new();
 
     public CallCoordinator(
@@ -361,6 +361,7 @@ public sealed class CallCoordinator : ICallCoordinator
                         // A different call: ignore it while this one is answered, otherwise follow it.
                         if (_callId is not null && _remoteDescriptionApplied)
                             break;
+                        ClearCallId();
                         _callId = signal.CallId;
                         _remoteDescriptionApplied = false;
                         _pendingCandidates.Clear();
@@ -499,25 +500,32 @@ public sealed class CallCoordinator : ICallCoordinator
         {
             await _signaling.IceAsync(_conversationId, candidate.Candidate, callId: callId).ConfigureAwait(false);
         }
-        catch (CallStaleGenerationException)
-        {
-            // The server already moved on to another call; this candidate is simply dropped.
-        }
         catch when (Volatile.Read(ref _disposed) != 0)
         {
         }
+        catch (CallStaleGenerationException)
+        {
+            // The server no longer knows the call this candidate belongs to. If that is still our
+            // current call, the server ended or replaced it, so end it here without telling the server
+            // again; a candidate of an older call is simply dropped.
+            await EndCallAfterFailureAsync("Call ended by the server", onlyIfCallId: callId).ConfigureAwait(false);
+        }
         catch (Exception)
         {
-            await EndCallAfterFailureAsync("ICE signaling failed").ConfigureAwait(false);
+            await EndCallAfterFailureAsync("ICE signaling failed", onlyIfCallId: callId).ConfigureAwait(false);
         }
     }
 
-    private async Task EndCallAfterFailureAsync(string reason, bool notifyRemote = false)
+    private async Task EndCallAfterFailureAsync(string reason, bool notifyRemote = false, string? onlyIfCallId = null)
     {
         await _operations.WaitAsync().ConfigureAwait(false);
         try
         {
             if (_hangupCompleted)
+                return;
+
+            // A failure that belongs to an older call must not end the call that is running now.
+            if (onlyIfCallId is not null && _callId != onlyIfCallId)
                 return;
 
             _hangupCompleted = true;
