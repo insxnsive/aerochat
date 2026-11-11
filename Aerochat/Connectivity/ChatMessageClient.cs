@@ -69,7 +69,7 @@ public sealed class ChatMessageClient
             new Uri(_server, $"conversations/{Uri.EscapeDataString(conversationId)}/messages"));
         request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", token);
         request.Content = JsonContent.Create(new { body, kind, refPayloadJson });
-        using HttpResponseMessage response = await _httpClient.SendAsync(request, cancellationToken).ConfigureAwait(false);
+        using HttpResponseMessage response = await _httpClient.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, cancellationToken).ConfigureAwait(false);
         response.EnsureSuccessStatusCode();
         return true;
     }
