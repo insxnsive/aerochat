@@ -512,6 +512,7 @@ public sealed class GatewayTransportTests
             await client.ConnectAsync(new Uri("wss://gateway.example"), "token")
                 .WaitAsync(TimeSpan.FromSeconds(5));
             await laterHandlerReceived.Task.WaitAsync(TimeSpan.FromSeconds(5));
+            await SpinWaitAsync(() => client.LastEventId == "gateway:2");
             Assert.That(client.LastEventId, Is.EqualTo("gateway:2"));
         }
         finally
