@@ -1,114 +1,99 @@
 ﻿using System;
 using System.Collections;
 using System.Collections.Generic;
-using System.Diagnostics.CodeAnalysis;
 using System.Linq;
 using System.Runtime.CompilerServices;
-using System.Text;
-using System.Threading.Tasks;
 
 namespace Aerochat.Helpers
 {
-    /// <summary>
-    ///     Weak dictionary where key/value pairs are culled if the value object is garbage collected.
-    ///     <see href="https://github.com/bhaeussermann/weak-dictionary/blob/main/src/WeakDictionary/WeakDictionary.cs">Original implementation</see>
-    /// </summary>
+    /// <summary>Weak values with serialized access and identity-checked finalizer cleanup.</summary>
     public class WeakDictionary<TKey, TValue> : IDictionary<TKey, TValue>
+        where TKey : notnull
         where TValue : class
     {
+        private readonly object _gate = new();
         private readonly IDictionary<TKey, WeakReference> _internalDictionary = new Dictionary<TKey, WeakReference>();
-        private readonly ConditionalWeakTable<TValue, Finalizer> _conditionalWeakTable = new ConditionalWeakTable<TValue, Finalizer>();
+        private readonly ConditionalWeakTable<TValue, Finalizer> _conditionalWeakTable = new();
 
         public TValue this[TKey key]
         {
-            get => (TValue)this._internalDictionary[key].Target;
-            set
-            {
-                Remove(key);
-                Add(key, value);
-            }
+            get { lock (_gate) return (TValue)_internalDictionary[key].Target!; }
+            set { lock (_gate) { Remove(key); Add(key, value); } }
         }
-
-        public ICollection<TKey> Keys => this._internalDictionary.Keys;
-
-        public ICollection<TValue> Values => this._internalDictionary.Values.Select(r => (TValue)r.Target).ToArray();
-
-        public int Count => this._internalDictionary.Count;
-
+        public ICollection<TKey> Keys { get { lock (_gate) return _internalDictionary.Keys.ToArray(); } }
+        public ICollection<TValue> Values { get { lock (_gate) return _internalDictionary.Values.Select(r => (TValue)r.Target!).ToArray(); } }
+        public int Count { get { lock (_gate) return _internalDictionary.Count; } }
         public bool IsReadOnly => false;
 
         public void Add(TKey key, TValue value)
         {
-            this._internalDictionary.Add(key, new WeakReference(value));
-            var finalizer = new Finalizer(key);
-            finalizer.ValueFinalized += k => Remove(k);
-            this._conditionalWeakTable.Add(value, finalizer);
-        }
-
-        public void Add(KeyValuePair<TKey, TValue> item) => Add(item.Key, item.Value);
-
-        public void Clear() => this._internalDictionary.Clear();
-
-        public bool Contains(KeyValuePair<TKey, TValue> item)
-        {
-            return this._internalDictionary.TryGetValue(item.Key, out var valueReference) && valueReference.Target.Equals(item.Value);
-        }
-
-        public bool ContainsKey(TKey key) => this._internalDictionary.ContainsKey(key);
-
-        public void CopyTo(KeyValuePair<TKey, TValue>[] array, int arrayIndex)
-        {
-            foreach (KeyValuePair<TKey, WeakReference> keyValuePair in this._internalDictionary)
+            lock (_gate)
             {
-                array[arrayIndex++] = new KeyValuePair<TKey, TValue>(keyValuePair.Key, (TValue)keyValuePair.Value.Target);
+                var reference = new WeakReference(value);
+                _internalDictionary.Add(key, reference);
+                var finalizer = _conditionalWeakTable.GetValue(value, _ => new Finalizer());
+                finalizer.ValueFinalized += () => RemoveFinalized(key, reference);
             }
         }
-
-        public bool Remove(TKey key) => this._internalDictionary.Remove(key);
-
-        public bool Remove(KeyValuePair<TKey, TValue> item)
+        public bool TryAdd(TKey key, TValue value)
         {
-            return this._internalDictionary.TryGetValue(item.Key, out var valueReference)
-                && valueReference.Target.Equals(item.Value)
-                && this._internalDictionary.Remove(item.Key);
-        }
-
-        public bool TryGetValue(TKey key, out TValue value)
-        {
-            if (this._internalDictionary.TryGetValue(key, out var valueReference))
+            lock (_gate)
             {
-                value = (TValue)valueReference.Target;
+                if (_internalDictionary.ContainsKey(key)) return false;
+                Add(key, value);
                 return true;
             }
-
-            value = default;
-            return false;
         }
-
+        public void Add(KeyValuePair<TKey, TValue> item) => Add(item.Key, item.Value);
+        public void Clear() { lock (_gate) _internalDictionary.Clear(); }
+        public bool ContainsKey(TKey key) { lock (_gate) return _internalDictionary.ContainsKey(key); }
+        public bool Contains(KeyValuePair<TKey, TValue> item)
+        {
+            lock (_gate) return TryGetValue(item.Key, out var value) && EqualityComparer<TValue>.Default.Equals(value, item.Value);
+        }
+        public void CopyTo(KeyValuePair<TKey, TValue>[] array, int arrayIndex)
+        {
+            KeyValuePair<TKey, TValue>[] snapshot;
+            lock (_gate) snapshot = Snapshot();
+            ((ICollection<KeyValuePair<TKey, TValue>>)snapshot).CopyTo(array, arrayIndex);
+        }
+        public bool Remove(TKey key) { lock (_gate) return _internalDictionary.Remove(key); }
+        public bool Remove(KeyValuePair<TKey, TValue> item)
+        {
+            lock (_gate) return Contains(item) && _internalDictionary.Remove(item.Key);
+        }
+        public bool TryGetValue(TKey key, out TValue value)
+        {
+            lock (_gate)
+            {
+                if (_internalDictionary.TryGetValue(key, out var reference) && reference.Target is TValue target)
+                {
+                    value = target;
+                    return true;
+                }
+                value = default!;
+                return false;
+            }
+        }
         public IEnumerator<KeyValuePair<TKey, TValue>> GetEnumerator()
         {
-            return this._internalDictionary.Select(kvp => new KeyValuePair<TKey, TValue>(kvp.Key, (TValue)kvp.Value.Target)).GetEnumerator();
+            lock (_gate) return ((IEnumerable<KeyValuePair<TKey, TValue>>)Snapshot()).GetEnumerator();
         }
-
         IEnumerator IEnumerable.GetEnumerator() => GetEnumerator();
-
+        private KeyValuePair<TKey, TValue>[] Snapshot() => _internalDictionary
+            .Select(pair => new KeyValuePair<TKey, TValue>(pair.Key, (TValue)pair.Value.Target!)).ToArray();
+        private void RemoveFinalized(TKey key, WeakReference reference)
+        {
+            lock (_gate)
+            {
+                if (_internalDictionary.TryGetValue(key, out var current) && ReferenceEquals(current, reference))
+                    _internalDictionary.Remove(key);
+            }
+        }
         private sealed class Finalizer
         {
-            private readonly TKey valueKey;
-
-            public Finalizer(TKey valueKey)
-            {
-                this.valueKey = valueKey;
-            }
-
-            ~Finalizer()
-            {
-                ValueFinalized?.Invoke(this.valueKey);
-            }
-
-            public event ValueFinalizedDelegate ValueFinalized;
+            ~Finalizer() { ValueFinalized?.Invoke(); }
+            public event Action? ValueFinalized;
         }
-
-        private delegate void ValueFinalizedDelegate(TKey valueKey);
     }
 }

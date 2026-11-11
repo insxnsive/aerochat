@@ -9,6 +9,7 @@ namespace Aerochat.Connectivity;
 public sealed class GatewayClient : IChatTransport
 {
     private const int ReceiveBufferSize = 16 * 1024;
+    internal const int MaxMessageBytes = 256 * 1024;
     private const string PushOnlyMessage =
         "The Aerochat gateway is push-only; outbound messages and typing are not supported.";
 
@@ -418,7 +419,8 @@ public sealed class GatewayClient : IChatTransport
         CancellationToken cancellationToken)
     {
         byte[] buffer = new byte[ReceiveBufferSize];
-        using var frame = new MemoryStream();
+        using var frame = new MemoryStream(MaxMessageBytes);
+        int messageBytes = 0;
         while (socket.State == WebSocketState.Open)
         {
             WebSocketReceiveResult result = await socket.ReceiveAsync(
@@ -426,6 +428,15 @@ public sealed class GatewayClient : IChatTransport
                 cancellationToken).ConfigureAwait(false);
             if (result.MessageType == WebSocketMessageType.Close)
                 return;
+
+            if (result.Count > MaxMessageBytes - messageBytes)
+            {
+                socket.Abort();
+                return;
+            }
+            messageBytes += result.Count;
+            if (result.EndOfMessage)
+                messageBytes = 0;
 
             if (result.MessageType != WebSocketMessageType.Text)
             {
