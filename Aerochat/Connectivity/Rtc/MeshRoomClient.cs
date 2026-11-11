@@ -51,21 +51,29 @@ internal sealed class MeshRoomClient:IMeshRoomClient
     public async Task<MeshRoomSnapshot> JoinAsync(Guid conversation,Guid? room,CancellationToken token=default)
     {
         if(room==Guid.Empty)throw new ArgumentException("Invalid mesh room.",nameof(room));
-        return MeshRoomWire.Parse(await SendAsync(conversation,"join",new{version=1,roomId=room},true,token).ConfigureAwait(false));
+        var joined=MeshRoomWire.Parse(await SendAsync(conversation,"join",new{version=1,roomId=room},true,token).ConfigureAwait(false));
+        // A successful join is always into a live room: the one requested, or a new one when none was named.
+        if(joined.RoomId is null||(room is not null&&joined.RoomId!=room))throw MeshRoomWire.Invalid();
+        return joined;
     }
     public async Task<MeshRoomSnapshot> LeaveAsync(Guid conversation,Guid room,CancellationToken token=default)
     {
         MeshRoomWire.RequireId(room);
-        return MeshRoomWire.Parse(await SendAsync(conversation,"leave",new{version=1,roomId=room},true,token).ConfigureAwait(false));
+        var left=MeshRoomWire.Parse(await SendAsync(conversation,"leave",new{version=1,roomId=room},true,token).ConfigureAwait(false));
+        // After leaving, the room either continues under the same id or has closed.
+        if(left.RoomId is not null&&left.RoomId!=room)throw MeshRoomWire.Invalid();
+        return left;
     }
     public async Task SignalAsync(Guid conversation,MeshOutgoingSignal signal,CancellationToken token=default)
     {
+        ArgumentNullException.ThrowIfNull(signal);
         MeshRoomWire.RequireId(signal.RoomId);MeshRoomWire.RequireId(signal.EdgeId);MeshRoomWire.RequireId(signal.To);
         bool ice=signal.Action=="ice";
         if(signal.Action is not ("ice" or "offer" or "answer")||string.IsNullOrWhiteSpace(ice?signal.Candidate:signal.Sdp)
             ||(ice?signal.Sdp is not null:signal.Candidate is not null)||new[]{signal.Sdp,signal.Candidate}.Any(s=>s is not null&&Encoding.UTF8.GetByteCount(s)>64*1024))throw new ArgumentException("Invalid mesh signal.",nameof(signal));
         var body=new{version=1,roomId=signal.RoomId,edgeId=signal.EdgeId,to=signal.To,action=signal.Action,sdp=signal.Sdp,candidate=signal.Candidate};
-        if(JsonSerializer.SerializeToUtf8Bytes(body).Length>256*1024-256)throw new ArgumentException("Mesh signal exceeds its byte limit.",nameof(signal));
+        // The server adds conversationId, from and the gateway envelope, then checks against its frame cap minus 256.
+        if(JsonSerializer.SerializeToUtf8Bytes(body).Length>256*1024-512)throw new ArgumentException("Mesh signal exceeds its byte limit.",nameof(signal));
         await SendAsync(conversation,"signal",body,false,token).ConfigureAwait(false);
     }
     private async Task<JsonElement> SendAsync(Guid conversation,string? action,object? body,bool readRoom,CancellationToken token)
@@ -87,8 +95,15 @@ internal sealed class MeshRoomClient:IMeshRoomClient
                 string? code=null;TimeSpan? retry=null;
                 if(response.StatusCode is HttpStatusCode.Conflict or HttpStatusCode.TooManyRequests)
                 {
-                    var error=await ReadJsonAsync(response,4096,deadline.Token).ConfigureAwait(false);
-                    if(MeshRoomWire.IsObject(error)&&error.TryGetProperty("error",out var value)&&value.ValueKind==JsonValueKind.String&&Codes.Contains(value.GetString()!))code=value.GetString();
+                    try
+                    {
+                        var error=await ReadJsonAsync(response,4096,deadline.Token).ConfigureAwait(false);
+                        if(MeshRoomWire.IsObject(error)&&error.TryGetProperty("error",out var value)&&value.ValueKind==JsonValueKind.String&&Codes.Contains(value.GetString()!))code=value.GetString();
+                    }
+                    catch(Exception failure)when(failure is InvalidDataException or JsonException)
+                    {
+                        // An oversized or malformed error body still reports the status and Retry-After.
+                    }
                 }
                 if(response.StatusCode==HttpStatusCode.TooManyRequests&&response.Headers.RetryAfter is { } header)
                 {

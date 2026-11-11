@@ -108,7 +108,8 @@ public sealed class MeshRoomClientTests
     public void Room_and_error_bodies_have_separate_byte_limits()
     {
         var h=new Handler{Reply=(r,t)=>Task.FromResult(Ok(Capability.PadRight(16385)))};using var http=new HttpClient(h);var client=Client(http);Assert.ThrowsAsync<InvalidDataException>(async()=>await client.ReadAsync(Conversation));
-        h.Reply=(r,t)=>Task.FromResult(new HttpResponseMessage(HttpStatusCode.Conflict){Content=new StringContent("{\"error\":\"mesh_stale_room\"}".PadRight(4097))});Assert.ThrowsAsync<InvalidDataException>(async()=>await client.ReadAsync(Conversation));
+        h.Reply=(r,t)=>Task.FromResult(new HttpResponseMessage(HttpStatusCode.Conflict){Content=new StringContent("{\"error\":\"mesh_stale_room\"}".PadRight(4097))});
+        var error=Assert.ThrowsAsync<MeshRequestException>(async()=>await client.ReadAsync(Conversation))!;Assert.That(error.StatusCode,Is.EqualTo(HttpStatusCode.Conflict));Assert.That(error.Code,Is.Null);
     }
     private sealed class CountingStream(byte[] bytes):MemoryStream(bytes)
     {
@@ -149,5 +150,40 @@ public sealed class MeshRoomClientTests
     {
         var h=new Handler{Reply=(r,t)=>{var response=new HttpResponseMessage(HttpStatusCode.TooManyRequests){Content=new StringContent("{\"error\":\"rate_limited\"}")};response.Headers.RetryAfter=new RetryConditionHeaderValue(DateTimeOffset.UtcNow.AddDays(future?100:-100));return Task.FromResult(response);}};
         using var http=new HttpClient(h);var error=Assert.ThrowsAsync<MeshRequestException>(async()=>await Client(http).ReadAsync(Conversation))!;Assert.That(error.RetryAfter,Is.EqualTo(TimeSpan.FromSeconds(future?300:1)));
+    }
+    [TestCase(HttpStatusCode.Conflict)][TestCase(HttpStatusCode.TooManyRequests)]
+    public void Malformed_error_bodies_still_report_status_and_clamped_retry(HttpStatusCode status)
+    {
+        var h=new Handler{Reply=(r,t)=>{var response=new HttpResponseMessage(status){Content=new StringContent("{\"error\":")};response.Headers.RetryAfter=new RetryConditionHeaderValue(TimeSpan.FromDays(1));return Task.FromResult(response);}};
+        using var http=new HttpClient(h);var error=Assert.ThrowsAsync<MeshRequestException>(async()=>await Client(http).ReadAsync(Conversation))!;
+        Assert.That(error.StatusCode,Is.EqualTo(status));Assert.That(error.Code,Is.Null);
+        Assert.That(error.RetryAfter,Is.EqualTo(status==HttpStatusCode.TooManyRequests?TimeSpan.FromMinutes(5):null));
+    }
+    [Test]
+    public void Signal_leaves_envelope_headroom_and_rejects_a_null_signal()
+    {
+        var h=new Handler();using var http=new HttpClient(h);var client=Client(http);
+        Assert.ThrowsAsync<ArgumentNullException>(async()=>await client.SignalAsync(Conversation,null!));
+        int Size(string candidate)=>JsonSerializer.SerializeToUtf8Bytes(new{version=1,roomId=Room,edgeId=Edge,to=B,action="ice",sdp=(string?)null,candidate}).Length;
+        string candidate=new string('\u0001',(256*1024-300-Size(""))/6);
+        candidate+=new string('a',256*1024-300-Size(candidate));
+        Assert.That(Size(candidate),Is.EqualTo(256*1024-300));
+        Assert.ThrowsAsync<ArgumentException>(async()=>await client.SignalAsync(Conversation,new(Room,Edge,B,"ice",Candidate:candidate)));
+        Assert.That(h.Requests,Is.Zero);
+    }
+    [TestCase("join-other")][TestCase("join-empty")][TestCase("leave-other")]
+    public void Join_and_leave_replies_must_name_the_requested_room(string mode)
+    {
+        string other=JsonSerializer.Serialize(new{roomId=Guid.NewGuid(),participants=new[]{A,B},edges=new[]{new{id=Edge,offerer=A,answerer=B}}});
+        string reply=mode=="join-empty"?"{\"roomId\":null,\"participants\":[],\"edges\":[]}":other;
+        var h=new Handler{Reply=(r,t)=>Task.FromResult(Ok(reply))};using var http=new HttpClient(h);var client=Client(http);
+        if(mode=="leave-other")Assert.ThrowsAsync<InvalidDataException>(async()=>await client.LeaveAsync(Conversation,Room));
+        else Assert.ThrowsAsync<InvalidDataException>(async()=>await client.JoinAsync(Conversation,mode=="join-empty"?null:Room));
+    }
+    [Test]
+    public async Task Leaving_the_last_seat_may_return_a_closed_room()
+    {
+        var h=new Handler{Reply=(r,t)=>Task.FromResult(Ok("{\"roomId\":null,\"participants\":[],\"edges\":[]}"))};using var http=new HttpClient(h);
+        Assert.That((await Client(http).LeaveAsync(Conversation,Room)).RoomId,Is.Null);
     }
 }
